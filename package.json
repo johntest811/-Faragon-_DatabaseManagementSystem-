@@ -3,10 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
+    "dev": "concurrently \"next dev\" \"wait-on http://localhost:3000 && electron .\"",
+    "build": "next build && next export -o out",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "dist": "npm run build && electron-builder"
   },
   "dependencies": {
     "next": "16.1.2",
@@ -18,9 +19,30 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "concurrently": "*",
+    "electron": "^39.2.7",
+    "electron-builder": "*",
     "eslint": "^9",
     "eslint-config-next": "16.1.2",
     "tailwindcss": "^4",
-    "typescript": "^5"
-  }
+    "typescript": "^5",
+    "wait-on": "*"
+  },
+  "overrides": {
+    "form-data": "^4.0.0",
+    "qs": "^6.11.0",
+    "tough-cookie": "^4.2.0"
+  },
+  "build": {
+    "appId": "com.example.nextdesktop",
+    "files": [
+      "out/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": "nsis"
+    }
+  },
+  "main": "electron/main.js"
 }
