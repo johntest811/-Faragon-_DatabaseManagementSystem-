@@ -34,3 +34,52 @@ You can check out [the Next.js GitHub repository](https://github.com/vercel/next
 The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+
+
+
+
+**Creating A Next.js Project**
+- npx create-next-app@latest database-management-app -ts
+- cd database-management-app
+- mkdir src
+- git mv app src/
+- git mv components src/    # if you have one
+- git mv styles src/        # or move globals.css into src/app
+
+
+**Making an App using**
+- npm install --save-dev electron electron-build (MIGHT BE DEPRICATED WHEN INSTALLED)
+
+**DO THIS WHEN THE INSTALLED ELECTRON IS DEPRICATED**
+- npm uninstall electron-build
+- npm install --save-dev electron-builder concurrently wait-on
+- npm audit fix
+
+**MAKING THE PROJECT PUSH INTO GITHUB**
+- git remote add origin https://github.com/johntest811/-Faragon-_DatabaseManagementSystem-
+- git branch -M main
+- git push -u origin main
+- gh auth login
+- gh auth login        
+# one-time if not logged in
+- gh repo create database-management-app --public --source=. --remote=origin --push
+- git branch -M main
+- git push -u origin main
+
+- git init
+- git add .
+- git commit - "Initial commit"
+
+**If Not Loggedin**
+- gh auth login        
+# one-time if not logged in
+- gh repo create database-management-app --public --source=. --remote=origin --push
+
+**To run electron**
+- npm co
+- npm run dev
+- npm run build
+- npm run dist
+- npm ci
+- npm install --save-dev cross-env
+- npm install --save-dev cross-env

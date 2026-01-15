@@ -3,11 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "concurrently \"next dev\" \"wait-on http://localhost:3000 && electron .\"",
-    "build": "next build && next export -o out",
+    "dev": "concurrently \"cross-env NODE_ENV=development next dev\" \"wait-on http://localhost:3000 && cross-env ELECTRON_DEV=1 NODE_ENV=development electron .\"",
+    "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "dist": "npm run build && electron-builder"
+    "dist": "npm run build && cross-env NODE_ENV=production electron-builder"
   },
   "dependencies": {
     "next": "16.1.2",
@@ -20,12 +20,13 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "concurrently": "*",
+    "cross-env": "^10.1.0",
     "electron": "^39.2.7",
     "electron-builder": "*",
     "eslint": "^9",
     "eslint-config-next": "16.1.2",
     "tailwindcss": "^4",
-    "typescript": "^5",
+    "typescript": "5.9.3",
     "wait-on": "*"
   },
   "overrides": {
@@ -35,6 +36,9 @@
   },
   "build": {
     "appId": "com.example.nextdesktop",
+    "directories": {
+      "output": "dist"
+    },
     "files": [
       "out/**/*",
       "electron/**/*",
@@ -42,7 +46,13 @@
     ],
     "win": {
       "target": "nsis"
-    }
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "icon": "public/icon.ico"
   },
   "main": "electron/main.js"
 }
