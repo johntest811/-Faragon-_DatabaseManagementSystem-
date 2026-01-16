@@ -20,7 +20,7 @@ function createWindow(url) {
   console.log('[electron] isDev:', isDev, 'url:', url);
   win.loadURL(url);
 
-  if (isDev) win.webContents.openDevTools();
+  // if (isDev) win.webContents.openDevTools(); //It runs with Inspect Element opened if enabled.
 }
 
 async function startApp() {
