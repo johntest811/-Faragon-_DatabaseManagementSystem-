@@ -37,6 +37,21 @@ Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/bui
 
 
 
+**PACKAGE FOR SUPABASE AND THINGS NEEDED TO BE INSTALLED TO FIX ERRORS**
+- npm install @supabase/supabase-js
+
+# If you use nvm-windows
+nvm install 22.18.1
+nvm use 22.18.1
+
+# Update builder/rebuild and pin tar
+npm install --save-dev electron-builder@latest @electron/rebuild@latest
+npm install tar@^7.5.3
+
+# Reinstall & audit
+npm install
+npm audit fix
+npm audit
 
 **Creating A Next.js Project**
 - npx create-next-app@latest database-management-app -ts

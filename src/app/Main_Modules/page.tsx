@@ -8,14 +8,14 @@ export default function RootPage() {
 
   useEffect(() => {
     // Redirect to home page
-    router.push("/Login");
+    router.push("/Main_Modules/Dashboard");
   }, [router]);
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-white">
       <div className="text-center">
         <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-[#8B1C1C]"></div>
-        <p className="mt-4 text-gray-600">Redirecting to home page...</p>
+        <p className="mt-4 text-gray-600">Loading to the dashboard...</p>
       </div>
     </div>
   );
