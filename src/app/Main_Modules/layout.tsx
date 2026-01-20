@@ -2,9 +2,11 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   LayoutGrid,
   Users,
+  Archive,
   Shield,
   Settings,
   Bell,
@@ -25,24 +27,67 @@ function titleFromPath(pathname: string) {
 }
 
 export default function MainModulesLayout({ children }: LayoutProps) {
+  const router = useRouter();
   const [collapsed, setCollapsed] = useState(false);
   const [currentPath, setCurrentPath] = useState<string>("");
   const [search, setSearch] = useState("");
+  const [sessionRole, setSessionRole] = useState<"superadmin" | "admin" | "employee" | null>(null);
 
   useEffect(() => {
     if (typeof window !== "undefined") {
       setCurrentPath(window.location.pathname);
+
+      const raw = localStorage.getItem("adminSession");
+      if (!raw) {
+        window.location.href = "/Login/";
+        return;
+      }
+
+      try {
+        const parsed = JSON.parse(raw);
+        const r = String(parsed?.role || "").toLowerCase();
+        if (r === "superadmin" || r === "admin" || r === "employee") {
+          setSessionRole(r);
+        } else {
+          setSessionRole("employee");
+        }
+      } catch {
+        window.location.href = "/Login/";
+      }
     }
   }, []);
 
   const pageTitle = useMemo(() => titleFromPath(currentPath), [currentPath]);
 
-  const menu = [
-    { name: "Dashboard", href: "/Main_Modules/Dashboard/", icon: LayoutGrid },
-    { name: "Employees", href: "/Main_Modules/Employees/", icon: Users },
-    { name: "Roles", href: "/Main_Modules/Roles/", icon: Shield },
-    { name: "Settings", href: "/Main_Modules/Settings/", icon: Settings },
-  ];
+  const allMenu = [
+    { key: "dashboard", name: "Dashboard", href: "/Main_Modules/Dashboard/", icon: LayoutGrid },
+    { key: "employees", name: "Employees", href: "/Main_Modules/Employees/", icon: Users },
+    { key: "archive", name: "Archive", href: "/Main_Modules/Archive/", icon: Archive },
+    { key: "roles", name: "Roles", href: "/Main_Modules/Roles/", icon: Shield },
+    { key: "settings", name: "Settings", href: "/Main_Modules/Settings/", icon: Settings },
+  ] as const;
+
+  const allowedKeys = useMemo(() => {
+    if (!sessionRole) return new Set<string>();
+    if (sessionRole === "superadmin") return new Set(allMenu.map((m) => m.key));
+    if (sessionRole === "admin") return new Set(["dashboard", "employees", "archive", "settings"]);
+    return new Set(["dashboard", "employees", "archive"]);
+  }, [sessionRole]);
+
+  const menu = useMemo(
+    () => allMenu.filter((m) => allowedKeys.has(m.key)),
+    [allowedKeys]
+  );
+
+  useEffect(() => {
+    if (!currentPath || !sessionRole) return;
+    const allowed = allMenu
+      .filter((m) => allowedKeys.has(m.key))
+      .some((m) => currentPath === m.href || currentPath.startsWith(m.href));
+    if (!allowed) {
+      router.replace("/Main_Modules/Dashboard/");
+    }
+  }, [currentPath, sessionRole, allowedKeys, router]);
 
   return (
     <div className="min-h-screen bg-gray-50 flex">
@@ -60,6 +105,9 @@ export default function MainModulesLayout({ children }: LayoutProps) {
               <div className="leading-tight">
                 <div className="text-sm font-semibold text-gray-900">Faragon Security</div>
                 <div className="text-sm font-semibold text-gray-900">Agency, Inc.</div>
+                <div className="mt-1 text-[11px] text-gray-500">
+                  Role: {sessionRole ?? "—"}
+                </div>
               </div>
             )}
           </div>
@@ -69,7 +117,7 @@ export default function MainModulesLayout({ children }: LayoutProps) {
           {menu.map((item) => {
             const active =
               currentPath === item.href ||
-              (item.href !== "/" && currentPath.startsWith(item.href));
+              currentPath.startsWith(item.href);
 
             return (
               <Link

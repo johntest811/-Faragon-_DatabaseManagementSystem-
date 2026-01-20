@@ -22,6 +22,7 @@ type Applicant = {
   client_contact_num: string | null;
   client_email: string | null;
   profile_image_path: string | null;
+	is_archived: boolean | null;
 };
 
 const BUCKETS = {
@@ -86,6 +87,24 @@ export default function EmployeesPage() {
 		status: "ACTIVE",
 	});
 
+	const [archiveOpen, setArchiveOpen] = useState(false);
+	const [archiveEmployee, setArchiveEmployee] = useState<Applicant | null>(null);
+
+	const [sessionRole, setSessionRole] = useState<"superadmin" | "admin" | "employee" | null>(null);
+	useEffect(() => {
+		const raw = localStorage.getItem("adminSession");
+		if (!raw) return;
+		try {
+			const parsed = JSON.parse(raw);
+			const r = String(parsed?.role || "").toLowerCase();
+			if (r === "superadmin" || r === "admin" || r === "employee") {
+				setSessionRole(r);
+			}
+		} catch {
+			// ignore
+		}
+	}, []);
+
 	useEffect(() => {
 		const fetchEmployees = async () => {
 			setLoading(true);
@@ -94,8 +113,9 @@ export default function EmployeesPage() {
 				const { data, error: fetchError } = await supabase
 					.from("applicants")
 					.select(
-						"applicant_id, created_at, first_name, middle_name, last_name, extn_name, client_position, detachment, status, gender, birth_date, age, client_contact_num, client_email, profile_image_path"
+						"applicant_id, created_at, first_name, middle_name, last_name, extn_name, client_position, detachment, status, gender, birth_date, age, client_contact_num, client_email, profile_image_path, is_archived"
 					)
+					.eq("is_archived", false)
 					.order("created_at", { ascending: false })
 					.limit(200);
 
@@ -153,6 +173,30 @@ export default function EmployeesPage() {
 		setEditOpen(true);
 	}
 
+	function openArchive(employee: Applicant) {
+		setArchiveEmployee(employee);
+		setArchiveOpen(true);
+	}
+
+	async function confirmArchive() {
+		if (!archiveEmployee) return;
+		setError("");
+		const { error: updateError } = await supabase
+			.from("applicants")
+			.update({ is_archived: true, archived_at: new Date().toISOString() })
+			.eq("applicant_id", archiveEmployee.applicant_id);
+
+		if (updateError) {
+			console.error(updateError);
+			setError(updateError.message || "Failed to archive employee");
+			return;
+		}
+
+		setEmployees((prev) => prev.filter((e) => e.applicant_id !== archiveEmployee.applicant_id));
+		setArchiveOpen(false);
+		setArchiveEmployee(null);
+	}
+
 	async function saveEdit() {
 		if (!editEmployee) return;
 		setError("");
@@ -206,7 +250,7 @@ export default function EmployeesPage() {
 			.from("applicants")
 			.insert(payload)
 			.select(
-				"applicant_id, created_at, first_name, middle_name, last_name, extn_name, client_position, detachment, status, gender, birth_date, age, client_contact_num, client_email, profile_image_path"
+				"applicant_id, created_at, first_name, middle_name, last_name, extn_name, client_position, detachment, status, gender, birth_date, age, client_contact_num, client_email, profile_image_path, is_archived"
 			)
 			.single();
 
@@ -262,12 +306,14 @@ export default function EmployeesPage() {
 						</button>
 					</div>
 
-					<button
-						onClick={() => setCreateOpen(true)}
-						className="px-4 py-2 rounded-full bg-[#FFDA03] text-black font-semibold"
-					>
-						New Employee
-					</button>
+					{sessionRole !== "employee" ? (
+						<button
+							onClick={() => setCreateOpen(true)}
+							className="px-4 py-2 rounded-full bg-[#FFDA03] text-black font-semibold"
+						>
+							New Employee
+						</button>
+					) : null}
 				</div>
 			</div>
 
@@ -348,13 +394,24 @@ export default function EmployeesPage() {
 										>
 											<Eye className="w-4 h-4" />
 										</button>
-										<button
-											onClick={() => openEdit(e)}
-											className="h-9 w-9 rounded-xl border bg-white flex items-center justify-center"
-											title="Edit"
-										>
-											<Pencil className="w-4 h-4" />
-										</button>
+										{sessionRole !== "employee" ? (
+											<>
+												<button
+													onClick={() => openEdit(e)}
+													className="h-9 w-9 rounded-xl border bg-white flex items-center justify-center"
+													title="Edit"
+												>
+													<Pencil className="w-4 h-4" />
+												</button>
+												<button
+													onClick={() => openArchive(e)}
+													className="h-9 px-3 rounded-xl bg-gray-900 text-white text-xs font-semibold"
+													title="Archive"
+												>
+													Archive
+												</button>
+											</>
+										) : null}
 									</div>
 								</div>
 							</div>
@@ -513,6 +570,45 @@ export default function EmployeesPage() {
 								className="px-4 py-2 rounded-xl bg-[#FFDA03] text-black font-semibold"
 							>
 								Create
+							</button>
+						</div>
+					</div>
+				</div>
+			) : null}
+
+			{/* Archive Modal */}
+			{archiveOpen && archiveEmployee ? (
+				<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+					<div className="w-full max-w-lg bg-white rounded-3xl border shadow-xl overflow-hidden">
+						<div className="px-6 py-4 border-b flex items-center justify-between">
+							<div>
+								<div className="text-lg font-semibold">Archive Employee</div>
+								<div className="text-xs text-gray-500">{getFullName(archiveEmployee)}</div>
+							</div>
+							<button
+								onClick={() => setArchiveOpen(false)}
+								className="px-3 py-2 rounded-xl border bg-white"
+							>
+								Close
+							</button>
+						</div>
+
+						<div className="p-6 text-sm text-gray-700">
+							This will move the employee to the Archive page.
+						</div>
+
+						<div className="px-6 pb-6 flex items-center justify-end gap-2">
+							<button
+								onClick={() => setArchiveOpen(false)}
+								className="px-4 py-2 rounded-xl border bg-white"
+							>
+								Cancel
+							</button>
+							<button
+								onClick={confirmArchive}
+								className="px-4 py-2 rounded-xl bg-gray-900 text-white font-semibold"
+							>
+								Archive
 							</button>
 						</div>
 					</div>

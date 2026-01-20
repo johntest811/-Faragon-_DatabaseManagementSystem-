@@ -1,6 +1,23 @@
 -- WARNING: This schema is for context only and is not meant to be run.
 -- Table order and constraints may not be valid for execution.
 
+CREATE TABLE public.admin_profiles (
+  user_id uuid NOT NULL,
+  username text UNIQUE,
+  full_name text,
+  position text,
+  is_active boolean NOT NULL DEFAULT true,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT admin_profiles_pkey PRIMARY KEY (user_id),
+  CONSTRAINT admin_profiles_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id)
+);
+CREATE TABLE public.admin_role_memberships (
+  user_id uuid NOT NULL,
+  role_id uuid NOT NULL,
+  CONSTRAINT admin_role_memberships_pkey PRIMARY KEY (user_id, role_id),
+  CONSTRAINT admin_role_memberships_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.admin_profiles(user_id),
+  CONSTRAINT admin_role_memberships_role_id_fkey FOREIGN KEY (role_id) REFERENCES public.app_roles(role_id)
+);
 CREATE TABLE public.admins (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
   username text NOT NULL UNIQUE,
@@ -13,6 +30,11 @@ CREATE TABLE public.admins (
   position text CHECK ("position" = ANY (ARRAY['Supervisor'::text, 'Employee'::text, 'Manager'::text, 'Admin'::text, 'Superadmin'::text])),
   is_active boolean DEFAULT true,
   password text NOT NULL DEFAULT 'admin123'::text
+);
+CREATE TABLE public.app_roles (
+  role_id uuid NOT NULL DEFAULT gen_random_uuid(),
+  role_name text NOT NULL UNIQUE,
+  CONSTRAINT app_roles_pkey PRIMARY KEY (role_id)
 );
 CREATE TABLE public.applicants (
   applicant_id uuid NOT NULL DEFAULT gen_random_uuid(),
@@ -40,6 +62,15 @@ CREATE TABLE public.applicants (
   emergency_contact_person character varying,
   emergency_contact_num character varying,
   status character varying,
+  profile_image_path text,
+  sss_certain_path text,
+  tin_id_path text,
+  pag_ibig_id_path text,
+  philhealth_id_path text,
+  security_license_path text,
+  is_archived boolean NOT NULL DEFAULT false,
+  archived_at timestamp with time zone,
+  archived_by uuid,
   CONSTRAINT applicants_pkey PRIMARY KEY (applicant_id)
 );
 CREATE TABLE public.biodata (
@@ -102,4 +133,19 @@ CREATE TABLE public.licensure (
   insurance_expiration date,
   CONSTRAINT licensure_pkey PRIMARY KEY (applicant_id),
   CONSTRAINT licenseure_applicant_id_fkey FOREIGN KEY (applicant_id) REFERENCES public.applicants(applicant_id)
+);
+CREATE TABLE public.modules (
+  module_key text NOT NULL,
+  display_name text NOT NULL,
+  path text NOT NULL,
+  CONSTRAINT modules_pkey PRIMARY KEY (module_key)
+);
+CREATE TABLE public.role_module_access (
+  role_id uuid NOT NULL,
+  module_key text NOT NULL,
+  can_read boolean NOT NULL DEFAULT true,
+  can_write boolean NOT NULL DEFAULT false,
+  CONSTRAINT role_module_access_pkey PRIMARY KEY (role_id, module_key),
+  CONSTRAINT role_module_access_role_id_fkey FOREIGN KEY (role_id) REFERENCES public.app_roles(role_id),
+  CONSTRAINT role_module_access_module_key_fkey FOREIGN KEY (module_key) REFERENCES public.modules(module_key)
 );
