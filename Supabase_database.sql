@@ -33,14 +33,6 @@ CREATE TABLE public.applicants (
   pagibig_number character varying,
   philhealth_number character varying,
   tin_number character varying,
-  -- Supabase Storage object paths (store the object's "name" within its bucket)
-  -- Example: 'applicant_id/sss_certain.png'
-  profile_image_path text,
-  sss_certain_path text,
-  tin_id_path text,
-  pag_ibig_id_path text,
-  philhealth_id_path text,
-  security_license_path text,
   client_contact_num character varying,
   client_email character varying,
   present_address character varying,
@@ -58,14 +50,12 @@ CREATE TABLE public.biodata (
 );
 CREATE TABLE public.certificates (
   applicant_id uuid NOT NULL,
-  -- Store images/files in Supabase Storage bucket: 'certificates'
-  -- Put the Storage object's path (object name) here, not raw bytes.
+  course_title_degree character varying,
   training_path text,
   seminar_path text,
   highschool_diploma_path text,
   college_diploma_path text,
   vocational_path text,
-  course_title_degree character varying,
   CONSTRAINT certificates_pkey PRIMARY KEY (applicant_id),
   CONSTRAINT certificates_applicant_id_fkey FOREIGN KEY (applicant_id) REFERENCES public.applicants(applicant_id)
 );

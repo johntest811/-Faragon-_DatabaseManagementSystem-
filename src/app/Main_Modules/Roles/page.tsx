@@ -7,31 +7,22 @@ export default function RolesPage() {
 	const router = useRouter();
 
 	return (
-		<div className="min-h-screen bg-gray-50 p-6">
-			<header className="flex items-center justify-between mb-6">
+		<section className="bg-white rounded-2xl shadow-sm border p-5">
+			<div className="flex items-center justify-between gap-3 mb-3">
 				<div>
-					<h1 className="text-2xl font-bold">Roles</h1>
-					<p className="text-sm text-gray-600">Manage user roles (placeholder)</p>
+					<div className="text-lg font-semibold">Roles</div>
+					<div className="text-sm text-gray-500">Manage user roles (placeholder)</div>
 				</div>
-				<div className="flex items-center gap-3">
-					<button
-						onClick={() => router.push("/Main_Modules/Dashboard")}
-						className="px-4 py-2 bg-white border rounded shadow-sm"
-					>
-						Back
-					</button>
-				</div>
-			</header>
-
-			<main>
-				<section className="bg-white rounded shadow p-4">
-					<h2 className="text-lg font-medium mb-2">Coming soon</h2>
-					<p className="text-gray-600">
-						This page is a placeholder so the exported build works. Next step is creating a Roles
-						table and wiring permissions.
-					</p>
-				</section>
-			</main>
-		</div>
+				<button
+					onClick={() => router.push("/Main_Modules/Dashboard/")}
+					className="px-4 py-2 rounded-xl bg-white border"
+				>
+					Back
+				</button>
+			</div>
+			<div className="text-gray-600">
+				Coming soon. Next step is creating a Roles table and wiring permissions.
+			</div>
+		</section>
 	);
 }

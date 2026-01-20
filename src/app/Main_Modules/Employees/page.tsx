@@ -51,6 +51,14 @@ type EditDraft = {
   client_email: string;
 };
 
+type CreateDraft = {
+	first_name: string;
+	last_name: string;
+	client_position: string;
+	detachment: string;
+	status: string;
+};
+
 export default function EmployeesPage() {
 	const router = useRouter();
 	const [loading, setLoading] = useState(true);
@@ -67,6 +75,15 @@ export default function EmployeesPage() {
 		status: "",
 		client_contact_num: "",
 		client_email: "",
+	});
+
+	const [createOpen, setCreateOpen] = useState(false);
+	const [createDraft, setCreateDraft] = useState<CreateDraft>({
+		first_name: "",
+		last_name: "",
+		client_position: "",
+		detachment: "",
+		status: "ACTIVE",
 	});
 
 	useEffect(() => {
@@ -175,6 +192,43 @@ export default function EmployeesPage() {
 		setEditEmployee(null);
 	}
 
+	async function createEmployee() {
+		setError("");
+		const payload = {
+			first_name: createDraft.first_name || null,
+			last_name: createDraft.last_name || null,
+			client_position: createDraft.client_position || null,
+			detachment: createDraft.detachment || null,
+			status: createDraft.status || null,
+		};
+
+		const { data, error: insertError } = await supabase
+			.from("applicants")
+			.insert(payload)
+			.select(
+				"applicant_id, created_at, first_name, middle_name, last_name, extn_name, client_position, detachment, status, gender, birth_date, age, client_contact_num, client_email, profile_image_path"
+			)
+			.single();
+
+		if (insertError) {
+			console.error(insertError);
+			setError(insertError.message || "Failed to create employee");
+			return;
+		}
+
+		setEmployees((prev) => [data as Applicant, ...prev]);
+		setCreateOpen(false);
+		setCreateDraft({
+			first_name: "",
+			last_name: "",
+			client_position: "",
+			detachment: "",
+			status: "ACTIVE",
+		});
+
+		router.push(`/Main_Modules/Employees/details/?id=${encodeURIComponent((data as any).applicant_id)}`);
+	}
+
 	return (
 		<div className="space-y-5">
 			<div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
@@ -209,7 +263,7 @@ export default function EmployeesPage() {
 					</div>
 
 					<button
-						onClick={() => router.push("/Main_Modules/Employees/details/")}
+						onClick={() => setCreateOpen(true)}
 						className="px-4 py-2 rounded-full bg-[#FFDA03] text-black font-semibold"
 					>
 						New Employee
@@ -381,6 +435,84 @@ export default function EmployeesPage() {
 								className="px-4 py-2 rounded-xl bg-[#FFDA03] text-black font-semibold"
 							>
 								Save
+							</button>
+						</div>
+					</div>
+				</div>
+			) : null}
+
+			{/* Create Modal */}
+			{createOpen ? (
+				<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+					<div className="w-full max-w-xl bg-white rounded-3xl border shadow-xl overflow-hidden">
+						<div className="px-6 py-4 border-b flex items-center justify-between">
+							<div>
+								<div className="text-lg font-semibold">New Employee</div>
+								<div className="text-xs text-gray-500">Creates a record in Supabase `applicants`</div>
+							</div>
+							<button
+								onClick={() => setCreateOpen(false)}
+								className="px-3 py-2 rounded-xl border bg-white"
+							>
+								Close
+							</button>
+						</div>
+
+						<div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-4">
+							<label className="text-sm">
+								<div className="text-gray-600 mb-1">First Name</div>
+								<input
+									value={createDraft.first_name}
+									onChange={(e) => setCreateDraft((d) => ({ ...d, first_name: e.target.value }))}
+									className="w-full border rounded-xl px-3 py-2"
+								/>
+							</label>
+							<label className="text-sm">
+								<div className="text-gray-600 mb-1">Last Name</div>
+								<input
+									value={createDraft.last_name}
+									onChange={(e) => setCreateDraft((d) => ({ ...d, last_name: e.target.value }))}
+									className="w-full border rounded-xl px-3 py-2"
+								/>
+							</label>
+							<label className="text-sm">
+								<div className="text-gray-600 mb-1">Job Title</div>
+								<input
+									value={createDraft.client_position}
+									onChange={(e) => setCreateDraft((d) => ({ ...d, client_position: e.target.value }))}
+									className="w-full border rounded-xl px-3 py-2"
+								/>
+							</label>
+							<label className="text-sm">
+								<div className="text-gray-600 mb-1">Detachment</div>
+								<input
+									value={createDraft.detachment}
+									onChange={(e) => setCreateDraft((d) => ({ ...d, detachment: e.target.value }))}
+									className="w-full border rounded-xl px-3 py-2"
+								/>
+							</label>
+							<label className="text-sm md:col-span-2">
+								<div className="text-gray-600 mb-1">Status</div>
+								<input
+									value={createDraft.status}
+									onChange={(e) => setCreateDraft((d) => ({ ...d, status: e.target.value }))}
+									className="w-full border rounded-xl px-3 py-2"
+								/>
+							</label>
+						</div>
+
+						<div className="px-6 pb-6 flex items-center justify-end gap-2">
+							<button
+								onClick={() => setCreateOpen(false)}
+								className="px-4 py-2 rounded-xl border bg-white"
+							>
+								Cancel
+							</button>
+							<button
+								onClick={createEmployee}
+								className="px-4 py-2 rounded-xl bg-[#FFDA03] text-black font-semibold"
+							>
+								Create
 							</button>
 						</div>
 					</div>
