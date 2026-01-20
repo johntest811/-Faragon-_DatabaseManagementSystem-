@@ -282,7 +282,7 @@ export default function EmployeesPage() {
 							value={search}
 							onChange={(e) => setSearch(e.target.value)}
 							placeholder="Search Anything"
-							className="outline-none text-sm w-full"
+							className="outline-none text-sm w-full text-black"
 						/>
 					</div>
 					<button
@@ -365,14 +365,14 @@ export default function EmployeesPage() {
 
 								<div className="mt-4 border rounded-2xl overflow-hidden">
 									<div className="grid grid-cols-2 text-sm">
-										<div className="px-4 py-3 text-gray-500">Job Title</div>
+										<div className="px-4 py-3 text-gray-700">Job Title</div>
 										<div className="px-4 py-3 font-semibold text-gray-900 text-right">
 											{e.client_position ?? "—"}
 										</div>
 									</div>
 									<div className="h-px bg-gray-100" />
 									<div className="grid grid-cols-2 text-sm">
-										<div className="px-4 py-3 text-gray-500">Detachment</div>
+										<div className="px-4 py-3 text-gray-700">Detachment</div>
 										<div className="px-4 py-3 font-semibold text-gray-900 text-right">
 											{e.detachment ?? "—"}
 										</div>
@@ -389,7 +389,7 @@ export default function EmployeesPage() {
 									<div className="flex items-center gap-2">
 										<button
 											onClick={() => router.push(`/Main_Modules/Employees/details/?id=${encodeURIComponent(e.applicant_id)}`)}
-											className="h-9 w-9 rounded-xl border bg-white flex items-center justify-center"
+											className="h-9 w-9 rounded-xl border bg-white flex items-center justify-center text-black"
 											title="View"
 										>
 											<Eye className="w-4 h-4" />
@@ -398,7 +398,7 @@ export default function EmployeesPage() {
 											<>
 												<button
 													onClick={() => openEdit(e)}
-													className="h-9 w-9 rounded-xl border bg-white flex items-center justify-center"
+													className="h-9 w-9 rounded-xl border bg-white flex items-center justify-center text-black"
 													title="Edit"
 												>
 													<Pencil className="w-4 h-4" />
@@ -426,7 +426,7 @@ export default function EmployeesPage() {
 					<div className="w-full max-w-xl bg-white rounded-3xl border shadow-xl overflow-hidden">
 						<div className="px-6 py-4 border-b flex items-center justify-between">
 							<div>
-								<div className="text-lg font-semibold">Edit Employee</div>
+								<div className="text-lg font-semibold text-black">Edit Employee</div>
 								<div className="text-xs text-gray-500">{getFullName(editEmployee)}</div>
 							</div>
 							<button
@@ -438,7 +438,7 @@ export default function EmployeesPage() {
 						</div>
 
 						<div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-4">
-							<label className="text-sm">
+							<label className="text-sm text-black">
 								<div className="text-gray-600 mb-1">Job Title</div>
 								<input
 									value={editDraft.client_position}
@@ -446,32 +446,32 @@ export default function EmployeesPage() {
 									className="w-full border rounded-xl px-3 py-2"
 								/>
 							</label>
-							<label className="text-sm">
-								<div className="text-gray-600 mb-1">Detachment</div>
+							<label className="text-sm text-black">
+								<div className="text-gray-700 mb-1">Detachment</div>
 								<input
 									value={editDraft.detachment}
 									onChange={(e) => setEditDraft((d) => ({ ...d, detachment: e.target.value }))}
 									className="w-full border rounded-xl px-3 py-2"
 								/>
 							</label>
-							<label className="text-sm">
-								<div className="text-gray-600 mb-1">Status</div>
+							<label className="text-sm text-black">
+								<div className="text-gray-700 mb-1">Status</div>
 								<input
 									value={editDraft.status}
 									onChange={(e) => setEditDraft((d) => ({ ...d, status: e.target.value }))}
 									className="w-full border rounded-xl px-3 py-2"
 								/>
 							</label>
-							<label className="text-sm">
-								<div className="text-gray-600 mb-1">Phone Number</div>
+							<label className="text-sm text-black">
+								<div className="text-gray-700 mb-1">Phone Number</div>
 								<input
 									value={editDraft.client_contact_num}
 									onChange={(e) => setEditDraft((d) => ({ ...d, client_contact_num: e.target.value }))}
 									className="w-full border rounded-xl px-3 py-2"
 								/>
 							</label>
-							<label className="text-sm md:col-span-2">
-								<div className="text-gray-600 mb-1">Email Address</div>
+							<label className="text-sm md:col-span-2 text-black">
+								<div className="text-gray-700 mb-1">Email Address</div>
 								<input
 									value={editDraft.client_email}
 									onChange={(e) => setEditDraft((d) => ({ ...d, client_email: e.target.value }))}
@@ -480,7 +480,7 @@ export default function EmployeesPage() {
 							</label>
 						</div>
 
-						<div className="px-6 pb-6 flex items-center justify-end gap-2">
+						<div className="px-6 pb-6 flex items-center justify-end gap-2 text-black">
 							<button
 								onClick={() => setEditOpen(false)}
 								className="px-4 py-2 rounded-xl border bg-white"
@@ -504,7 +504,7 @@ export default function EmployeesPage() {
 					<div className="w-full max-w-xl bg-white rounded-3xl border shadow-xl overflow-hidden">
 						<div className="px-6 py-4 border-b flex items-center justify-between">
 							<div>
-								<div className="text-lg font-semibold">New Employee</div>
+								<div className="text-lg font-semibold text-black">New Employee</div>
 								<div className="text-xs text-gray-500">Creates a record in Supabase `applicants`</div>
 							</div>
 							<button
@@ -516,7 +516,7 @@ export default function EmployeesPage() {
 						</div>
 
 						<div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-4">
-							<label className="text-sm">
+							<label className="text-sm text-black">
 								<div className="text-gray-600 mb-1">First Name</div>
 								<input
 									value={createDraft.first_name}
@@ -524,7 +524,7 @@ export default function EmployeesPage() {
 									className="w-full border rounded-xl px-3 py-2"
 								/>
 							</label>
-							<label className="text-sm">
+							<label className="text-sm text-sm text-black">
 								<div className="text-gray-600 mb-1">Last Name</div>
 								<input
 									value={createDraft.last_name}
@@ -532,7 +532,7 @@ export default function EmployeesPage() {
 									className="w-full border rounded-xl px-3 py-2"
 								/>
 							</label>
-							<label className="text-sm">
+							<label className="text-sm text-sm text-black">
 								<div className="text-gray-600 mb-1">Job Title</div>
 								<input
 									value={createDraft.client_position}
@@ -540,7 +540,7 @@ export default function EmployeesPage() {
 									className="w-full border rounded-xl px-3 py-2"
 								/>
 							</label>
-							<label className="text-sm">
+							<label className="text-sm text-sm text-black">
 								<div className="text-gray-600 mb-1">Detachment</div>
 								<input
 									value={createDraft.detachment}
@@ -548,7 +548,7 @@ export default function EmployeesPage() {
 									className="w-full border rounded-xl px-3 py-2"
 								/>
 							</label>
-							<label className="text-sm md:col-span-2">
+							<label className="text-sm md:col-span-2 text-sm text-black">
 								<div className="text-gray-600 mb-1">Status</div>
 								<input
 									value={createDraft.status}
@@ -561,7 +561,7 @@ export default function EmployeesPage() {
 						<div className="px-6 pb-6 flex items-center justify-end gap-2">
 							<button
 								onClick={() => setCreateOpen(false)}
-								className="px-4 py-2 rounded-xl border bg-white"
+								className="px-4 py-2 rounded-xl border bg-white text-sm text-black"
 							>
 								Cancel
 							</button>

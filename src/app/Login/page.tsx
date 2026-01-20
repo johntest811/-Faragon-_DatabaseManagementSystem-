@@ -151,7 +151,7 @@ export default function Login() {
             <button
               type="submit"
               disabled={isLoading}
-              className={`w-full py-2 px-4 rounded-md text-white bg-blue-600 ${isLoading ? 'opacity-70 cursor-not-allowed' : ''}`}
+              className={`w-full py-2 px-4 rounded-md text-white bg-yellow-500 ${isLoading ? 'opacity-70 cursor-not-allowed' : ''}`}
             >
               {isLoading ? 'Signing in...' : 'Sign in'}
             </button>

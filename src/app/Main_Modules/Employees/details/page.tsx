@@ -255,7 +255,7 @@ export default function EmployeeDetailsPage() {
         <div className="mt-4">
           <Link
             href="/Main_Modules/Employees/"
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border bg-white"
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border bg-white text-black"
           >
             <ArrowLeft className="w-4 h-4" /> Back to Employees
           </Link>
@@ -279,7 +279,7 @@ export default function EmployeeDetailsPage() {
       <div className="flex items-center justify-between gap-3">
         <Link
           href="/Main_Modules/Employees/"
-          className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border bg-white"
+          className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border bg-white text-black"
         >
           <ArrowLeft className="w-4 h-4" /> Back
         </Link>
@@ -372,19 +372,19 @@ export default function EmployeeDetailsPage() {
           <div className="mt-4 space-y-3 text-sm">
             <div className="flex items-center justify-between">
               <div className="text-gray-500">SSS No.</div>
-              <div className="font-semibold">{applicant.sss_number ?? "—"}</div>
+              <div className="font-semibold text-black">{applicant.sss_number ?? "—"}</div>
             </div>
             <div className="flex items-center justify-between">
               <div className="text-gray-500">Pag-ibig No.</div>
-              <div className="font-semibold">{applicant.pagibig_number ?? "—"}</div>
+              <div className="font-semibold text-black">{applicant.pagibig_number ?? "—"}</div>
             </div>
             <div className="flex items-center justify-between">
               <div className="text-gray-500">Philhealth No.</div>
-              <div className="font-semibold">{applicant.philhealth_number ?? "—"}</div>
+              <div className="font-semibold text-black">{applicant.philhealth_number ?? "—"}</div>
             </div>
             <div className="flex items-center justify-between">
               <div className="text-gray-500">TIN</div>
-              <div className="font-semibold">{applicant.tin_number ?? "—"}</div>
+              <div className="font-semibold text-black">{applicant.tin_number ?? "—"}</div>
             </div>
           </div>
         </section>

@@ -57,7 +57,7 @@ export default function DashboardPage() {
     <section className="bg-white rounded-2xl shadow-sm border p-5">
       <div className="flex items-center justify-between gap-3 mb-4">
         <div>
-          <div className="text-lg font-semibold">Admins</div>
+          <div className="text-lg font-semibold text-black">Admins</div>
           <div className="text-sm text-gray-500">Overview of admin accounts</div>
         </div>
         <div className="flex items-center gap-2">
@@ -98,12 +98,12 @@ export default function DashboardPage() {
             <tbody>
               {admins.map((a) => (
                 <tr key={a.id} className="border-t">
-                  <td className="px-3 py-2">{a.username}</td>
-                  <td className="px-3 py-2">{a.full_name ?? '—'}</td>
-                  <td className="px-3 py-2">{a.role ?? '—'}</td>
-                  <td className="px-3 py-2">{a.position ?? '—'}</td>
-                  <td className="px-3 py-2">{a.is_active ? 'Yes' : 'No'}</td>
-                  <td className="px-3 py-2">{a.last_login ? new Date(a.last_login).toLocaleString() : '—'}</td>
+                  <td className="px-3 py-2 text-black">{a.username}</td>
+                  <td className="px-3 py-2 text-black">{a.full_name ?? '—'}</td>
+                  <td className="px-3 py-2 text-black">{a.role ?? '—'}</td>
+                  <td className="px-3 py-2 text-black">{a.position ?? '—'}</td>
+                  <td className="px-3 py-2 text-black">{a.is_active ? 'Yes' : 'No'}</td>
+                  <td className="px-3 py-2 text-black">{a.last_login ? new Date(a.last_login).toLocaleString() : '—'}</td>
                 </tr>
               ))}
             </tbody>

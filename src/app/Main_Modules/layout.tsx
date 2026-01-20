@@ -65,12 +65,14 @@ export default function MainModulesLayout({ children }: LayoutProps) {
     { key: "archive", name: "Archive", href: "/Main_Modules/Archive/", icon: Archive },
     { key: "roles", name: "Roles", href: "/Main_Modules/Roles/", icon: Shield },
     { key: "settings", name: "Settings", href: "/Main_Modules/Settings/", icon: Settings },
+    
+     
   ] as const;
 
   const allowedKeys = useMemo(() => {
     if (!sessionRole) return new Set<string>();
     if (sessionRole === "superadmin") return new Set(allMenu.map((m) => m.key));
-    if (sessionRole === "admin") return new Set(["dashboard", "employees", "archive", "settings"]);
+    if (sessionRole === "admin") return new Set(["dashboard", "employees", "archive", "settings", "roles"]);
     return new Set(["dashboard", "employees", "archive"]);
   }, [sessionRole]);
 
@@ -168,6 +170,8 @@ export default function MainModulesLayout({ children }: LayoutProps) {
       </aside>
 
       <div className="flex-1 min-w-0 flex flex-col">
+
+
         {/* Top Navigation */}
         <header className="bg-gray-50 sticky top-0 z-10">
           <div className="px-6 pt-6">
@@ -190,13 +194,13 @@ export default function MainModulesLayout({ children }: LayoutProps) {
                   />
                 </div>
 
-                <button
+                {/* <button
                   type="button"
                   className="h-10 w-10 rounded-xl bg-[#FFDA03] text-black flex items-center justify-center"
                   aria-label="Settings"
                 >
                   <Settings className="w-5 h-5" />
-                </button>
+                </button> */}
 
                 <button
                   type="button"

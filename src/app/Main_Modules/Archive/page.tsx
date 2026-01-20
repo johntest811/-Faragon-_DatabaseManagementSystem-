@@ -103,7 +103,7 @@ export default function ArchivePage() {
   return (
     <div className="space-y-5">
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 text-black">
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -151,7 +151,7 @@ export default function ArchivePage() {
                   <div className="flex items-center gap-2">
                     <button
                       onClick={() => router.push(`/Main_Modules/Employees/details/?id=${encodeURIComponent(e.applicant_id)}`)}
-                      className="h-9 w-9 rounded-xl border bg-white flex items-center justify-center"
+                      className="h-9 w-9 rounded-xl border bg-white flex items-center justify-center text-black"
                       title="View"
                     >
                       <Eye className="w-4 h-4" />
