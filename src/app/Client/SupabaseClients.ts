@@ -3,14 +3,22 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
-if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-  throw new Error('Missing Supabase environment variables. Ensure NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY are set.');
+const isSupabaseConfigured = Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
+if (!isSupabaseConfigured) {
+  // Avoid crashing the renderer at import-time; show a clear console error instead.
+  // Missing env at build-time will break all client-side JS if we throw here.
+  console.error(
+    '[supabase] Missing env. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY before building.'
+  );
 }
 
 /**
  * Browser (renderer) client - safe to use in Next/Electron renderer because it uses the anon key.
  */
-export const supabase: SupabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+export const supabase: SupabaseClient = createClient(
+  SUPABASE_URL ?? 'http://localhost',
+  SUPABASE_ANON_KEY ?? 'missing-anon-key'
+);
 
 /**
  * Server/admin client factory - only use on the server or Electron main process where env is private.
@@ -27,6 +35,7 @@ export function createServerSupabase() {
 
 //Checks for connectivity to Supabase
 export async function checkSupabaseConnection() {
+  if (!isSupabaseConfigured) return false;
   const { data, error } = await supabase.auth.getSession(); // lightweight request
   if (error) {
     console.error("Supabase connection failed:", error.message);
@@ -37,6 +46,7 @@ export async function checkSupabaseConnection() {
 }
 
 export async function checkDbQuery() {
+  if (!isSupabaseConfigured) return false;
   const { data, error } = await supabase
     .from("profiles")
     .select("id")

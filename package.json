@@ -1,13 +1,13 @@
 {
   "name": "database-management-app",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Database management desktop app",
   "author": "JOHN",
   "private": true,
   "scripts": {
     "dev": "concurrently \"cross-env NODE_ENV=development next dev\" \"wait-on http://localhost:3000 && cross-env ELECTRON_DEV=1 NODE_ENV=development electron .\"",
-    "build": "next build",
-    "start": "next start",
+    "build": "node ./node_modules/next/dist/bin/next build",
+    "start": "node ./node_modules/next/dist/bin/next start",
     "lint": "eslint",
     "dist": "npm run build && cross-env NODE_ENV=production electron-builder"
   },
