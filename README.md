@@ -98,4 +98,5 @@ npm audit
 - npm ci
 - npm install --save-dev cross-env
 - npm install --save-dev cross-env
-npm install lucide-react
+- npm install lucide-react
+- npm install -D electron-builder@latest

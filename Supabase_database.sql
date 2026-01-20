@@ -14,3 +14,102 @@ CREATE TABLE public.admins (
   is_active boolean DEFAULT true,
   password text NOT NULL DEFAULT 'admin123'::text
 );
+CREATE TABLE public.applicants (
+  applicant_id uuid NOT NULL DEFAULT gen_random_uuid(),
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  last_name character varying,
+  first_name character varying,
+  middle_name character varying,
+  extn_name character varying,
+  birth_date date,
+  age integer,
+  gender character varying,
+  education_attainment character varying,
+  date_hired_fsai date,
+  client_position character varying,
+  detachment character varying,
+  security_licensed_num character varying,
+  sss_number character varying,
+  pagibig_number character varying,
+  philhealth_number character varying,
+  tin_number character varying,
+  -- Supabase Storage object paths (store the object's "name" within its bucket)
+  -- Example: 'applicant_id/sss_certain.png'
+  profile_image_path text,
+  sss_certain_path text,
+  tin_id_path text,
+  pag_ibig_id_path text,
+  philhealth_id_path text,
+  security_license_path text,
+  client_contact_num character varying,
+  client_email character varying,
+  present_address character varying,
+  province_address character varying,
+  emergency_contact_person character varying,
+  emergency_contact_num character varying,
+  status character varying,
+  CONSTRAINT applicants_pkey PRIMARY KEY (applicant_id)
+);
+CREATE TABLE public.biodata (
+  applicant_id uuid NOT NULL,
+  applicant_form bytea,
+  CONSTRAINT biodata_pkey PRIMARY KEY (applicant_id),
+  CONSTRAINT biodata_applicant_id_fkey FOREIGN KEY (applicant_id) REFERENCES public.applicants(applicant_id)
+);
+CREATE TABLE public.certificates (
+  applicant_id uuid NOT NULL,
+  -- Store images/files in Supabase Storage bucket: 'certificates'
+  -- Put the Storage object's path (object name) here, not raw bytes.
+  training_path text,
+  seminar_path text,
+  highschool_diploma_path text,
+  college_diploma_path text,
+  vocational_path text,
+  course_title_degree character varying,
+  CONSTRAINT certificates_pkey PRIMARY KEY (applicant_id),
+  CONSTRAINT certificates_applicant_id_fkey FOREIGN KEY (applicant_id) REFERENCES public.applicants(applicant_id)
+);
+CREATE TABLE public.deployment_history (
+  history_id uuid NOT NULL DEFAULT gen_random_uuid(),
+  deployment_id uuid NOT NULL,
+  applicant_id uuid NOT NULL,
+  detachment character varying,
+  dp_status character varying,
+  change_date date NOT NULL DEFAULT CURRENT_DATE,
+  remarks text,
+  CONSTRAINT deployment_history_pkey PRIMARY KEY (history_id),
+  CONSTRAINT deployment_history_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployment_status(deployment_id),
+  CONSTRAINT deployment_history_applicant_id_fkey FOREIGN KEY (applicant_id) REFERENCES public.applicants(applicant_id)
+);
+CREATE TABLE public.deployment_status (
+  deployment_id uuid NOT NULL DEFAULT gen_random_uuid(),
+  applicant_id uuid NOT NULL,
+  detachment character varying,
+  client_position character varying,
+  shift character varying,
+  start_date date,
+  expected_end_date date,
+  deployment_status character varying NOT NULL DEFAULT 'ACTIVE'::character varying,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT deployment_status_pkey PRIMARY KEY (deployment_id),
+  CONSTRAINT deployment_status_applicant_id_fkey FOREIGN KEY (applicant_id) REFERENCES public.applicants(applicant_id)
+);
+CREATE TABLE public.employment_record (
+  applicant_id uuid NOT NULL,
+  company_name character varying,
+  position character varying,
+  leave_reason character varying,
+  CONSTRAINT employment_record_pkey PRIMARY KEY (applicant_id),
+  CONSTRAINT employment_record_applicant_id_fkey FOREIGN KEY (applicant_id) REFERENCES public.applicants(applicant_id)
+);
+CREATE TABLE public.licensure (
+  applicant_id uuid NOT NULL,
+  driver_license_number character varying,
+  driver_expiration date,
+  security_license_number character varying,
+  security_expiration date,
+  insurance character varying,
+  insurance_expiration date,
+  CONSTRAINT licensure_pkey PRIMARY KEY (applicant_id),
+  CONSTRAINT licenseure_applicant_id_fkey FOREIGN KEY (applicant_id) REFERENCES public.applicants(applicant_id)
+);
