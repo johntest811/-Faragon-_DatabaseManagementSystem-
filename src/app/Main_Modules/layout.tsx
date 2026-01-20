@@ -14,7 +14,6 @@ import {
   Search,
   ChevronLeft,
   Power,
-  Settings,
 } from "lucide-react";
 
 /**
@@ -46,9 +45,13 @@ export default function Sidebar() {
 
   const menu = [
     { name: "Dashboard", href: "/dashboard", icon: LayoutGrid },
+    { name: "Inbox", href: "/dashboard/inbox", icon: Mail },
     { name: "Calendar", href: "/dashboard/calendar", icon: Calendar },
     { name: "Employees", href: "/dashboard/employees", icon: Users },
-    { name: "Settings", href: "/dashboard/setting", icon: Settings },
+    { name: "Attendance", href: "/dashboard/attendance", icon: Clock },
+    { name: "Performance", href: "/dashboard/performance", icon: BarChart3 },
+    { name: "Payroll", href: "/dashboard/payroll", icon: Wallet },
+    { name: "Leave Management", href: "/dashboard/leave", icon: FileText },
     { name: "Recruitment", href: "/dashboard/recruitment", icon: Search },
   ];
 
