@@ -98,3 +98,4 @@ npm audit
 - npm ci
 - npm install --save-dev cross-env
 - npm install --save-dev cross-env
+npm install lucide-react
