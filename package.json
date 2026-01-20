@@ -13,17 +13,18 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.90.1",
-    "next": "16.1.2",
-    "react": "19.2.3",
-    "react-dom": "19.2.3",
+    "lucide-react": "^0.562.0",
+    "next": "^16.1.2",
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3",
     "tar": "^7.5.3"
   },
   "devDependencies": {
     "@electron/rebuild": "^0.0.0",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
-    "@types/react": "^19",
-    "@types/react-dom": "^19",
+    "@types/react": "^19.2.8",
+    "@types/react-dom": "^19.2.3",
     "concurrently": "*",
     "cross-env": "^10.1.0",
     "electron": "^39.2.7",
@@ -31,7 +32,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.1.2",
     "tailwindcss": "^4",
-    "typescript": "5.9.3",
+    "typescript": "^5.9.3",
     "wait-on": "*"
   },
   "overrides": {
