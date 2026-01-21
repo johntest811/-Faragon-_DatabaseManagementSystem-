@@ -1,21 +1,10 @@
 -- WARNING: This schema is for context only and is not meant to be run.
 -- Table order and constraints may not be valid for execution.
 
-CREATE TABLE public.admin_profiles (
-  user_id uuid NOT NULL,
-  username text UNIQUE,
-  full_name text,
-  position text,
-  is_active boolean NOT NULL DEFAULT true,
-  created_at timestamp with time zone NOT NULL DEFAULT now(),
-  CONSTRAINT admin_profiles_pkey PRIMARY KEY (user_id),
-  CONSTRAINT admin_profiles_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id)
-);
 CREATE TABLE public.admin_role_memberships (
   user_id uuid NOT NULL,
   role_id uuid NOT NULL,
   CONSTRAINT admin_role_memberships_pkey PRIMARY KEY (user_id, role_id),
-  CONSTRAINT admin_role_memberships_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.admin_profiles(user_id),
   CONSTRAINT admin_role_memberships_role_id_fkey FOREIGN KEY (role_id) REFERENCES public.app_roles(role_id)
 );
 CREATE TABLE public.admins (
@@ -29,7 +18,8 @@ CREATE TABLE public.admins (
   full_name text,
   position text CHECK ("position" = ANY (ARRAY['Supervisor'::text, 'Employee'::text, 'Manager'::text, 'Admin'::text, 'Superadmin'::text])),
   is_active boolean DEFAULT true,
-  password text NOT NULL DEFAULT 'admin123'::text
+  password text NOT NULL DEFAULT 'admin123'::text,
+  CONSTRAINT admins_pkey PRIMARY KEY (id)
 );
 CREATE TABLE public.app_roles (
   role_id uuid NOT NULL DEFAULT gen_random_uuid(),
@@ -71,7 +61,12 @@ CREATE TABLE public.applicants (
   is_archived boolean NOT NULL DEFAULT false,
   archived_at timestamp with time zone,
   archived_by uuid,
-  CONSTRAINT applicants_pkey PRIMARY KEY (applicant_id)
+  is_trashed boolean NOT NULL DEFAULT false,
+  trashed_at timestamp with time zone,
+  trashed_by uuid,
+  CONSTRAINT applicants_pkey PRIMARY KEY (applicant_id),
+  CONSTRAINT applicants_archived_by_fkey FOREIGN KEY (archived_by) REFERENCES public.admins(id),
+  CONSTRAINT applicants_trashed_by_fkey FOREIGN KEY (trashed_by) REFERENCES public.admins(id)
 );
 CREATE TABLE public.biodata (
   applicant_id uuid NOT NULL,

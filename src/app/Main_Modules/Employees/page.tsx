@@ -4,7 +4,8 @@ import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../Client/SupabaseClients";
-import { Pencil, Eye, SlidersHorizontal, ChevronDown } from "lucide-react";
+import { Pencil, Eye, SlidersHorizontal, ChevronDown, Trash2 } from "lucide-react";
+import { useAuthRole } from "../../Client/useRbac";
 
 type Applicant = {
   applicant_id: string;
@@ -23,6 +24,7 @@ type Applicant = {
   client_email: string | null;
   profile_image_path: string | null;
 	is_archived: boolean | null;
+	is_trashed?: boolean | null;
 };
 
 const BUCKETS = {
@@ -90,32 +92,22 @@ export default function EmployeesPage() {
 	const [archiveOpen, setArchiveOpen] = useState(false);
 	const [archiveEmployee, setArchiveEmployee] = useState<Applicant | null>(null);
 
-	const [sessionRole, setSessionRole] = useState<"superadmin" | "admin" | "employee" | null>(null);
-	useEffect(() => {
-		const raw = localStorage.getItem("adminSession");
-		if (!raw) return;
-		try {
-			const parsed = JSON.parse(raw);
-			const r = String(parsed?.role || "").toLowerCase();
-			if (r === "superadmin" || r === "admin" || r === "employee") {
-				setSessionRole(r);
-			}
-		} catch {
-			// ignore
-		}
-	}, []);
+	const { role: sessionRole } = useAuthRole();
 
-	useEffect(() => {
-		const fetchEmployees = async () => {
+	const [trashOpen, setTrashOpen] = useState(false);
+	const [trashEmployee, setTrashEmployee] = useState<Applicant | null>(null);
+
+	async function fetchEmployees() {
 			setLoading(true);
 			setError("");
 			try {
 				const { data, error: fetchError } = await supabase
 					.from("applicants")
 					.select(
-						"applicant_id, created_at, first_name, middle_name, last_name, extn_name, client_position, detachment, status, gender, birth_date, age, client_contact_num, client_email, profile_image_path, is_archived"
+						"applicant_id, created_at, first_name, middle_name, last_name, extn_name, client_position, detachment, status, gender, birth_date, age, client_contact_num, client_email, profile_image_path, is_archived, is_trashed"
 					)
 					.eq("is_archived", false)
+					.eq("is_trashed", false)
 					.order("created_at", { ascending: false })
 					.limit(200);
 
@@ -133,9 +125,25 @@ export default function EmployeesPage() {
 			} finally {
 				setLoading(false);
 			}
-		};
+	}
 
+	useEffect(() => {
 		fetchEmployees();
+
+		const channel = supabase
+			.channel("realtime:applicants-employees")
+			.on(
+				"postgres_changes",
+				{ event: "*", schema: "public", table: "applicants" },
+				() => {
+					fetchEmployees();
+				}
+			)
+			.subscribe();
+
+		return () => {
+			supabase.removeChannel(channel);
+		};
 	}, []);
 
 	const filtered = useMemo(() => {
@@ -178,6 +186,11 @@ export default function EmployeesPage() {
 		setArchiveOpen(true);
 	}
 
+	function openTrash(employee: Applicant) {
+		setTrashEmployee(employee);
+		setTrashOpen(true);
+	}
+
 	async function confirmArchive() {
 		if (!archiveEmployee) return;
 		setError("");
@@ -195,6 +208,25 @@ export default function EmployeesPage() {
 		setEmployees((prev) => prev.filter((e) => e.applicant_id !== archiveEmployee.applicant_id));
 		setArchiveOpen(false);
 		setArchiveEmployee(null);
+	}
+
+	async function confirmTrash() {
+		if (!trashEmployee) return;
+		setError("");
+		const { error: updateError } = await supabase
+			.from("applicants")
+			.update({ is_trashed: true, trashed_at: new Date().toISOString() })
+			.eq("applicant_id", trashEmployee.applicant_id);
+
+		if (updateError) {
+			console.error(updateError);
+			setError(updateError.message || "Failed to move employee to Trash");
+			return;
+		}
+
+		setEmployees((prev) => prev.filter((e) => e.applicant_id !== trashEmployee.applicant_id));
+		setTrashOpen(false);
+		setTrashEmployee(null);
 	}
 
 	async function saveEdit() {
@@ -270,7 +302,8 @@ export default function EmployeesPage() {
 			status: "ACTIVE",
 		});
 
-		router.push(`/Main_Modules/Employees/details/?id=${encodeURIComponent((data as any).applicant_id)}`);
+		const created = data as Applicant;
+		router.push(`/Main_Modules/Employees/details/?id=${encodeURIComponent(created.applicant_id)}`);
 	}
 
 	return (
@@ -333,59 +366,24 @@ export default function EmployeesPage() {
 						const name = getFullName(e);
 						const profileUrl = getProfileUrl(e.profile_image_path);
 						return (
-							<div
-								key={e.applicant_id}
-								className="bg-white rounded-3xl border shadow-sm p-6 hover:shadow-md transition-shadow"
-							>
-								<Link
-									href={`/Main_Modules/Employees/details/?id=${encodeURIComponent(e.applicant_id)}`}
-									className="block"
-								>
-									<div className="flex flex-col items-center text-center">
-										<div className="h-28 w-28 rounded-2xl bg-gray-100 overflow-hidden flex items-center justify-center">
-											{profileUrl ? (
-												<img
-													src={profileUrl}
-													alt={name}
-													className="h-full w-full object-cover"
-												/>
-											) : (
-												<div className="text-xs text-gray-500">No Photo</div>
-											)}
-										</div>
-
-										<div className="mt-3 text-xs text-gray-500 font-semibold">
-											{shortCode(e.applicant_id)}
-										</div>
-										<div className="mt-1 text-lg font-extrabold tracking-wide text-gray-900 uppercase">
-											{name}
-										</div>
+							<div key={e.applicant_id} className="bg-white rounded-3xl border shadow-sm p-6">
+								<div className="flex items-center gap-4">
+									<div className="h-16 w-16 rounded-2xl bg-gray-100 overflow-hidden flex items-center justify-center">
+										{profileUrl ? (
+											<img src={profileUrl} alt={name} className="h-full w-full object-cover" />
+										) : (
+											<div className="text-xs text-gray-500">No Photo</div>
+										)}
 									</div>
-								</Link>
-
-								<div className="mt-4 border rounded-2xl overflow-hidden">
-									<div className="grid grid-cols-2 text-sm">
-										<div className="px-4 py-3 text-gray-700">Job Title</div>
-										<div className="px-4 py-3 font-semibold text-gray-900 text-right">
-											{e.client_position ?? "—"}
-										</div>
-									</div>
-									<div className="h-px bg-gray-100" />
-									<div className="grid grid-cols-2 text-sm">
-										<div className="px-4 py-3 text-gray-700">Detachment</div>
-										<div className="px-4 py-3 font-semibold text-gray-900 text-right">
-											{e.detachment ?? "—"}
-										</div>
+									<div className="min-w-0">
+										<div className="text-sm font-bold text-gray-900 truncate">{name}</div>
+										<div className="text-xs text-gray-500 truncate">{e.client_position ?? "—"}</div>
+										<div className="text-xs text-gray-500 truncate">{e.detachment ?? "—"}</div>
 									</div>
 								</div>
 
-								<div className="mt-4 flex items-center justify-between gap-2">
-									<div className="flex items-center gap-2">
-										<span className="px-3 py-1 rounded-full text-xs font-semibold bg-yellow-100 text-yellow-800">
-											{e.status ?? "—"}
-										</span>
-									</div>
-
+								<div className="mt-4 flex items-center justify-between">
+									<span className="text-xs text-gray-500">{shortCode(e.applicant_id)}</span>
 									<div className="flex items-center gap-2">
 										<button
 											onClick={() => router.push(`/Main_Modules/Employees/details/?id=${encodeURIComponent(e.applicant_id)}`)}
@@ -395,22 +393,32 @@ export default function EmployeesPage() {
 											<Eye className="w-4 h-4" />
 										</button>
 										{sessionRole !== "employee" ? (
-											<>
-												<button
-													onClick={() => openEdit(e)}
-													className="h-9 w-9 rounded-xl border bg-white flex items-center justify-center text-black"
-													title="Edit"
-												>
-													<Pencil className="w-4 h-4" />
-												</button>
-												<button
-													onClick={() => openArchive(e)}
-													className="h-9 px-3 rounded-xl bg-gray-900 text-white text-xs font-semibold"
-													title="Archive"
-												>
-													Archive
-												</button>
-											</>
+											<button
+												onClick={() => openEdit(e)}
+												className="h-9 w-9 rounded-xl border bg-white flex items-center justify-center text-black"
+												title="Edit"
+											>
+												<Pencil className="w-4 h-4" />
+											</button>
+										) : null}
+										{sessionRole !== "employee" ? (
+											<button
+												onClick={() => openArchive(e)}
+												className="h-9 px-3 rounded-xl bg-[#FFDA03] text-black text-xs font-semibold"
+												title="Archive"
+											>
+												Archive
+											</button>
+										) : null}
+
+										{sessionRole === "superadmin" ? (
+											<button
+												onClick={() => openTrash(e)}
+												className="h-9 w-9 rounded-xl border bg-white flex items-center justify-center text-red-600"
+												title="Move to Trash"
+											>
+												<Trash2 className="w-4 h-4" />
+											</button>
 										) : null}
 									</div>
 								</div>
@@ -419,6 +427,37 @@ export default function EmployeesPage() {
 					})}
 				</div>
 			)}
+
+			{/* Trash confirm */}
+			{trashOpen ? (
+				<div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
+					<div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6">
+						<div className="text-lg font-bold text-black">Move to Trash?</div>
+						<div className="mt-2 text-sm text-gray-600">
+							This will hide the employee from Employees/Archive. You can restore it from Trash.
+						</div>
+						<div className="mt-5 flex items-center justify-end gap-2">
+							<button
+								onClick={() => {
+									setTrashOpen(false);
+									setTrashEmployee(null);
+								}}
+								className="px-4 py-2 rounded-xl bg-white border"
+							>
+								Cancel
+							</button>
+							<button
+								onClick={confirmTrash}
+								className="px-4 py-2 rounded-xl bg-red-600 text-white font-semibold"
+							>
+								Move to Trash
+							</button>
+						</div>
+					</div>
+				</div>
+			) : null}
+
+	
 
 			{/* Edit Modal */}
 			{editOpen && editEmployee ? (

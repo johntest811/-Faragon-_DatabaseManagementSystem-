@@ -54,6 +54,7 @@ export default function ArchivePage() {
           "applicant_id, created_at, first_name, middle_name, last_name, extn_name, client_position, detachment, status, profile_image_path, is_archived, archived_at"
         )
         .eq("is_archived", true)
+        .eq("is_trashed", false)
         .order("archived_at", { ascending: false })
         .limit(200);
 
@@ -68,6 +69,19 @@ export default function ArchivePage() {
     };
 
     run();
+
+    const channel = supabase
+      .channel("realtime:applicants-archive")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "applicants" },
+        () => run()
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   const filtered = useMemo(() => {

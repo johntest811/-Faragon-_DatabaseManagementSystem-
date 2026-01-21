@@ -11,29 +11,6 @@ export default function Login() {
   const [isLoading, setIsLoading] = useState(false);
   const router = useRouter();
 
-  async function logActivity(payload: {
-    admin_id: string;
-    admin_name: string;
-    action: string;
-    details?: string;
-    metadata?: Record<string, unknown>;
-  }) {
-    try {
-      await supabase.from('activity_logs').insert({
-        admin_id: payload.admin_id,
-        admin_name: payload.admin_name,
-        action: payload.action,
-        details: payload.details ?? null,
-        metadata: payload.metadata ?? null,
-        created_at: new Date().toISOString(),
-      });
-      return { success: true };
-    } catch (e) {
-      console.warn('Activity log failed', e);
-      return { success: false, error: e };
-    }
-  }
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
@@ -46,26 +23,27 @@ export default function Login() {
     }
 
     try {
-      const { data: adminData, error: adminError } = await supabase
+      const { data: admin, error: adminError } = await supabase
         .from('admins')
-        .select('id, username, password, position, role, is_active, full_name')
+        .select('id, username, password, role, position, full_name, is_active')
         .eq('username', username)
         .single();
 
-      if (adminError || !adminData) {
+      if (adminError || !admin) {
         setError('Invalid username or password');
         setIsLoading(false);
         return;
       }
 
-      if (!adminData.is_active) {
+      if (!admin.is_active) {
         setError('Account deactivated. Contact administrator.');
         setIsLoading(false);
         return;
       }
 
-      // NOTE: Plain-text check — replace with hashed compare in production
-      if (adminData.password !== password) {
+      // NOTE: This matches your current SQL schema (plain-text password column).
+      // If you later migrate to Supabase Auth, this should be removed.
+      if (String(admin.password ?? '') !== password) {
         setError('Invalid username or password');
         setIsLoading(false);
         return;
@@ -74,29 +52,20 @@ export default function Login() {
       await supabase
         .from('admins')
         .update({ last_login: new Date().toISOString() })
-        .eq('id', adminData.id);
+        .eq('id', admin.id);
 
       const sessionData = {
-        id: String(adminData.id),
-        username: adminData.username,
-        full_name: adminData.full_name ?? null,
-        position: adminData.position,
-        role: adminData.role,
+        id: String(admin.id),
+        username: admin.username,
+        full_name: admin.full_name ?? null,
+        position: admin.position ?? null,
+        role: admin.role,
         loginTime: new Date().toISOString(),
       };
       localStorage.setItem('adminSession', JSON.stringify(sessionData));
 
-      // non-blocking activity log
-      logActivity({
-        admin_id: String(adminData.id),
-        admin_name: adminData.username,
-        action: 'login',
-        details: `Logged in`,
-        metadata: { role: adminData.role, position: adminData.position },
-      });
-
-      router.push('/Main_Modules/Dashboard');
-    } catch (err: any) {
+      router.push('/Main_Modules/Dashboard/');
+    } catch (err: unknown) {
       console.error('Login error', err);
       setError('An unexpected error occurred. Try again.');
     } finally {
@@ -151,7 +120,9 @@ export default function Login() {
             <button
               type="submit"
               disabled={isLoading}
-              className={`w-full py-2 px-4 rounded-md text-white bg-yellow-500 ${isLoading ? 'opacity-70 cursor-not-allowed' : ''}`}
+              className={`w-full py-2 px-4 rounded-md text-white bg-yellow-500 ${
+                isLoading ? 'opacity-70 cursor-not-allowed' : ''
+              }`}
             >
               {isLoading ? 'Signing in...' : 'Sign in'}
             </button>

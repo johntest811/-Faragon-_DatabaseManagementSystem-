@@ -104,7 +104,15 @@ function publicUrl(bucket: string, path: string | null) {
   return data.publicUrl || null;
 }
 
-function InfoRow({ icon: Icon, label, value }: { icon: any; label: string; value: React.ReactNode }) {
+function InfoRow({
+  icon: Icon,
+  label,
+  value,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+  value: React.ReactNode;
+}) {
   return (
     <div className="flex items-start gap-3">
       <div className="h-10 w-10 rounded-xl bg-[#FFDA03] flex items-center justify-center shrink-0">
@@ -208,15 +216,45 @@ export default function EmployeeDetailsPage() {
         setCerts((cRes.data as Certificates) || null);
         setEmployment((eRes.data as EmploymentRecord) || null);
         setLic((lRes.data as Licensure) || null);
-      } catch (e: any) {
-        console.error(e);
-        setError(e?.message || "Failed to load employee");
+      } catch (e: unknown) {
+       
+        setError(e instanceof Error ? e.message : "Failed to load employee");
       } finally {
         setLoading(false);
       }
     };
 
     run();
+
+    // Auto-refresh if anything changes for this employee.
+    // (Simple approach: any change triggers a refetch; keeps UI consistent.)
+    const channel = supabase
+      .channel(`realtime:employee:${id ?? "none"}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "applicants" },
+        () => run()
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "certificates" },
+        () => run()
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "employment_record" },
+        () => run()
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "licensure" },
+        () => run()
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [id]);
 
   const profile = useMemo(() => {

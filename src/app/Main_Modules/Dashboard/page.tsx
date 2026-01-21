@@ -3,53 +3,72 @@
 import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '../../Client/SupabaseClients';
+import { useAuthRole } from '../../Client/useRbac';
 
-type Admin = {
+type AdminRow = {
   id: string;
   username: string;
   full_name?: string | null;
-  role?: string | null;
+  role: string;
   position?: string | null;
-  is_active?: boolean | null;
-  last_login?: string | null;
+  is_active: boolean;
+  created_at: string | null;
 };
 
 export default function DashboardPage() {
-  const [admins, setAdmins] = useState<Admin[]>([]);
+  const { role } = useAuthRole();
+  const [admins, setAdmins] = useState<AdminRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const router = useRouter();
 
-  useEffect(() => {
-    const fetchAdmins = async () => {
-      setLoading(true);
-      setError('');
-      try {
-        const { data, error: fetchError } = await supabase
-          .from('admins')
-          .select('id, username, full_name, role, position, is_active, last_login')
-          .order('created_at', { ascending: false })
-          .limit(100);
+  async function fetchAdmins() {
+    setLoading(true);
+    setError('');
+    try {
+      const { data, error: fetchError } = await supabase
+        .from('admins')
+        .select('id, username, full_name, role, position, is_active, created_at')
+        .order('created_at', { ascending: false })
+        .limit(100);
 
-        if (fetchError) {
-          setError('Failed to load admins');
-          console.error(fetchError);
-        } else {
-          setAdmins(data || []);
-        }
-      } catch (err) {
-        console.error(err);
-        setError('Unexpected error');
-      } finally {
-        setLoading(false);
+      if (fetchError) {
+        setError('Failed to load admins');
+        console.error(fetchError);
+      } else {
+        setAdmins(data || []);
       }
-    };
+    } catch (err) {
+      console.error(err);
+      setError('Unexpected error');
+    } finally {
+      setLoading(false);
+    }
+  }
 
+  useEffect(() => {
     fetchAdmins();
+
+    const channel = supabase
+      .channel('realtime:user_profiles-admins')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'admins' },
+        () => fetchAdmins()
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   function handleLogout() {
-    localStorage.removeItem('adminSession');
+    try {
+      localStorage.removeItem('adminSession');
+    } catch {
+      // ignore
+    }
     router.push('/Login');
   }
 
@@ -58,7 +77,7 @@ export default function DashboardPage() {
       <div className="flex items-center justify-between gap-3 mb-4">
         <div>
           <div className="text-lg font-semibold text-black">Admins</div>
-          <div className="text-sm text-gray-500">Overview of admin accounts</div>
+          <div className="text-sm text-gray-500">Overview of accounts from public.admins</div>
         </div>
         <div className="flex items-center gap-2">
           <button
@@ -90,9 +109,8 @@ export default function DashboardPage() {
                 <th className="px-3 py-2">Username</th>
                 <th className="px-3 py-2">Full name</th>
                 <th className="px-3 py-2">Role</th>
-                <th className="px-3 py-2">Position</th>
                 <th className="px-3 py-2">Active</th>
-                <th className="px-3 py-2">Last login</th>
+                <th className="px-3 py-2">Created</th>
               </tr>
             </thead>
             <tbody>
@@ -100,16 +118,21 @@ export default function DashboardPage() {
                 <tr key={a.id} className="border-t">
                   <td className="px-3 py-2 text-black">{a.username}</td>
                   <td className="px-3 py-2 text-black">{a.full_name ?? '—'}</td>
-                  <td className="px-3 py-2 text-black">{a.role ?? '—'}</td>
-                  <td className="px-3 py-2 text-black">{a.position ?? '—'}</td>
+                  <td className="px-3 py-2 text-black">{a.role}</td>
                   <td className="px-3 py-2 text-black">{a.is_active ? 'Yes' : 'No'}</td>
-                  <td className="px-3 py-2 text-black">{a.last_login ? new Date(a.last_login).toLocaleString() : '—'}</td>
+                  <td className="px-3 py-2 text-black">
+                    {a.created_at ? new Date(a.created_at).toLocaleString() : '—'}
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
       )}
+
+      <div className="mt-4 text-xs text-gray-500">
+        Signed-in role: <span className="font-semibold">{role ?? 'unknown'}</span>
+      </div>
     </section>
   );
 }

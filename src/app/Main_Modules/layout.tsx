@@ -2,13 +2,16 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { supabase } from "../Client/SupabaseClients";
+import { useAuthRole, useMyModules } from "../Client/useRbac";
 import {
   LayoutGrid,
   Users,
   Archive,
   Shield,
   Settings,
+  Trash2,
   Bell,
   Search,
   ChevronLeft,
@@ -16,6 +19,15 @@ import {
 } from "lucide-react";
 
 type LayoutProps = Readonly<{ children: React.ReactNode }>;
+
+const ALL_MENU = [
+  { key: "dashboard", name: "Dashboard", href: "/Main_Modules/Dashboard/", icon: LayoutGrid },
+  { key: "employees", name: "Employees", href: "/Main_Modules/Employees/", icon: Users },
+  { key: "archive", name: "Archive", href: "/Main_Modules/Archive/", icon: Archive },
+  { key: "trash", name: "Trash", href: "/Main_Modules/Trash/", icon: Trash2 },
+  { key: "roles", name: "Roles", href: "/Main_Modules/Roles/", icon: Shield },
+  { key: "settings", name: "Settings", href: "/Main_Modules/Settings/", icon: Settings },
+] as const;
 
 function titleFromPath(pathname: string) {
   const clean = (pathname || "/").replace(/\/+$/, "");
@@ -28,68 +40,72 @@ function titleFromPath(pathname: string) {
 
 export default function MainModulesLayout({ children }: LayoutProps) {
   const router = useRouter();
+  const pathname = usePathname() ?? "";
   const [collapsed, setCollapsed] = useState(false);
-  const [currentPath, setCurrentPath] = useState<string>("");
   const [search, setSearch] = useState("");
-  const [sessionRole, setSessionRole] = useState<"superadmin" | "admin" | "employee" | null>(null);
+  const { role: sessionRole } = useAuthRole();
+  const { modules: myModules } = useMyModules();
+
+  function hasLegacySession() {
+    try {
+      return Boolean(localStorage.getItem("adminSession"));
+    } catch {
+      return false;
+    }
+  }
 
   useEffect(() => {
-    if (typeof window !== "undefined") {
-      setCurrentPath(window.location.pathname);
+    let cancelled = false;
+    async function ensureSession() {
+      if (hasLegacySession()) return;
 
-      const raw = localStorage.getItem("adminSession");
-      if (!raw) {
-        window.location.href = "/Login/";
-        return;
-      }
-
-      try {
-        const parsed = JSON.parse(raw);
-        const r = String(parsed?.role || "").toLowerCase();
-        if (r === "superadmin" || r === "admin" || r === "employee") {
-          setSessionRole(r);
-        } else {
-          setSessionRole("employee");
-        }
-      } catch {
-        window.location.href = "/Login/";
-      }
+      const { data } = await supabase.auth.getSession();
+      if (!cancelled && !data.session) window.location.href = "/Login/";
     }
+    ensureSession();
+    const { data: sub } = supabase.auth.onAuthStateChange((_evt, session) => {
+      if (!session && !hasLegacySession()) window.location.href = "/Login/";
+    });
+
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === "adminSession") ensureSession();
+    };
+    window.addEventListener("storage", onStorage);
+
+    return () => {
+      cancelled = true;
+      sub.subscription.unsubscribe();
+      window.removeEventListener("storage", onStorage);
+    };
   }, []);
 
-  const pageTitle = useMemo(() => titleFromPath(currentPath), [currentPath]);
-
-  const allMenu = [
-    { key: "dashboard", name: "Dashboard", href: "/Main_Modules/Dashboard/", icon: LayoutGrid },
-    { key: "employees", name: "Employees", href: "/Main_Modules/Employees/", icon: Users },
-    { key: "archive", name: "Archive", href: "/Main_Modules/Archive/", icon: Archive },
-    { key: "roles", name: "Roles", href: "/Main_Modules/Roles/", icon: Shield },
-    { key: "settings", name: "Settings", href: "/Main_Modules/Settings/", icon: Settings },
-    
-     
-  ] as const;
+  const pageTitle = useMemo(() => titleFromPath(pathname), [pathname]);
 
   const allowedKeys = useMemo(() => {
+    const fromDb = new Set(myModules.map((m) => m.module_key));
+    if (fromDb.size) return fromDb;
+
+    // Fallback (before migration is applied): keep UI usable.
     if (!sessionRole) return new Set<string>();
-    if (sessionRole === "superadmin") return new Set(allMenu.map((m) => m.key));
-    if (sessionRole === "admin") return new Set(["dashboard", "employees", "archive", "settings", "roles"]);
+    if (sessionRole === "superadmin") return new Set(ALL_MENU.map((m) => m.key));
+    if (sessionRole === "admin") return new Set(["dashboard", "employees", "archive", "trash", "settings", "roles"]);
     return new Set(["dashboard", "employees", "archive"]);
-  }, [sessionRole]);
+  }, [sessionRole, myModules]);
 
   const menu = useMemo(
-    () => allMenu.filter((m) => allowedKeys.has(m.key)),
+    () => ALL_MENU.filter((m) => allowedKeys.has(m.key)),
     [allowedKeys]
   );
 
   useEffect(() => {
-    if (!currentPath || !sessionRole) return;
-    const allowed = allMenu
+    if (!pathname || !sessionRole) return;
+    const allowed = ALL_MENU
       .filter((m) => allowedKeys.has(m.key))
-      .some((m) => currentPath === m.href || currentPath.startsWith(m.href));
+      .some((m) => pathname === m.href || pathname.startsWith(m.href));
     if (!allowed) {
       router.replace("/Main_Modules/Dashboard/");
     }
-  }, [currentPath, sessionRole, allowedKeys, router]);
+  }, [pathname, sessionRole, allowedKeys, router]);
 
   return (
     <div className="min-h-screen bg-gray-50 flex">
@@ -118,8 +134,8 @@ export default function MainModulesLayout({ children }: LayoutProps) {
         <nav className="flex-1 px-3 space-y-1">
           {menu.map((item) => {
             const active =
-              currentPath === item.href ||
-              currentPath.startsWith(item.href);
+              pathname === item.href ||
+              pathname.startsWith(item.href);
 
             return (
               <Link
@@ -157,8 +173,15 @@ export default function MainModulesLayout({ children }: LayoutProps) {
 
           <button
             onClick={() => {
-              localStorage.removeItem("adminSession");
-              window.location.href = "/Login/";
+              try {
+                localStorage.removeItem("adminSession");
+              } catch {
+                // ignore
+              }
+
+              supabase.auth.signOut().finally(() => {
+                window.location.href = "/Login/";
+              });
             }}
             className="w-full flex items-center gap-3 px-4 py-3 rounded-xl
               text-red-600 hover:bg-red-50 transition-all"
