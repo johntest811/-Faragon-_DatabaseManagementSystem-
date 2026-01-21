@@ -28,7 +28,7 @@ function readAdminSession(): AdminSession | null {
 }
 
 export function normalizeRoleName(value: unknown): RoleName {
-  const r = String(value ?? "").toLowerCase();
+  const r = String(value ?? "").trim().toLowerCase();
   if (r === "superadmin" || r === "admin" || r === "employee") return r;
   return null;
 }
@@ -48,9 +48,45 @@ export function useAuthRole() {
       // Legacy mode: username login via public.admins + localStorage session.
       const legacySession = readAdminSession();
       if (legacySession) {
-        if (!cancelled) {
-          setRole(normalizeRoleName(legacySession.role));
-          setLoading(false);
+        try {
+          const { data: adminRow, error: adminErr } = await supabase
+            .from("admins")
+            .select("role, is_active")
+            .eq("id", legacySession.id)
+            .single();
+
+          if (!cancelled) {
+            if (adminErr) {
+              // Fall back to whatever is currently in the local session.
+              setRole(normalizeRoleName(legacySession.role));
+              setLoading(false);
+              return;
+            }
+
+            if (adminRow && adminRow.is_active === false) {
+              localStorage.removeItem("adminSession");
+              setRole(null);
+              setLoading(false);
+              return;
+            }
+
+            const dbRole = normalizeRoleName(adminRow?.role);
+            const sessionRole = normalizeRoleName(legacySession.role);
+
+            // Keep role in sync if DB was changed after login.
+            if (dbRole && dbRole !== sessionRole) {
+              const merged = { ...legacySession, role: dbRole };
+              localStorage.setItem("adminSession", JSON.stringify(merged));
+            }
+
+            setRole(dbRole ?? sessionRole);
+            setLoading(false);
+          }
+        } catch {
+          if (!cancelled) {
+            setRole(normalizeRoleName(legacySession.role));
+            setLoading(false);
+          }
         }
         return;
       }
@@ -96,10 +132,22 @@ export function useAuthRole() {
     };
     window.addEventListener("storage", onStorage);
 
+    const onFocus = () => {
+      run();
+    };
+    window.addEventListener("focus", onFocus);
+
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") run();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+
     return () => {
       cancelled = true;
       authSub.subscription.unsubscribe();
       window.removeEventListener("storage", onStorage);
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisibility);
     };
   }, []);
 

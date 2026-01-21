@@ -1,130 +1,102 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../Client/SupabaseClients";
 import { Pencil, Eye, SlidersHorizontal, ChevronDown, Trash2 } from "lucide-react";
 import { useAuthRole } from "../../Client/useRbac";
+import EmployeeEditorModal from "../../Components/EmployeeEditorModal";
 
 type Applicant = {
-  applicant_id: string;
-  created_at: string;
-  first_name: string | null;
-  middle_name: string | null;
-  last_name: string | null;
-  extn_name: string | null;
-  client_position: string | null;
-  detachment: string | null;
-  status: string | null;
-  gender: string | null;
-  birth_date: string | null;
-  age: number | null;
-  client_contact_num: string | null;
-  client_email: string | null;
-  profile_image_path: string | null;
+	applicant_id: string;
+	created_at: string;
+	first_name: string | null;
+	middle_name: string | null;
+	last_name: string | null;
+	extn_name: string | null;
+	client_position: string | null;
+	detachment: string | null;
+	status: string | null;
+	gender: string | null;
+	birth_date: string | null;
+	age: number | null;
+	client_contact_num: string | null;
+	client_email: string | null;
+	profile_image_path: string | null;
 	is_archived: boolean | null;
 	is_trashed?: boolean | null;
 };
 
 const BUCKETS = {
-  profile: "Profile_Images",
+	profile: "Profile_Images",
 };
 
 function getFullName(a: Applicant) {
-  const parts = [a.first_name, a.middle_name, a.last_name, a.extn_name].filter(Boolean);
-  return parts.length ? parts.join(" ") : "(No name)";
+	const parts = [a.first_name, a.middle_name, a.last_name, a.extn_name].filter(Boolean);
+	return parts.length ? parts.join(" ") : "(No name)";
 }
 
 function getProfileUrl(profilePath: string | null) {
-  if (!profilePath) return null;
-  const { data } = supabase.storage.from(BUCKETS.profile).getPublicUrl(profilePath);
-  return data.publicUrl || null;
+	if (!profilePath) return null;
+	const { data } = supabase.storage.from(BUCKETS.profile).getPublicUrl(profilePath);
+	return data.publicUrl || null;
 }
 
 function shortCode(id: string) {
-  return `EMP-${id.slice(0, 2).toUpperCase()}-${id.slice(2, 5).toUpperCase()}`;
+	return `EMP-${id.slice(0, 2).toUpperCase()}-${id.slice(2, 5).toUpperCase()}`;
 }
 
-type EditDraft = {
-  detachment: string;
-  client_position: string;
-  status: string;
-  client_contact_num: string;
-  client_email: string;
-};
-
-type CreateDraft = {
-	first_name: string;
-	last_name: string;
-	client_position: string;
-	detachment: string;
-	status: string;
-};
+function normalizeStatus(input: string | null) {
+	const v = (input ?? "").trim().toUpperCase();
+	if (!v) return "ACTIVE";
+	if (v === "ACTIVE" || v === "INACTIVE") return v;
+	return "ACTIVE";
+}
 
 export default function EmployeesPage() {
 	const router = useRouter();
+	const { role: sessionRole } = useAuthRole();
+
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string>("");
 	const [employees, setEmployees] = useState<Applicant[]>([]);
 	const [search, setSearch] = useState("");
 	const [sortBy, setSortBy] = useState<"name" | "created_at">("name");
 
-	const [editOpen, setEditOpen] = useState(false);
-	const [editEmployee, setEditEmployee] = useState<Applicant | null>(null);
-	const [editDraft, setEditDraft] = useState<EditDraft>({
-		detachment: "",
-		client_position: "",
-		status: "",
-		client_contact_num: "",
-		client_email: "",
-	});
-
-	const [createOpen, setCreateOpen] = useState(false);
-	const [createDraft, setCreateDraft] = useState<CreateDraft>({
-		first_name: "",
-		last_name: "",
-		client_position: "",
-		detachment: "",
-		status: "ACTIVE",
-	});
+	const [editorOpen, setEditorOpen] = useState(false);
+	const [editorMode, setEditorMode] = useState<"create" | "edit">("edit");
+	const [editorApplicantId, setEditorApplicantId] = useState<string | null>(null);
 
 	const [archiveOpen, setArchiveOpen] = useState(false);
 	const [archiveEmployee, setArchiveEmployee] = useState<Applicant | null>(null);
-
-	const { role: sessionRole } = useAuthRole();
 
 	const [trashOpen, setTrashOpen] = useState(false);
 	const [trashEmployee, setTrashEmployee] = useState<Applicant | null>(null);
 
 	async function fetchEmployees() {
-			setLoading(true);
-			setError("");
-			try {
-				const { data, error: fetchError } = await supabase
-					.from("applicants")
-					.select(
-						"applicant_id, created_at, first_name, middle_name, last_name, extn_name, client_position, detachment, status, gender, birth_date, age, client_contact_num, client_email, profile_image_path, is_archived, is_trashed"
-					)
-					.eq("is_archived", false)
-					.eq("is_trashed", false)
-					.order("created_at", { ascending: false })
-					.limit(200);
+		setLoading(true);
+		setError("");
+		try {
+			const { data, error: fetchError } = await supabase
+				.from("applicants")
+				.select(
+					"applicant_id, created_at, first_name, middle_name, last_name, extn_name, client_position, detachment, status, gender, birth_date, age, client_contact_num, client_email, profile_image_path, is_archived, is_trashed"
+				)
+				.eq("is_archived", false)
+				.eq("is_trashed", false)
+				.order("created_at", { ascending: false })
+				.limit(500);
 
-				if (fetchError) {
-					console.error(fetchError);
-					setError(fetchError.message || "Failed to load employees");
-					setEmployees([]);
-				} else {
-					setEmployees((data as Applicant[]) || []);
-				}
-			} catch (e) {
-				console.error(e);
-				setError("Unexpected error while loading employees");
+			if (fetchError) {
+				console.error(fetchError);
+				setError(fetchError.message || "Failed to load employees");
 				setEmployees([]);
-			} finally {
-				setLoading(false);
+			} else {
+				setEmployees((data as Applicant[]) || []);
 			}
+		} finally {
+			setLoading(false);
+		}
 	}
 
 	useEffect(() => {
@@ -132,13 +104,7 @@ export default function EmployeesPage() {
 
 		const channel = supabase
 			.channel("realtime:applicants-employees")
-			.on(
-				"postgres_changes",
-				{ event: "*", schema: "public", table: "applicants" },
-				() => {
-					fetchEmployees();
-				}
-			)
+			.on("postgres_changes", { event: "*", schema: "public", table: "applicants" }, () => fetchEmployees())
 			.subscribe();
 
 		return () => {
@@ -149,6 +115,7 @@ export default function EmployeesPage() {
 	const filtered = useMemo(() => {
 		const q = search.trim().toLowerCase();
 		let list = employees;
+
 		if (q) {
 			list = list.filter((e) => {
 				const name = getFullName(e).toLowerCase();
@@ -160,25 +127,27 @@ export default function EmployeesPage() {
 				);
 			});
 		}
+
 		const sorted = [...list].sort((a, b) => {
 			if (sortBy === "created_at") {
 				return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
 			}
 			return getFullName(a).localeCompare(getFullName(b));
 		});
+
 		return sorted;
 	}, [employees, search, sortBy]);
 
+	function openCreate() {
+		setEditorMode("create");
+		setEditorApplicantId(null);
+		setEditorOpen(true);
+	}
+
 	function openEdit(employee: Applicant) {
-		setEditEmployee(employee);
-		setEditDraft({
-			detachment: employee.detachment ?? "",
-			client_position: employee.client_position ?? "",
-			status: employee.status ?? "",
-			client_contact_num: employee.client_contact_num ?? "",
-			client_email: employee.client_email ?? "",
-		});
-		setEditOpen(true);
+		setEditorMode("edit");
+		setEditorApplicantId(employee.applicant_id);
+		setEditorOpen(true);
 	}
 
 	function openArchive(employee: Applicant) {
@@ -186,17 +155,19 @@ export default function EmployeesPage() {
 		setArchiveOpen(true);
 	}
 
-	function openTrash(employee: Applicant) {
-		setTrashEmployee(employee);
-		setTrashOpen(true);
-	}
-
 	async function confirmArchive() {
 		if (!archiveEmployee) return;
 		setError("");
+		const normalizedStatus = normalizeStatus(archiveEmployee.status);
+
 		const { error: updateError } = await supabase
 			.from("applicants")
-			.update({ is_archived: true, archived_at: new Date().toISOString() })
+			.update({
+				is_archived: true,
+				archived_at: new Date().toISOString(),
+				archived_by: null,
+				status: normalizedStatus,
+			})
 			.eq("applicant_id", archiveEmployee.applicant_id);
 
 		if (updateError) {
@@ -210,12 +181,27 @@ export default function EmployeesPage() {
 		setArchiveEmployee(null);
 	}
 
+	function openTrash(employee: Applicant) {
+		setTrashEmployee(employee);
+		setTrashOpen(true);
+	}
+
 	async function confirmTrash() {
 		if (!trashEmployee) return;
 		setError("");
+		const normalizedStatus = normalizeStatus(trashEmployee.status);
+
 		const { error: updateError } = await supabase
 			.from("applicants")
-			.update({ is_trashed: true, trashed_at: new Date().toISOString() })
+			.update({
+				is_trashed: true,
+				trashed_at: new Date().toISOString(),
+				trashed_by: null,
+				is_archived: false,
+				archived_at: null,
+				archived_by: null,
+				status: normalizedStatus,
+			})
 			.eq("applicant_id", trashEmployee.applicant_id);
 
 		if (updateError) {
@@ -229,95 +215,23 @@ export default function EmployeesPage() {
 		setTrashEmployee(null);
 	}
 
-	async function saveEdit() {
-		if (!editEmployee) return;
-		setError("");
-		const { error: updateError } = await supabase
-			.from("applicants")
-			.update({
-				detachment: editDraft.detachment || null,
-				client_position: editDraft.client_position || null,
-				status: editDraft.status || null,
-				client_contact_num: editDraft.client_contact_num || null,
-				client_email: editDraft.client_email || null,
-			})
-			.eq("applicant_id", editEmployee.applicant_id);
-
-		if (updateError) {
-			console.error(updateError);
-			setError(updateError.message || "Failed to update employee");
-			return;
+	async function onSaved(applicantId: string) {
+		await fetchEmployees();
+		if (editorMode === "create") {
+			router.push(`/Main_Modules/Employees/details/?id=${encodeURIComponent(applicantId)}`);
 		}
-
-		setEmployees((prev) =>
-			prev.map((e) =>
-				e.applicant_id === editEmployee.applicant_id
-					? {
-						...e,
-						detachment: editDraft.detachment || null,
-						client_position: editDraft.client_position || null,
-						status: editDraft.status || null,
-						client_contact_num: editDraft.client_contact_num || null,
-						client_email: editDraft.client_email || null,
-					}
-					: e
-			)
-		);
-
-		setEditOpen(false);
-		setEditEmployee(null);
-	}
-
-	async function createEmployee() {
-		setError("");
-		const payload = {
-			first_name: createDraft.first_name || null,
-			last_name: createDraft.last_name || null,
-			client_position: createDraft.client_position || null,
-			detachment: createDraft.detachment || null,
-			status: createDraft.status || null,
-		};
-
-		const { data, error: insertError } = await supabase
-			.from("applicants")
-			.insert(payload)
-			.select(
-				"applicant_id, created_at, first_name, middle_name, last_name, extn_name, client_position, detachment, status, gender, birth_date, age, client_contact_num, client_email, profile_image_path, is_archived"
-			)
-			.single();
-
-		if (insertError) {
-			console.error(insertError);
-			setError(insertError.message || "Failed to create employee");
-			return;
-		}
-
-		setEmployees((prev) => [data as Applicant, ...prev]);
-		setCreateOpen(false);
-		setCreateDraft({
-			first_name: "",
-			last_name: "",
-			client_position: "",
-			detachment: "",
-			status: "ACTIVE",
-		});
-
-		const created = data as Applicant;
-		router.push(`/Main_Modules/Employees/details/?id=${encodeURIComponent(created.applicant_id)}`);
 	}
 
 	return (
 		<div className="space-y-5">
-			<div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
-				<div className="flex items-center gap-3">
-					<div className="flex items-center gap-2 bg-white border rounded-full px-4 py-2 shadow-sm w-full lg:w-[360px]">
-						<input
-							value={search}
-							onChange={(e) => setSearch(e.target.value)}
-							placeholder="Search Anything"
-							className="outline-none text-sm w-full text-black"
-						/>
-					</div>
+			<div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+				<div className="flex items-center gap-3 text-black">
+					<input
+						value={search}
+						onChange={(e) => setSearch(e.target.value)}
+						placeholder="Search employees"
+						className="bg-white border rounded-full px-4 py-2 shadow-sm w-full md:w-[360px]"
+					/>
 					<button
 						type="button"
 						className="h-10 w-10 rounded-xl border bg-white flex items-center justify-center"
@@ -326,8 +240,7 @@ export default function EmployeesPage() {
 						<SlidersHorizontal className="w-5 h-5 text-gray-700" />
 					</button>
 				</div>
-
-				<div className="flex items-center gap-3 justify-between lg:justify-end">
+				<div className="flex items-center gap-3 justify-between md:justify-end">
 					<div className="flex items-center gap-2">
 						<div className="text-xs text-gray-500">Sort By:</div>
 						<button
@@ -338,12 +251,8 @@ export default function EmployeesPage() {
 							<ChevronDown className="w-4 h-4" />
 						</button>
 					</div>
-
 					{sessionRole !== "employee" ? (
-						<button
-							onClick={() => setCreateOpen(true)}
-							className="px-4 py-2 rounded-full bg-[#FFDA03] text-black font-semibold"
-						>
+						<button onClick={openCreate} className="px-4 py-2 rounded-full bg-[#FFDA03] text-black font-semibold">
 							New Employee
 						</button>
 					) : null}
@@ -353,20 +262,39 @@ export default function EmployeesPage() {
 			{error ? <div className="text-red-600 text-sm">{error}</div> : null}
 
 			{loading ? (
-				<div className="bg-white rounded-2xl border shadow-sm p-8 text-center text-gray-500">
-					Loading employees...
-				</div>
+				<div className="bg-white rounded-2xl border shadow-sm p-8 text-center text-gray-500">Loading employees...</div>
 			) : filtered.length === 0 ? (
-				<div className="bg-white rounded-2xl border shadow-sm p-8 text-center text-gray-500">
-					No employees found.
-				</div>
+				<div className="bg-white rounded-2xl border shadow-sm p-8 text-center text-gray-500">No employees found.</div>
 			) : (
 				<div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
 					{filtered.map((e) => {
 						const name = getFullName(e);
 						const profileUrl = getProfileUrl(e.profile_image_path);
+						const status = (e.status ?? "").trim().toUpperCase();
+						const isActive = status === "ACTIVE";
+						const canClick = sessionRole !== "employee";
+						const detailsHref = `/Main_Modules/Employees/details/?id=${encodeURIComponent(e.applicant_id)}`;
+
 						return (
-							<div key={e.applicant_id} className="bg-white rounded-3xl border shadow-sm p-6">
+							<div
+								key={e.applicant_id}
+								role={canClick ? "button" : undefined}
+								tabIndex={canClick ? 0 : -1}
+								onKeyDown={(ev) => {
+									if (!canClick) return;
+									if (ev.key === "Enter" || ev.key === " ") {
+										ev.preventDefault();
+										router.push(detailsHref);
+									}
+								}}
+								onClick={() => {
+									if (!canClick) return;
+									router.push(detailsHref);
+								}}
+								className={`bg-white rounded-3xl border shadow-sm p-6 ${
+									canClick ? "cursor-pointer hover:shadow-md transition" : ""
+								}`}
+							>
 								<div className="flex items-center gap-4">
 									<div className="h-16 w-16 rounded-2xl bg-gray-100 overflow-hidden flex items-center justify-center">
 										{profileUrl ? (
@@ -377,58 +305,83 @@ export default function EmployeesPage() {
 									</div>
 									<div className="min-w-0">
 										<div className="text-sm font-bold text-gray-900 truncate">{name}</div>
-										<div className="text-xs text-gray-500 truncate">{e.client_position ?? "—"}</div>
-										<div className="text-xs text-gray-500 truncate">{e.detachment ?? "—"}</div>
+										<div className="text-xs text-gray-500 truncate">{shortCode(e.applicant_id)}</div>
+										<div className="mt-1 text-xs text-gray-500 truncate">
+											<span className="text-gray-500">Job Title:</span> {e.client_position ?? "—"}
+										</div>
+										<div className="text-xs text-gray-500 truncate">
+											<span className="text-gray-500">Detachment:</span> {e.detachment ?? "—"}
+										</div>
 									</div>
 								</div>
 
-								<div className="mt-4 flex items-center justify-between">
-									<span className="text-xs text-gray-500">{shortCode(e.applicant_id)}</span>
+								<div className="mt-4 flex items-center justify-between gap-3">
+									<span
+										className={`px-3 py-1 rounded-full text-xs font-bold ${
+											isActive ? "bg-emerald-500 text-white" : "bg-red-500 text-white"
+										}`}
+									>
+										{status || "—"}
+									</span>
+
 									<div className="flex items-center gap-2">
 										<button
-											onClick={() => router.push(`/Main_Modules/Employees/details/?id=${encodeURIComponent(e.applicant_id)}`)}
-											className="h-9 w-9 rounded-xl border bg-white flex items-center justify-center text-black"
-											title="View"
-										>
-											<Eye className="w-4 h-4" />
-										</button>
-										{sessionRole !== "employee" ? (
-											<button
-												onClick={() => openEdit(e)}
-												className="h-9 w-9 rounded-xl border bg-white flex items-center justify-center text-black"
-												title="Edit"
-											>
-												<Pencil className="w-4 h-4" />
-											</button>
-										) : null}
-										{sessionRole !== "employee" ? (
-											<button
-												onClick={() => openArchive(e)}
-												className="h-9 px-3 rounded-xl bg-[#FFDA03] text-black text-xs font-semibold"
-												title="Archive"
-											>
-												Archive
-											</button>
-										) : null}
+											onClick={(ev) => {
+												ev.stopPropagation();
+											router.push(detailsHref);
+										}}
+										className="h-9 w-9 rounded-xl border bg-white flex items-center justify-center text-black"
+										title="View"
+									>
+										<Eye className="w-4 h-4" />
+									</button>
 
-										{sessionRole === "superadmin" ? (
-											<button
-												onClick={() => openTrash(e)}
-												className="h-9 w-9 rounded-xl border bg-white flex items-center justify-center text-red-600"
-												title="Move to Trash"
-											>
-												<Trash2 className="w-4 h-4" />
-											</button>
-										) : null}
-									</div>
+									{sessionRole !== "employee" && (
+										<button
+											onClick={(ev) => {
+												ev.stopPropagation();
+											openEdit(e);
+										}}
+										className="h-9 w-9 rounded-xl border bg-white flex items-center justify-center text-black"
+										title="Edit"
+									>
+										<Pencil className="w-4 h-4" />
+									</button>
+									)}
+
+									{sessionRole !== "employee" && (
+										<button
+											onClick={(ev) => {
+												ev.stopPropagation();
+											openArchive(e);
+										}}
+										className="h-9 px-3 rounded-xl bg-[#FFDA03] text-black text-xs font-semibold"
+										title="Archive"
+									>
+										Archive
+									</button>
+									)}
+
+									{sessionRole === "superadmin" && (
+										<button
+											onClick={(ev) => {
+												ev.stopPropagation();
+											openTrash(e);
+										}}
+										className="h-9 w-9 rounded-xl border bg-white flex items-center justify-center text-red-600"
+										title="Move to Trash"
+									>
+										<Trash2 className="w-4 h-4" />
+									</button>
+									)}
 								</div>
 							</div>
-						);
+						</div>
+					);
 					})}
 				</div>
 			)}
 
-			{/* Trash confirm */}
 			{trashOpen ? (
 				<div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
 					<div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6">
@@ -446,10 +399,7 @@ export default function EmployeesPage() {
 							>
 								Cancel
 							</button>
-							<button
-								onClick={confirmTrash}
-								className="px-4 py-2 rounded-xl bg-red-600 text-white font-semibold"
-							>
+							<button onClick={confirmTrash} className="px-4 py-2 rounded-xl bg-red-600 text-white font-semibold">
 								Move to Trash
 							</button>
 						</div>
@@ -457,165 +407,14 @@ export default function EmployeesPage() {
 				</div>
 			) : null}
 
-	
+			<EmployeeEditorModal
+				open={editorOpen}
+				mode={editorMode}
+				applicantId={editorApplicantId}
+				onClose={() => setEditorOpen(false)}
+				onSaved={onSaved}
+			/>
 
-			{/* Edit Modal */}
-			{editOpen && editEmployee ? (
-				<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-					<div className="w-full max-w-xl bg-white rounded-3xl border shadow-xl overflow-hidden">
-						<div className="px-6 py-4 border-b flex items-center justify-between">
-							<div>
-								<div className="text-lg font-semibold text-black">Edit Employee</div>
-								<div className="text-xs text-gray-500">{getFullName(editEmployee)}</div>
-							</div>
-							<button
-								onClick={() => setEditOpen(false)}
-								className="px-3 py-2 rounded-xl border bg-white"
-							>
-								Close
-							</button>
-						</div>
-
-						<div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-4">
-							<label className="text-sm text-black">
-								<div className="text-gray-600 mb-1">Job Title</div>
-								<input
-									value={editDraft.client_position}
-									onChange={(e) => setEditDraft((d) => ({ ...d, client_position: e.target.value }))}
-									className="w-full border rounded-xl px-3 py-2"
-								/>
-							</label>
-							<label className="text-sm text-black">
-								<div className="text-gray-700 mb-1">Detachment</div>
-								<input
-									value={editDraft.detachment}
-									onChange={(e) => setEditDraft((d) => ({ ...d, detachment: e.target.value }))}
-									className="w-full border rounded-xl px-3 py-2"
-								/>
-							</label>
-							<label className="text-sm text-black">
-								<div className="text-gray-700 mb-1">Status</div>
-								<input
-									value={editDraft.status}
-									onChange={(e) => setEditDraft((d) => ({ ...d, status: e.target.value }))}
-									className="w-full border rounded-xl px-3 py-2"
-								/>
-							</label>
-							<label className="text-sm text-black">
-								<div className="text-gray-700 mb-1">Phone Number</div>
-								<input
-									value={editDraft.client_contact_num}
-									onChange={(e) => setEditDraft((d) => ({ ...d, client_contact_num: e.target.value }))}
-									className="w-full border rounded-xl px-3 py-2"
-								/>
-							</label>
-							<label className="text-sm md:col-span-2 text-black">
-								<div className="text-gray-700 mb-1">Email Address</div>
-								<input
-									value={editDraft.client_email}
-									onChange={(e) => setEditDraft((d) => ({ ...d, client_email: e.target.value }))}
-									className="w-full border rounded-xl px-3 py-2"
-								/>
-							</label>
-						</div>
-
-						<div className="px-6 pb-6 flex items-center justify-end gap-2 text-black">
-							<button
-								onClick={() => setEditOpen(false)}
-								className="px-4 py-2 rounded-xl border bg-white"
-							>
-								Cancel
-							</button>
-							<button
-								onClick={saveEdit}
-								className="px-4 py-2 rounded-xl bg-[#FFDA03] text-black font-semibold"
-							>
-								Save
-							</button>
-						</div>
-					</div>
-				</div>
-			) : null}
-
-			{/* Create Modal */}
-			{createOpen ? (
-				<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-					<div className="w-full max-w-xl bg-white rounded-3xl border shadow-xl overflow-hidden">
-						<div className="px-6 py-4 border-b flex items-center justify-between">
-							<div>
-								<div className="text-lg font-semibold text-black">New Employee</div>
-								<div className="text-xs text-gray-500">Creates a record in Supabase `applicants`</div>
-							</div>
-							<button
-								onClick={() => setCreateOpen(false)}
-								className="px-3 py-2 rounded-xl border bg-white"
-							>
-								Close
-							</button>
-						</div>
-
-						<div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-4">
-							<label className="text-sm text-black">
-								<div className="text-gray-600 mb-1">First Name</div>
-								<input
-									value={createDraft.first_name}
-									onChange={(e) => setCreateDraft((d) => ({ ...d, first_name: e.target.value }))}
-									className="w-full border rounded-xl px-3 py-2"
-								/>
-							</label>
-							<label className="text-sm text-sm text-black">
-								<div className="text-gray-600 mb-1">Last Name</div>
-								<input
-									value={createDraft.last_name}
-									onChange={(e) => setCreateDraft((d) => ({ ...d, last_name: e.target.value }))}
-									className="w-full border rounded-xl px-3 py-2"
-								/>
-							</label>
-							<label className="text-sm text-sm text-black">
-								<div className="text-gray-600 mb-1">Job Title</div>
-								<input
-									value={createDraft.client_position}
-									onChange={(e) => setCreateDraft((d) => ({ ...d, client_position: e.target.value }))}
-									className="w-full border rounded-xl px-3 py-2"
-								/>
-							</label>
-							<label className="text-sm text-sm text-black">
-								<div className="text-gray-600 mb-1">Detachment</div>
-								<input
-									value={createDraft.detachment}
-									onChange={(e) => setCreateDraft((d) => ({ ...d, detachment: e.target.value }))}
-									className="w-full border rounded-xl px-3 py-2"
-								/>
-							</label>
-							<label className="text-sm md:col-span-2 text-sm text-black">
-								<div className="text-gray-600 mb-1">Status</div>
-								<input
-									value={createDraft.status}
-									onChange={(e) => setCreateDraft((d) => ({ ...d, status: e.target.value }))}
-									className="w-full border rounded-xl px-3 py-2"
-								/>
-							</label>
-						</div>
-
-						<div className="px-6 pb-6 flex items-center justify-end gap-2">
-							<button
-								onClick={() => setCreateOpen(false)}
-								className="px-4 py-2 rounded-xl border bg-white text-sm text-black"
-							>
-								Cancel
-							</button>
-							<button
-								onClick={createEmployee}
-								className="px-4 py-2 rounded-xl bg-[#FFDA03] text-black font-semibold"
-							>
-								Create
-							</button>
-						</div>
-					</div>
-				</div>
-			) : null}
-
-			{/* Archive Modal */}
 			{archiveOpen && archiveEmployee ? (
 				<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
 					<div className="w-full max-w-lg bg-white rounded-3xl border shadow-xl overflow-hidden">
@@ -624,29 +423,18 @@ export default function EmployeesPage() {
 								<div className="text-lg font-semibold">Archive Employee</div>
 								<div className="text-xs text-gray-500">{getFullName(archiveEmployee)}</div>
 							</div>
-							<button
-								onClick={() => setArchiveOpen(false)}
-								className="px-3 py-2 rounded-xl border bg-white"
-							>
+							<button onClick={() => setArchiveOpen(false)} className="px-3 py-2 rounded-xl border bg-white">
 								Close
 							</button>
 						</div>
 
-						<div className="p-6 text-sm text-gray-700">
-							This will move the employee to the Archive page.
-						</div>
+						<div className="p-6 text-sm text-gray-700">This will move the employee to the Archive page.</div>
 
 						<div className="px-6 pb-6 flex items-center justify-end gap-2">
-							<button
-								onClick={() => setArchiveOpen(false)}
-								className="px-4 py-2 rounded-xl border bg-white"
-							>
+							<button onClick={() => setArchiveOpen(false)} className="px-4 py-2 rounded-xl border bg-white">
 								Cancel
 							</button>
-							<button
-								onClick={confirmArchive}
-								className="px-4 py-2 rounded-xl bg-gray-900 text-white font-semibold"
-							>
+							<button onClick={confirmArchive} className="px-4 py-2 rounded-xl bg-gray-900 text-white font-semibold">
 								Archive
 							</button>
 						</div>

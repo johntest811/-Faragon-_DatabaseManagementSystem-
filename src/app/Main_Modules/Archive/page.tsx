@@ -36,6 +36,13 @@ function getProfileUrl(profilePath: string | null) {
   return data.publicUrl || null;
 }
 
+function normalizeStatus(input: string | null) {
+  const v = (input ?? "").trim().toUpperCase();
+  if (!v) return "ACTIVE";
+  if (v === "ACTIVE" || v === "INACTIVE") return v;
+  return "ACTIVE";
+}
+
 export default function ArchivePage() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
@@ -100,9 +107,10 @@ export default function ArchivePage() {
 
   async function restore(employee: Applicant) {
     setError("");
+		const normalizedStatus = normalizeStatus(employee.status);
     const { error: updateError } = await supabase
       .from("applicants")
-      .update({ is_archived: false, archived_at: null })
+      .update({ is_archived: false, archived_at: null, archived_by: null, status: normalizedStatus })
       .eq("applicant_id", employee.applicant_id);
 
     if (updateError) {

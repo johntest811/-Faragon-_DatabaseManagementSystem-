@@ -219,7 +219,7 @@ export default function RolesPage() {
 		<section className="bg-white rounded-2xl shadow-sm border p-5">
 			<div className="flex items-center justify-between gap-3 mb-3">
 				<div>
-					<div className="text-lg font-semibold">Roles</div>
+					<div className="text-lg font-semibold text-black">Roles</div>
 					<div className="text-sm text-gray-500">
 						Superadmin controls module access + account creation.
 					</div>

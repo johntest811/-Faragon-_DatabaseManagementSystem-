@@ -51,7 +51,7 @@ CREATE TABLE public.applicants (
   province_address character varying,
   emergency_contact_person character varying,
   emergency_contact_num character varying,
-  status character varying,
+  status character varying DEFAULT 'ACTIVE'::character varying CHECK (status IS NULL OR (upper(status::text) = ANY (ARRAY['ACTIVE'::text, 'INACTIVE'::text]))) NOT VALI),
   profile_image_path text,
   sss_certain_path text,
   tin_id_path text,
@@ -71,6 +71,7 @@ CREATE TABLE public.applicants (
 CREATE TABLE public.biodata (
   applicant_id uuid NOT NULL,
   applicant_form bytea,
+  applicant_form_path text,
   CONSTRAINT biodata_pkey PRIMARY KEY (applicant_id),
   CONSTRAINT biodata_applicant_id_fkey FOREIGN KEY (applicant_id) REFERENCES public.applicants(applicant_id)
 );
@@ -82,6 +83,12 @@ CREATE TABLE public.certificates (
   highschool_diploma_path text,
   college_diploma_path text,
   vocational_path text,
+  training_when_where text,
+  seminar_when_where text,
+  highschool_when_where text,
+  college_when_where text,
+  vocational_when_where text,
+  course_when_where text,
   CONSTRAINT certificates_pkey PRIMARY KEY (applicant_id),
   CONSTRAINT certificates_applicant_id_fkey FOREIGN KEY (applicant_id) REFERENCES public.applicants(applicant_id)
 );
@@ -109,6 +116,18 @@ CREATE TABLE public.deployment_status (
   created_at timestamp with time zone NOT NULL DEFAULT now(),
   CONSTRAINT deployment_status_pkey PRIMARY KEY (deployment_id),
   CONSTRAINT deployment_status_applicant_id_fkey FOREIGN KEY (applicant_id) REFERENCES public.applicants(applicant_id)
+);
+CREATE TABLE public.employment_history (
+  employment_id uuid NOT NULL DEFAULT gen_random_uuid(),
+  applicant_id uuid NOT NULL,
+  company_name text,
+  position text,
+  telephone text,
+  inclusive_dates text,
+  leave_reason text,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT employment_history_pkey PRIMARY KEY (employment_id),
+  CONSTRAINT employment_history_applicant_id_fkey FOREIGN KEY (applicant_id) REFERENCES public.applicants(applicant_id)
 );
 CREATE TABLE public.employment_record (
   applicant_id uuid NOT NULL,

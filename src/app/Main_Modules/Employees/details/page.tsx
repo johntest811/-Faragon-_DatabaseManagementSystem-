@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import {
@@ -16,6 +16,8 @@ import {
   ExternalLink,
 } from "lucide-react";
 import { supabase } from "../../../Client/SupabaseClients";
+import { useAuthRole } from "../../../Client/useRbac";
+import EmployeeEditorModal from "../../../Components/EmployeeEditorModal";
 
 type Applicant = {
   applicant_id: string;
@@ -59,12 +61,32 @@ type Certificates = {
   college_diploma_path: string | null;
   vocational_path: string | null;
   course_title_degree: string | null;
+
+  training_when_where?: string | null;
+  seminar_when_where?: string | null;
+  highschool_when_where?: string | null;
+  college_when_where?: string | null;
+  vocational_when_where?: string | null;
+  course_when_where?: string | null;
 };
 
-type EmploymentRecord = {
+type EmploymentItem = {
+  employment_id?: string;
+  company_name: string | null;
+  position: string | null;
+  telephone?: string | null;
+  inclusive_dates?: string | null;
+  leave_reason: string | null;
+};
+
+type EmploymentRecordRow = {
   company_name: string | null;
   position: string | null;
   leave_reason: string | null;
+};
+
+type Biodata = {
+  applicant_form_path: string | null;
 };
 
 type Licensure = {
@@ -149,16 +171,21 @@ function DocLink({ title, url }: { title: string; url: string | null }) {
   );
 }
 
-export default function EmployeeDetailsPage() {
+function EmployeeDetailsInner() {
   const params = useSearchParams();
   const id = params.get("id");
+
+  const { role: sessionRole } = useAuthRole();
+  const canEdit = sessionRole !== "employee";
+  const [editorOpen, setEditorOpen] = useState(false);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>("");
   const [applicant, setApplicant] = useState<Applicant | null>(null);
   const [certs, setCerts] = useState<Certificates | null>(null);
-  const [employment, setEmployment] = useState<EmploymentRecord | null>(null);
+  const [employment, setEmployment] = useState<EmploymentItem[]>([]);
   const [lic, setLic] = useState<Licensure | null>(null);
+  const [bio, setBio] = useState<Biodata | null>(null);
 
   useEffect(() => {
     const run = async () => {
@@ -166,8 +193,9 @@ export default function EmployeeDetailsPage() {
       setError("");
       setApplicant(null);
       setCerts(null);
-      setEmployment(null);
+      setEmployment([]);
       setLic(null);
+      setBio(null);
 
       if (!id) {
         setLoading(false);
@@ -191,15 +219,15 @@ export default function EmployeeDetailsPage() {
           supabase
             .from("certificates")
             .select(
-              "training_path, seminar_path, highschool_diploma_path, college_diploma_path, vocational_path, course_title_degree"
+              "training_path, seminar_path, highschool_diploma_path, college_diploma_path, vocational_path, course_title_degree, training_when_where, seminar_when_where, highschool_when_where, college_when_where, vocational_when_where, course_when_where"
             )
             .eq("applicant_id", id)
             .maybeSingle(),
           supabase
-            .from("employment_record")
-            .select("company_name, position, leave_reason")
+            .from("employment_history")
+            .select("employment_id, company_name, position, telephone, inclusive_dates, leave_reason")
             .eq("applicant_id", id)
-            .maybeSingle(),
+            .order("created_at", { ascending: true }),
           supabase
             .from("licensure")
             .select(
@@ -209,13 +237,39 @@ export default function EmployeeDetailsPage() {
             .maybeSingle(),
         ]);
 
+        const bRes = await supabase
+          .from("biodata")
+          .select("applicant_form_path")
+          .eq("applicant_id", id)
+          .maybeSingle();
+
         if (cRes.error) console.warn(cRes.error);
-        if (eRes.error) console.warn(eRes.error);
+        if (eRes.error) {
+          console.warn(eRes.error);
+          // Fallback: legacy single-row employment_record
+          const legacy = await supabase
+            .from("employment_record")
+            .select("company_name, position, leave_reason")
+            .eq("applicant_id", id)
+            .maybeSingle();
+          if (!legacy.error && legacy.data) {
+            const legacyRow = legacy.data as unknown as EmploymentRecordRow;
+            setEmployment([
+              {
+                company_name: legacyRow.company_name ?? null,
+                position: legacyRow.position ?? null,
+                leave_reason: legacyRow.leave_reason ?? null,
+              },
+            ]);
+          }
+        }
         if (lRes.error) console.warn(lRes.error);
+        if (bRes.error) console.warn(bRes.error);
 
         setCerts((cRes.data as Certificates) || null);
-        setEmployment((eRes.data as EmploymentRecord) || null);
+        if (!eRes.error) setEmployment(((eRes.data as EmploymentItem[]) || []) ?? []);
         setLic((lRes.data as Licensure) || null);
+        setBio((bRes.data as Biodata) || null);
       } catch (e: unknown) {
        
         setError(e instanceof Error ? e.message : "Failed to load employee");
@@ -265,6 +319,7 @@ export default function EmployeeDetailsPage() {
   const docUrls = useMemo(() => {
     if (!applicant) return null;
     return {
+      applicationForm: publicUrl(BUCKETS.certificates, bio?.applicant_form_path || null),
       sss: publicUrl(BUCKETS.sss, applicant.sss_certain_path),
       tin: publicUrl(BUCKETS.tin, applicant.tin_id_path),
       pagibig: publicUrl(BUCKETS.pagibig, applicant.pag_ibig_id_path),
@@ -276,7 +331,7 @@ export default function EmployeeDetailsPage() {
       college: publicUrl(BUCKETS.certificates, certs?.college_diploma_path || null),
       vocational: publicUrl(BUCKETS.certificates, certs?.vocational_path || null),
     };
-  }, [applicant, certs]);
+  }, [applicant, certs, bio]);
 
   if (loading) {
     return (
@@ -321,6 +376,15 @@ export default function EmployeeDetailsPage() {
         >
           <ArrowLeft className="w-4 h-4" /> Back
         </Link>
+
+        {canEdit ? (
+          <button
+            onClick={() => setEditorOpen(true)}
+            className="px-4 py-2 rounded-xl bg-[#FFDA03] text-black font-semibold"
+          >
+            Edit
+          </button>
+        ) : null}
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
@@ -377,6 +441,13 @@ export default function EmployeeDetailsPage() {
             </div>
           </div>
 
+          <div className="mt-4 rounded-2xl border bg-white px-4 py-3">
+            <div className="text-xs text-gray-500">Application Form</div>
+            <div className="mt-2">
+              <DocLink title="Application Form" url={docUrls?.applicationForm ?? null} />
+            </div>
+          </div>
+
           <div className="mt-5 grid grid-cols-1 md:grid-cols-2 gap-5">
             <InfoRow icon={User} label="Gender" value={applicant.gender ?? "—"} />
             <InfoRow icon={Phone} label="Phone Number" value={applicant.client_contact_num ?? "—"} />
@@ -401,6 +472,33 @@ export default function EmployeeDetailsPage() {
 
             <div className="mt-4 font-semibold">Course / Title / Degree:</div>
             <div className="mt-1 text-gray-600">{certs?.course_title_degree ?? "—"}</div>
+
+            <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <div className="font-semibold">High School (When/Where)</div>
+                <div className="mt-1 text-gray-600">{certs?.highschool_when_where ?? "—"}</div>
+              </div>
+              <div>
+                <div className="font-semibold">College (When/Where)</div>
+                <div className="mt-1 text-gray-600">{certs?.college_when_where ?? "—"}</div>
+              </div>
+              <div>
+                <div className="font-semibold">Vocational (When/Where)</div>
+                <div className="mt-1 text-gray-600">{certs?.vocational_when_where ?? "—"}</div>
+              </div>
+              <div>
+                <div className="font-semibold">Course/Degree (When/Where)</div>
+                <div className="mt-1 text-gray-600">{certs?.course_when_where ?? "—"}</div>
+              </div>
+              <div>
+                <div className="font-semibold">Training (When/Where)</div>
+                <div className="mt-1 text-gray-600">{certs?.training_when_where ?? "—"}</div>
+              </div>
+              <div>
+                <div className="font-semibold">Seminar (When/Where)</div>
+                <div className="mt-1 text-gray-600">{certs?.seminar_when_where ?? "—"}</div>
+              </div>
+            </div>
           </div>
         </section>
 
@@ -447,17 +545,31 @@ export default function EmployeeDetailsPage() {
         {/* Previous Employment */}
         <section className="bg-white rounded-3xl border shadow-sm p-6">
           <div className="text-lg font-bold text-gray-900">Previous Employment</div>
-          <div className="mt-4 space-y-4 text-sm">
-            <InfoRow icon={Briefcase} label="Company Name" value={employment?.company_name ?? "—"} />
-            <InfoRow icon={Briefcase} label="Position" value={employment?.position ?? "—"} />
-            <InfoRow icon={FileText} label="Leave Reason" value={employment?.leave_reason ?? "—"} />
-          </div>
+          {employment.length === 0 ? (
+            <div className="mt-4 text-sm text-gray-500">—</div>
+          ) : (
+            <div className="mt-4 space-y-4 text-sm">
+              {employment.map((job, idx) => (
+                <div key={job.employment_id ?? idx} className="rounded-2xl border p-4">
+                  <div className="text-xs font-semibold text-gray-500">Record #{idx + 1}</div>
+                  <div className="mt-3 space-y-3">
+                    <InfoRow icon={Briefcase} label="Company Name" value={job.company_name ?? "—"} />
+                    <InfoRow icon={Briefcase} label="Position" value={job.position ?? "—"} />
+                    <InfoRow icon={Phone} label="Telephone" value={job.telephone ?? "—"} />
+                    <InfoRow icon={CalendarDays} label="Incl. Dates" value={job.inclusive_dates ?? "—"} />
+                    <InfoRow icon={FileText} label="Leave Reason" value={job.leave_reason ?? "—"} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </section>
 
         {/* Scanned Documents */}
         <section className="bg-white rounded-3xl border shadow-sm p-6">
           <div className="text-lg font-bold text-gray-900">Scanned Documents</div>
           <div className="mt-4 divide-y">
+            <DocLink title="Application Form" url={docUrls?.applicationForm ?? null} />
             <DocLink title="SSS Certain" url={docUrls?.sss ?? null} />
             <DocLink title="TIN ID" url={docUrls?.tin ?? null} />
             <DocLink title="PAG-IBIG ID" url={docUrls?.pagibig ?? null} />
@@ -471,6 +583,32 @@ export default function EmployeeDetailsPage() {
           </div>
         </section>
       </div>
+
+      <EmployeeEditorModal
+        open={editorOpen}
+        mode="edit"
+        applicantId={id}
+        title="Edit Employee"
+        subtitle={name}
+        onClose={() => setEditorOpen(false)}
+        onSaved={() => {
+          // After save, the realtime channel will refresh; close is already handled.
+        }}
+      />
     </div>
+  );
+}
+
+export default function EmployeeDetailsPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="bg-white rounded-3xl border shadow-sm p-8 text-center text-gray-500">
+          Loading employee details...
+        </div>
+      }
+    >
+      <EmployeeDetailsInner />
+    </Suspense>
   );
 }

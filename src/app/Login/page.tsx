@@ -59,7 +59,7 @@ export default function Login() {
         username: admin.username,
         full_name: admin.full_name ?? null,
         position: admin.position ?? null,
-        role: admin.role,
+        role: String(admin.role ?? "").trim().toLowerCase(),
         loginTime: new Date().toISOString(),
       };
       localStorage.setItem('adminSession', JSON.stringify(sessionData));

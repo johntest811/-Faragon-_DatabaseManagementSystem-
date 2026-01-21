@@ -36,6 +36,13 @@ function getProfileUrl(profilePath: string | null) {
   return data.publicUrl || null;
 }
 
+function normalizeStatus(input: string | null) {
+  const v = (input ?? "").trim().toUpperCase();
+  if (!v) return "ACTIVE";
+  if (v === "ACTIVE" || v === "INACTIVE") return v;
+  return "ACTIVE";
+}
+
 export default function TrashPage() {
   const { role } = useAuthRole();
 
@@ -120,9 +127,10 @@ export default function TrashPage() {
     setError("");
 
     if (confirmMode === "restore") {
+		const normalizedStatus = normalizeStatus(target.status);
       const { error: updateErr } = await supabase
         .from("applicants")
-        .update({ is_trashed: false, trashed_at: null, trashed_by: null })
+        .update({ is_trashed: false, trashed_at: null, trashed_by: null, status: normalizedStatus })
         .eq("applicant_id", target.applicant_id);
 
       if (updateErr) {
@@ -171,7 +179,7 @@ export default function TrashPage() {
           />
         </div>
         <div className="flex items-center gap-2">
-          <Link href="/Main_Modules/Employees/" className="px-4 py-2 rounded-xl bg-white border">
+          <Link href="/Main_Modules/Employees/" className="px-4 py-2 rounded-xl bg-white rounded-full bg-[#FFDA03] border text-black">
             Back to Employees
           </Link>
         </div>
