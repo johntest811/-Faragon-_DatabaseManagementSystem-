@@ -89,6 +89,7 @@ CREATE TABLE public.certificates (
   college_when_where text,
   vocational_when_where text,
   course_when_where text,
+  gun_safety_certificate_path text,
   CONSTRAINT certificates_pkey PRIMARY KEY (applicant_id),
   CONSTRAINT certificates_applicant_id_fkey FOREIGN KEY (applicant_id) REFERENCES public.applicants(applicant_id)
 );

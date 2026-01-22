@@ -54,6 +54,7 @@ type CertificatesDraft = {
 
   training_path: string;
   seminar_path: string;
+  gun_safety_certificate_path: string;
   highschool_diploma_path: string;
   college_diploma_path: string;
   vocational_path: string;
@@ -122,6 +123,7 @@ type CertificatesRow = {
   course_title_degree: string | null;
   training_path: string | null;
   seminar_path: string | null;
+  gun_safety_certificate_path: string | null;
   highschool_diploma_path: string | null;
   college_diploma_path: string | null;
   vocational_path: string | null;
@@ -160,13 +162,9 @@ type EmploymentRecordRow = {
 };
 
 const BUCKETS = {
-  profile: "Profile_Images",
+  applicants: "applicants",
   certificates: "certificates",
-  sss: "SSS_CERTAIN",
-  tin: "TIN_ID",
-  pagibig: "PAG_IBIG_ID",
-  philhealth: "PHILHEALTH_ID",
-  securityLicense: "SECURITY_LICENSE",
+  licensure: "licensure",
 } as const;
 
 function emptyApplicantDraft(): ApplicantDraft {
@@ -211,6 +209,7 @@ function emptyCertificatesDraft(): CertificatesDraft {
 
     training_path: "",
     seminar_path: "",
+    gun_safety_certificate_path: "",
     highschool_diploma_path: "",
     college_diploma_path: "",
     vocational_path: "",
@@ -304,16 +303,17 @@ export default function EmployeeEditorModal({
 
   const docPreview = useMemo(() => {
     return {
-      profile: publicUrl(BUCKETS.profile, app.profile_image_path || null),
+      profile: publicUrl(BUCKETS.applicants, app.profile_image_path || null),
       applicationForm: publicUrl(BUCKETS.certificates, bio.applicant_form_path || null),
-      sss: publicUrl(BUCKETS.sss, app.sss_certain_path || null),
-      tin: publicUrl(BUCKETS.tin, app.tin_id_path || null),
-      pagibig: publicUrl(BUCKETS.pagibig, app.pag_ibig_id_path || null),
-      philhealth: publicUrl(BUCKETS.philhealth, app.philhealth_id_path || null),
-      securityLicense: publicUrl(BUCKETS.securityLicense, app.security_license_path || null),
+      sss: publicUrl(BUCKETS.applicants, app.sss_certain_path || null),
+      tin: publicUrl(BUCKETS.applicants, app.tin_id_path || null),
+      pagibig: publicUrl(BUCKETS.applicants, app.pag_ibig_id_path || null),
+      philhealth: publicUrl(BUCKETS.applicants, app.philhealth_id_path || null),
+      securityLicense: publicUrl(BUCKETS.licensure, app.security_license_path || null),
 
       training: publicUrl(BUCKETS.certificates, certs.training_path || null),
       seminar: publicUrl(BUCKETS.certificates, certs.seminar_path || null),
+      gunSafety: publicUrl(BUCKETS.certificates, certs.gun_safety_certificate_path || null),
       hs: publicUrl(BUCKETS.certificates, certs.highschool_diploma_path || null),
       college: publicUrl(BUCKETS.certificates, certs.college_diploma_path || null),
       vocational: publicUrl(BUCKETS.certificates, certs.vocational_path || null),
@@ -357,7 +357,7 @@ export default function EmployeeEditorModal({
         const cRes = await supabase
           .from("certificates")
           .select(
-            "course_title_degree, training_path, seminar_path, highschool_diploma_path, college_diploma_path, vocational_path, training_when_where, seminar_when_where, highschool_when_where, college_when_where, vocational_when_where, course_when_where"
+            "course_title_degree, training_path, seminar_path, gun_safety_certificate_path, highschool_diploma_path, college_diploma_path, vocational_path, training_when_where, seminar_when_where, highschool_when_where, college_when_where, vocational_when_where, course_when_where"
           )
           .eq("applicant_id", effectiveId)
           .maybeSingle();
@@ -456,6 +456,7 @@ export default function EmployeeEditorModal({
           course_title_degree: c.course_title_degree ?? "",
           training_path: c.training_path ?? "",
           seminar_path: c.seminar_path ?? "",
+          gun_safety_certificate_path: c.gun_safety_certificate_path ?? "",
           highschool_diploma_path: c.highschool_diploma_path ?? "",
           college_diploma_path: c.college_diploma_path ?? "",
           vocational_path: c.vocational_path ?? "",
@@ -611,6 +612,7 @@ export default function EmployeeEditorModal({
           course_title_degree: toNullableText(certs.course_title_degree),
           training_path: toNullableText(certs.training_path),
           seminar_path: toNullableText(certs.seminar_path),
+          gun_safety_certificate_path: toNullableText(certs.gun_safety_certificate_path),
           highschool_diploma_path: toNullableText(certs.highschool_diploma_path),
           college_diploma_path: toNullableText(certs.college_diploma_path),
           vocational_path: toNullableText(certs.vocational_path),
@@ -705,6 +707,7 @@ export default function EmployeeEditorModal({
         course_title_degree: toNullableText(certs.course_title_degree),
         training_path: toNullableText(certs.training_path),
         seminar_path: toNullableText(certs.seminar_path),
+        gun_safety_certificate_path: toNullableText(certs.gun_safety_certificate_path),
         highschool_diploma_path: toNullableText(certs.highschool_diploma_path),
         college_diploma_path: toNullableText(certs.college_diploma_path),
         vocational_path: toNullableText(certs.vocational_path),
@@ -814,6 +817,57 @@ export default function EmployeeEditorModal({
             <div className="text-sm text-gray-500">Loading…</div>
           ) : tab === "personal" ? (
             <div className="space-y-5">
+              <div className="rounded-2xl border p-4">
+                <div className="text-sm font-semibold text-black">Profile Image</div>
+                <div className="mt-3 flex flex-col md:flex-row md:items-center gap-4 justify-between">
+                  <div className="flex items-center gap-4">
+                    <div className="h-20 w-20 rounded-2xl bg-gray-100 overflow-hidden flex items-center justify-center">
+                      {docPreview.profile ? (
+                        <img src={docPreview.profile} alt="Profile" className="h-full w-full object-cover" />
+                      ) : (
+                        <div className="text-xs text-gray-500">No Photo</div>
+                      )}
+                    </div>
+                    <div className="text-xs text-gray-500 break-all">{app.profile_image_path || "Not uploaded"}</div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {docPreview.profile ? (
+                      <a
+                        className="px-3 py-2 rounded-xl border bg-white text-sm text-blue-600"
+                        href={docPreview.profile}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        View
+                      </a>
+                    ) : null}
+                    <label className="px-3 py-2 rounded-xl bg-[#FFDA03] text-black text-sm font-semibold cursor-pointer">
+                      Upload
+                      <input
+                        type="file"
+                        className="hidden"
+                        accept="image/*"
+                        onChange={(e) =>
+                          onPickFile(
+                            BUCKETS.applicants,
+                            "profile",
+                            (path) => setApp((d) => ({ ...d, profile_image_path: path })),
+                            e.target.files?.[0]
+                          )
+                        }
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setApp((d) => ({ ...d, profile_image_path: "" }))}
+                      className="px-3 py-2 rounded-xl border bg-white text-black text-sm"
+                    >
+                      Clear
+                    </button>
+                  </div>
+                </div>
+              </div>
+
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                 <label className="text-sm text-black">
                   <div className="text-gray-600 mb-1">First Name</div>
@@ -1162,36 +1216,6 @@ export default function EmployeeEditorModal({
           ) : (
             <div className="space-y-6">
               <div className="rounded-2xl border p-4">
-                <div className="text-sm font-semibold text-black">Profile Image</div>
-                <div className="mt-2 flex flex-col md:flex-row md:items-center gap-3 justify-between">
-                  <div className="text-xs text-gray-500 break-all">{app.profile_image_path || "Not uploaded"}</div>
-                  <div className="flex items-center gap-2">
-                    {docPreview.profile ? (
-                      <a className="px-3 py-2 rounded-xl border bg-white text-sm text-blue-600" href={docPreview.profile} target="_blank" rel="noreferrer">
-                        View
-                      </a>
-                    ) : null}
-                    <label className="px-3 py-2 rounded-xl bg-[#FFDA03] text-black text-sm font-semibold cursor-pointer">
-                      Upload
-                      <input
-                        type="file"
-                        className="hidden"
-                        accept="image/*"
-                        onChange={(e) =>
-                          onPickFile(
-                            BUCKETS.profile,
-                            "profile",
-                            (path) => setApp((d) => ({ ...d, profile_image_path: path })),
-                            e.target.files?.[0]
-                          )
-                        }
-                      />
-                    </label>
-                  </div>
-                </div>
-              </div>
-
-              <div className="rounded-2xl border p-4">
                 <div className="text-sm font-semibold text-black">Scanned Documents</div>
                 <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-4">
                   <DocUploadRow
@@ -1199,35 +1223,35 @@ export default function EmployeeEditorModal({
                     path={app.sss_certain_path}
                     url={docPreview.sss}
                     onSet={(path) => setApp((d) => ({ ...d, sss_certain_path: path }))}
-                    onPick={(file) => onPickFile(BUCKETS.sss, "sss_certain", (p) => setApp((d) => ({ ...d, sss_certain_path: p })), file)}
+                    onPick={(file) => onPickFile(BUCKETS.applicants, "sss_certain", (p) => setApp((d) => ({ ...d, sss_certain_path: p })), file)}
                   />
                   <DocUploadRow
                     label="TIN ID"
                     path={app.tin_id_path}
                     url={docPreview.tin}
                     onSet={(path) => setApp((d) => ({ ...d, tin_id_path: path }))}
-                    onPick={(file) => onPickFile(BUCKETS.tin, "tin_id", (p) => setApp((d) => ({ ...d, tin_id_path: p })), file)}
+                    onPick={(file) => onPickFile(BUCKETS.applicants, "tin_id", (p) => setApp((d) => ({ ...d, tin_id_path: p })), file)}
                   />
                   <DocUploadRow
                     label="PAG-IBIG ID"
                     path={app.pag_ibig_id_path}
                     url={docPreview.pagibig}
                     onSet={(path) => setApp((d) => ({ ...d, pag_ibig_id_path: path }))}
-                    onPick={(file) => onPickFile(BUCKETS.pagibig, "pag_ibig", (p) => setApp((d) => ({ ...d, pag_ibig_id_path: p })), file)}
+                    onPick={(file) => onPickFile(BUCKETS.applicants, "pag_ibig", (p) => setApp((d) => ({ ...d, pag_ibig_id_path: p })), file)}
                   />
                   <DocUploadRow
                     label="PHILHEALTH ID"
                     path={app.philhealth_id_path}
                     url={docPreview.philhealth}
                     onSet={(path) => setApp((d) => ({ ...d, philhealth_id_path: path }))}
-                    onPick={(file) => onPickFile(BUCKETS.philhealth, "philhealth", (p) => setApp((d) => ({ ...d, philhealth_id_path: p })), file)}
+                    onPick={(file) => onPickFile(BUCKETS.applicants, "philhealth", (p) => setApp((d) => ({ ...d, philhealth_id_path: p })), file)}
                   />
                   <DocUploadRow
                     label="Security License"
                     path={app.security_license_path}
                     url={docPreview.securityLicense}
                     onSet={(path) => setApp((d) => ({ ...d, security_license_path: path }))}
-                    onPick={(file) => onPickFile(BUCKETS.securityLicense, "security_license", (p) => setApp((d) => ({ ...d, security_license_path: p })), file)}
+                    onPick={(file) => onPickFile(BUCKETS.licensure, "security_license", (p) => setApp((d) => ({ ...d, security_license_path: p })), file)}
                   />
                 </div>
               </div>
@@ -1235,6 +1259,20 @@ export default function EmployeeEditorModal({
               <div className="rounded-2xl border p-4">
                 <div className="text-sm font-semibold text-black">Certificates</div>
                 <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <DocUploadRow
+                    label="Gun Safety Certificate"
+                    path={certs.gun_safety_certificate_path}
+                    url={docPreview.gunSafety}
+                    onSet={(path) => setCerts((d) => ({ ...d, gun_safety_certificate_path: path }))}
+                    onPick={(file) =>
+                      onPickFile(
+                        BUCKETS.certificates,
+                        "gun_safety_certificate",
+                        (p) => setCerts((d) => ({ ...d, gun_safety_certificate_path: p })),
+                        file
+                      )
+                    }
+                  />
                   <DocUploadRow
                     label="Training Certificate"
                     path={certs.training_path}

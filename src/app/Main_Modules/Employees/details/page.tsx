@@ -57,6 +57,7 @@ type Applicant = {
 type Certificates = {
   training_path: string | null;
   seminar_path: string | null;
+  gun_safety_certificate_path: string | null;
   highschool_diploma_path: string | null;
   college_diploma_path: string | null;
   vocational_path: string | null;
@@ -99,13 +100,9 @@ type Licensure = {
 };
 
 const BUCKETS = {
-  profile: "Profile_Images",
+  applicants: "applicants",
   certificates: "certificates",
-  sss: "SSS_CERTAIN",
-  tin: "TIN_ID",
-  pagibig: "PAG_IBIG_ID",
-  philhealth: "PHILHEALTH_ID",
-  securityLicense: "SECURITY_LICENSE",
+  licensure: "licensure",
 };
 
 function getFullName(a: Applicant) {
@@ -219,7 +216,7 @@ function EmployeeDetailsInner() {
           supabase
             .from("certificates")
             .select(
-              "training_path, seminar_path, highschool_diploma_path, college_diploma_path, vocational_path, course_title_degree, training_when_where, seminar_when_where, highschool_when_where, college_when_where, vocational_when_where, course_when_where"
+              "training_path, seminar_path, gun_safety_certificate_path, highschool_diploma_path, college_diploma_path, vocational_path, course_title_degree, training_when_where, seminar_when_where, highschool_when_where, college_when_where, vocational_when_where, course_when_where"
             )
             .eq("applicant_id", id)
             .maybeSingle(),
@@ -313,20 +310,21 @@ function EmployeeDetailsInner() {
 
   const profile = useMemo(() => {
     if (!applicant) return null;
-    return publicUrl(BUCKETS.profile, applicant.profile_image_path);
+    return publicUrl(BUCKETS.applicants, applicant.profile_image_path);
   }, [applicant]);
 
   const docUrls = useMemo(() => {
     if (!applicant) return null;
     return {
       applicationForm: publicUrl(BUCKETS.certificates, bio?.applicant_form_path || null),
-      sss: publicUrl(BUCKETS.sss, applicant.sss_certain_path),
-      tin: publicUrl(BUCKETS.tin, applicant.tin_id_path),
-      pagibig: publicUrl(BUCKETS.pagibig, applicant.pag_ibig_id_path),
-      philhealth: publicUrl(BUCKETS.philhealth, applicant.philhealth_id_path),
-      securityLicense: publicUrl(BUCKETS.securityLicense, applicant.security_license_path),
+      sss: publicUrl(BUCKETS.applicants, applicant.sss_certain_path),
+      tin: publicUrl(BUCKETS.applicants, applicant.tin_id_path),
+      pagibig: publicUrl(BUCKETS.applicants, applicant.pag_ibig_id_path),
+      philhealth: publicUrl(BUCKETS.applicants, applicant.philhealth_id_path),
+      securityLicense: publicUrl(BUCKETS.licensure, applicant.security_license_path),
       training: publicUrl(BUCKETS.certificates, certs?.training_path || null),
       seminar: publicUrl(BUCKETS.certificates, certs?.seminar_path || null),
+      gunSafety: publicUrl(BUCKETS.certificates, certs?.gun_safety_certificate_path || null),
       hs: publicUrl(BUCKETS.certificates, certs?.highschool_diploma_path || null),
       college: publicUrl(BUCKETS.certificates, certs?.college_diploma_path || null),
       vocational: publicUrl(BUCKETS.certificates, certs?.vocational_path || null),
@@ -575,6 +573,7 @@ function EmployeeDetailsInner() {
             <DocLink title="PAG-IBIG ID" url={docUrls?.pagibig ?? null} />
             <DocLink title="PHILHEALTH ID" url={docUrls?.philhealth ?? null} />
             <DocLink title="Security License" url={docUrls?.securityLicense ?? null} />
+            <DocLink title="Gun Safety Certificate" url={docUrls?.gunSafety ?? null} />
             <DocLink title="Training Certificate" url={docUrls?.training ?? null} />
             <DocLink title="Seminar Certificate" url={docUrls?.seminar ?? null} />
             <DocLink title="Highschool Diploma" url={docUrls?.hs ?? null} />

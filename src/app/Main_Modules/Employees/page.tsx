@@ -28,7 +28,7 @@ type Applicant = {
 };
 
 const BUCKETS = {
-	profile: "Profile_Images",
+	profile: "applicants",
 };
 
 function getFullName(a: Applicant) {
@@ -62,6 +62,13 @@ export default function EmployeesPage() {
 	const [employees, setEmployees] = useState<Applicant[]>([]);
 	const [search, setSearch] = useState("");
 	const [sortBy, setSortBy] = useState<"name" | "created_at">("name");
+
+	const [filtersOpen, setFiltersOpen] = useState(false);
+	const [statusFilter, setStatusFilter] = useState<"ALL" | "ACTIVE" | "INACTIVE">("ALL");
+	const [genderFilter, setGenderFilter] = useState<string>("ALL");
+	const [detachmentFilter, setDetachmentFilter] = useState<string>("ALL");
+	const [positionFilter, setPositionFilter] = useState<string>("ALL");
+	const [hasPhotoFilter, setHasPhotoFilter] = useState<"ALL" | "YES" | "NO">("ALL");
 
 	const [editorOpen, setEditorOpen] = useState(false);
 	const [editorMode, setEditorMode] = useState<"create" | "edit">("edit");
@@ -116,15 +123,50 @@ export default function EmployeesPage() {
 		const q = search.trim().toLowerCase();
 		let list = employees;
 
+		const normalizedStatusFilter = statusFilter;
+		if (normalizedStatusFilter !== "ALL") {
+			list = list.filter((e) => normalizeStatus(e.status) === normalizedStatusFilter);
+		}
+
+		if (genderFilter !== "ALL") {
+			const gf = genderFilter.trim().toUpperCase();
+			list = list.filter((e) => (e.gender ?? "").trim().toUpperCase() === gf);
+		}
+
+		if (detachmentFilter !== "ALL") {
+			list = list.filter((e) => (e.detachment ?? "") === detachmentFilter);
+		}
+
+		if (positionFilter !== "ALL") {
+			list = list.filter((e) => (e.client_position ?? "") === positionFilter);
+		}
+
+		if (hasPhotoFilter !== "ALL") {
+			list = list.filter((e) => {
+				const has = Boolean((e.profile_image_path ?? "").trim());
+				return hasPhotoFilter === "YES" ? has : !has;
+			});
+		}
+
 		if (q) {
 			list = list.filter((e) => {
-				const name = getFullName(e).toLowerCase();
-				return (
-					name.includes(q) ||
-					(e.client_position || "").toLowerCase().includes(q) ||
-					(e.detachment || "").toLowerCase().includes(q) ||
-					(e.status || "").toLowerCase().includes(q)
-				);
+				const haystack = [
+					e.applicant_id,
+					shortCode(e.applicant_id),
+					getFullName(e),
+					e.client_position,
+					e.detachment,
+					normalizeStatus(e.status),
+					e.gender,
+					e.client_contact_num,
+					e.client_email,
+					e.birth_date,
+					e.age != null ? String(e.age) : "",
+				]
+					.filter(Boolean)
+					.join(" ")
+					.toLowerCase();
+				return haystack.includes(q);
 			});
 		}
 
@@ -136,7 +178,31 @@ export default function EmployeesPage() {
 		});
 
 		return sorted;
-	}, [employees, search, sortBy]);
+	}, [employees, search, sortBy, statusFilter, genderFilter, detachmentFilter, positionFilter, hasPhotoFilter]);
+
+	const filterOptions = useMemo(() => {
+		const det = new Set<string>();
+		const pos = new Set<string>();
+		const gen = new Set<string>();
+		for (const e of employees) {
+			if (e.detachment) det.add(e.detachment);
+			if (e.client_position) pos.add(e.client_position);
+			if (e.gender) gen.add(e.gender.trim().toUpperCase());
+		}
+		return {
+			detachments: Array.from(det).sort((a, b) => a.localeCompare(b)),
+			positions: Array.from(pos).sort((a, b) => a.localeCompare(b)),
+			genders: Array.from(gen).sort((a, b) => a.localeCompare(b)),
+		};
+	}, [employees]);
+
+	function clearFilters() {
+		setStatusFilter("ALL");
+		setGenderFilter("ALL");
+		setDetachmentFilter("ALL");
+		setPositionFilter("ALL");
+		setHasPhotoFilter("ALL");
+	}
 
 	function openCreate() {
 		setEditorMode("create");
@@ -229,11 +295,12 @@ export default function EmployeesPage() {
 					<input
 						value={search}
 						onChange={(e) => setSearch(e.target.value)}
-						placeholder="Search employees"
+						placeholder="Search name, email, phone, status, detachment, etc."
 						className="bg-white border rounded-full px-4 py-2 shadow-sm w-full md:w-[360px]"
 					/>
 					<button
 						type="button"
+						onClick={() => setFiltersOpen(true)}
 						className="h-10 w-10 rounded-xl border bg-white flex items-center justify-center"
 						aria-label="Filters"
 					>
@@ -414,6 +481,115 @@ export default function EmployeesPage() {
 				onClose={() => setEditorOpen(false)}
 				onSaved={onSaved}
 			/>
+
+			{filtersOpen ? (
+				<div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
+					<div className="bg-white rounded-3xl shadow-xl max-w-lg w-full overflow-hidden">
+						<div className="px-6 py-4 border-b flex items-center justify-between">
+							<div className="text-lg font-bold text-black">Filters</div>
+							<button
+								onClick={() => setFiltersOpen(false)}
+								className="px-3 py-2 rounded-xl border bg-white"
+							>
+								Close
+							</button>
+						</div>
+
+						<div className="p-6 space-y-4">
+							<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+								<label className="text-sm text-black">
+									<div className="text-gray-600 mb-1">Status</div>
+									<select
+										value={statusFilter}
+										onChange={(e) => setStatusFilter(e.target.value as "ALL" | "ACTIVE" | "INACTIVE")}
+										className="w-full border rounded-xl px-3 py-2 bg-white"
+									>
+										<option value="ALL">All</option>
+										<option value="ACTIVE">ACTIVE</option>
+										<option value="INACTIVE">INACTIVE</option>
+									</select>
+								</label>
+
+								<label className="text-sm text-black">
+									<div className="text-gray-600 mb-1">Has Photo</div>
+									<select
+										value={hasPhotoFilter}
+										onChange={(e) => setHasPhotoFilter(e.target.value as "ALL" | "YES" | "NO")}
+										className="w-full border rounded-xl px-3 py-2 bg-white"
+									>
+										<option value="ALL">All</option>
+										<option value="YES">Yes</option>
+										<option value="NO">No</option>
+									</select>
+								</label>
+
+								<label className="text-sm text-black">
+									<div className="text-gray-600 mb-1">Detachment</div>
+									<select
+										value={detachmentFilter}
+										onChange={(e) => setDetachmentFilter(e.target.value)}
+										className="w-full border rounded-xl px-3 py-2 bg-white"
+									>
+										<option value="ALL">All</option>
+										{filterOptions.detachments.map((d) => (
+											<option key={d} value={d}>
+												{d}
+											</option>
+										))}
+									</select>
+								</label>
+
+								<label className="text-sm text-black">
+									<div className="text-gray-600 mb-1">Job Title</div>
+									<select
+										value={positionFilter}
+										onChange={(e) => setPositionFilter(e.target.value)}
+										className="w-full border rounded-xl px-3 py-2 bg-white"
+									>
+										<option value="ALL">All</option>
+										{filterOptions.positions.map((p) => (
+											<option key={p} value={p}>
+												{p}
+											</option>
+										))}
+									</select>
+								</label>
+
+								<label className="text-sm text-black md:col-span-2">
+									<div className="text-gray-600 mb-1">Gender</div>
+									<select
+										value={genderFilter}
+										onChange={(e) => setGenderFilter(e.target.value)}
+										className="w-full border rounded-xl px-3 py-2 bg-white"
+									>
+										<option value="ALL">All</option>
+										{filterOptions.genders.map((g) => (
+											<option key={g} value={g}>
+												{g}
+											</option>
+										))}
+									</select>
+								</label>
+							</div>
+						</div>
+
+						<div className="px-6 pb-6 flex items-center justify-between gap-2">
+							<button
+								onClick={clearFilters}
+								className="px-4 py-2 rounded-xl border bg-white"
+							>
+								Clear
+							</button>
+							<button
+								onClick={() => setFiltersOpen(false)}
+								className="px-4 py-2 rounded-xl bg-[#FFDA03] text-black font-semibold"
+							>
+								Apply
+							</button>
+						</div>
+					</div>
+				</div>
+			) : null}
 
 			{archiveOpen && archiveEmployee ? (
 				<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">

@@ -22,7 +22,7 @@ type Applicant = {
 };
 
 const BUCKETS = {
-  profile: "Profile_Images",
+  profile: "applicants",
 };
 
 function getFullName(a: Applicant) {
