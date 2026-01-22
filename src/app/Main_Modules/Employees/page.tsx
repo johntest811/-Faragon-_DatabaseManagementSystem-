@@ -49,7 +49,7 @@ function shortCode(id: string) {
 function normalizeStatus(input: string | null) {
 	const v = (input ?? "").trim().toUpperCase();
 	if (!v) return "ACTIVE";
-	if (v === "ACTIVE" || v === "INACTIVE") return v;
+	if (v === "ACTIVE" || v === "INACTIVE" || v === "REASSIGN" || v === "RETIRED") return v;
 	return "ACTIVE";
 }
 
@@ -64,7 +64,7 @@ export default function EmployeesPage() {
 	const [sortBy, setSortBy] = useState<"name" | "created_at">("name");
 
 	const [filtersOpen, setFiltersOpen] = useState(false);
-	const [statusFilter, setStatusFilter] = useState<"ALL" | "ACTIVE" | "INACTIVE">("ALL");
+	const [statusFilter, setStatusFilter] = useState<"ALL" | "ACTIVE" | "INACTIVE" | "REASSIGN" | "RETIRED">("ALL");
 	const [genderFilter, setGenderFilter] = useState<string>("ALL");
 	const [detachmentFilter, setDetachmentFilter] = useState<string>("ALL");
 	const [positionFilter, setPositionFilter] = useState<string>("ALL");
@@ -122,6 +122,15 @@ export default function EmployeesPage() {
 	const filtered = useMemo(() => {
 		const q = search.trim().toLowerCase();
 		let list = employees;
+
+		// By default Employees page shows Active/Inactive.
+		// If the admin explicitly filters for REASSIGN/RETIRED, allow it.
+		if (statusFilter === "ALL") {
+			list = list.filter((e) => {
+				const s = normalizeStatus(e.status);
+				return s !== "REASSIGN" && s !== "RETIRED";
+			});
+		}
 
 		const normalizedStatusFilter = statusFilter;
 		if (normalizedStatusFilter !== "ALL") {
@@ -501,12 +510,18 @@ export default function EmployeesPage() {
 									<div className="text-gray-600 mb-1">Status</div>
 									<select
 										value={statusFilter}
-										onChange={(e) => setStatusFilter(e.target.value as "ALL" | "ACTIVE" | "INACTIVE")}
+										onChange={(e) =>
+											setStatusFilter(
+												e.target.value as "ALL" | "ACTIVE" | "INACTIVE" | "REASSIGN" | "RETIRED"
+											)
+										}
 										className="w-full border rounded-xl px-3 py-2 bg-white"
 									>
 										<option value="ALL">All</option>
 										<option value="ACTIVE">ACTIVE</option>
 										<option value="INACTIVE">INACTIVE</option>
+										<option value="REASSIGN">REASSIGN</option>
+										<option value="RETIRED">RETIRED</option>
 									</select>
 								</label>
 

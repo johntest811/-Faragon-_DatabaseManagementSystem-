@@ -8,6 +8,8 @@ import { useAuthRole, useMyModules } from "../Client/useRbac";
 import {
   LayoutGrid,
   Users,
+  Repeat2,
+  UserX,
   Archive,
   Shield,
   Settings,
@@ -23,6 +25,8 @@ type LayoutProps = Readonly<{ children: React.ReactNode }>;
 const ALL_MENU = [
   { key: "dashboard", name: "Dashboard", href: "/Main_Modules/Dashboard/", icon: LayoutGrid },
   { key: "employees", name: "Employees", href: "/Main_Modules/Employees/", icon: Users },
+  { key: "reassign", name: "Reassign", href: "/Main_Modules/Reassign/", icon: Repeat2 },
+  { key: "retired", name: "Retired", href: "/Main_Modules/Retired/", icon: UserX },
   { key: "archive", name: "Archive", href: "/Main_Modules/Archive/", icon: Archive },
   { key: "trash", name: "Trash", href: "/Main_Modules/Trash/", icon: Trash2 },
   { key: "roles", name: "Roles", href: "/Main_Modules/Roles/", icon: Shield },
@@ -83,12 +87,20 @@ export default function MainModulesLayout({ children }: LayoutProps) {
 
   const allowedKeys = useMemo(() => {
     const fromDb = new Set(myModules.map((m) => m.module_key));
-    if (fromDb.size) return fromDb;
+    if (fromDb.size) {
+      if (sessionRole === "superadmin" || sessionRole === "admin") {
+        fromDb.add("reassign");
+        fromDb.add("retired");
+      }
+      return fromDb;
+    }
 
     // Fallback (before migration is applied): keep UI usable.
     if (!sessionRole) return new Set<string>();
     if (sessionRole === "superadmin") return new Set(ALL_MENU.map((m) => m.key));
-    if (sessionRole === "admin") return new Set(["dashboard", "employees", "archive", "trash", "settings", "roles"]);
+    if (sessionRole === "admin") {
+      return new Set(["dashboard", "employees", "reassign", "retired", "archive", "trash", "settings", "roles"]);
+    }
     return new Set(["dashboard", "employees", "archive"]);
   }, [sessionRole, myModules]);
 

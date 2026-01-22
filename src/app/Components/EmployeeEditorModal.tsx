@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { supabase } from "../Client/SupabaseClients";
 
 type Mode = "create" | "edit";
@@ -251,7 +252,10 @@ function normalizeDateInput(value: string | null | undefined) {
 
 function normalizeStatus(value: string | null | undefined) {
   const v = String(value ?? "").trim().toUpperCase();
-  return v === "INACTIVE" ? "INACTIVE" : "ACTIVE";
+  if (v === "INACTIVE") return "INACTIVE";
+  if (v === "REASSIGN") return "REASSIGN";
+  if (v === "RETIRED") return "RETIRED";
+  return "ACTIVE";
 }
 
 function publicUrl(bucket: string, path: string | null) {
@@ -285,6 +289,7 @@ export default function EmployeeEditorModal({
   onClose,
   onSaved,
 }: EmployeeEditorModalProps) {
+  const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string>("");
@@ -652,8 +657,15 @@ export default function EmployeeEditorModal({
           await supabase.from("employment_history").insert(cleanJobs);
         }
 
+        const nextStatus = normalizeStatus(app.status);
         onSaved?.(newId);
         onClose();
+
+        if (nextStatus === "REASSIGN") {
+          router.push("/Main_Modules/Reassign/");
+        } else if (nextStatus === "RETIRED") {
+          router.push("/Main_Modules/Retired/");
+        }
         return;
       }
 
@@ -757,8 +769,15 @@ export default function EmployeeEditorModal({
         }
       }
 
+      const nextStatus = normalizeStatus(app.status);
       onSaved?.(effectiveId);
       onClose();
+
+      if (nextStatus === "REASSIGN") {
+        router.push("/Main_Modules/Reassign/");
+      } else if (nextStatus === "RETIRED") {
+        router.push("/Main_Modules/Retired/");
+      }
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Save failed");
     } finally {
@@ -973,15 +992,27 @@ export default function EmployeeEditorModal({
                       className={`w-full border rounded-xl pl-9 pr-3 py-2 appearance-none bg-white ${
                         normalizeStatus(app.status) === "ACTIVE"
                           ? "border-emerald-300"
-                          : "border-red-300"
+                          : normalizeStatus(app.status) === "INACTIVE"
+                          ? "border-red-300"
+                          : normalizeStatus(app.status) === "REASSIGN"
+                          ? "border-orange-300"
+                          : "border-gray-300"
                       }`}
                     >
                       <option value="ACTIVE">ACTIVE</option>
                       <option value="INACTIVE">INACTIVE</option>
+                      <option value="REASSIGN">REASSIGN</option>
+                      <option value="RETIRED">RETIRED</option>
                     </select>
                     <span
                       className={`absolute left-3 top-1/2 -translate-y-1/2 h-2.5 w-2.5 rounded-full ${
-                        normalizeStatus(app.status) === "ACTIVE" ? "bg-emerald-500" : "bg-red-500"
+                        normalizeStatus(app.status) === "ACTIVE"
+                          ? "bg-emerald-500"
+                          : normalizeStatus(app.status) === "INACTIVE"
+                          ? "bg-red-500"
+                          : normalizeStatus(app.status) === "REASSIGN"
+                          ? "bg-orange-500"
+                          : "bg-gray-500"
                       }`}
                     />
                   </div>
