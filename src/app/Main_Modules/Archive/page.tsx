@@ -151,8 +151,23 @@ export default function ArchivePage() {
           {filtered.map((e) => {
             const name = getFullName(e);
             const profileUrl = getProfileUrl(e.profile_image_path);
+            const detailsHref = `/Main_Modules/Employees/details/?id=${encodeURIComponent(e.applicant_id)}&from=${encodeURIComponent(
+              "/Main_Modules/Archive/"
+            )}`;
             return (
-              <div key={e.applicant_id} className="bg-white rounded-3xl border shadow-sm p-6">
+              <div
+                key={e.applicant_id}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(ev) => {
+                  if (ev.key === "Enter" || ev.key === " ") {
+                    ev.preventDefault();
+                    router.push(detailsHref);
+                  }
+                }}
+                onClick={() => router.push(detailsHref)}
+                className="bg-white rounded-3xl border shadow-sm p-6 cursor-pointer hover:shadow-md transition"
+              >
                 <div className="flex items-center gap-4">
                   <div className="h-16 w-16 rounded-2xl bg-gray-100 overflow-hidden flex items-center justify-center">
                     {profileUrl ? (
@@ -172,14 +187,20 @@ export default function ArchivePage() {
                   <span className="text-xs text-gray-500">Archived: {e.archived_at ? new Date(e.archived_at).toLocaleString() : "—"}</span>
                   <div className="flex items-center gap-2">
                     <button
-                      onClick={() => router.push(`/Main_Modules/Employees/details/?id=${encodeURIComponent(e.applicant_id)}`)}
+                      onClick={(ev) => {
+                        ev.stopPropagation();
+                        router.push(detailsHref);
+                      }}
                       className="h-9 w-9 rounded-xl border bg-white flex items-center justify-center text-black"
                       title="View"
                     >
                       <Eye className="w-4 h-4" />
                     </button>
                     <button
-                      onClick={() => restore(e)}
+                      onClick={(ev) => {
+                        ev.stopPropagation();
+                        restore(e);
+                      }}
                       className="h-9 px-3 rounded-xl bg-emerald-600 text-white text-xs font-semibold inline-flex items-center gap-2"
                       title="Restore"
                     >

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { supabase } from "../Client/SupabaseClients";
 import { useAuthRole, useMyModules } from "../Client/useRbac";
+import { useRealtimeRefresh } from "../Client/useRealtimeRefresh";
 import {
   LayoutGrid,
   Users,
@@ -49,6 +50,7 @@ export default function MainModulesLayout({ children }: LayoutProps) {
   const [search, setSearch] = useState("");
   const { role: sessionRole } = useAuthRole();
   const { modules: myModules } = useMyModules();
+  useRealtimeRefresh(["applicants"]);
 
   function hasLegacySession() {
     try {

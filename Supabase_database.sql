@@ -51,7 +51,7 @@ CREATE TABLE public.applicants (
   province_address character varying,
   emergency_contact_person character varying,
   emergency_contact_num character varying,
-  status character varying DEFAULT 'ACTIVE'::character varying CHECK (status IS NULL OR (upper(status::text) = ANY (ARRAY['ACTIVE'::text, 'INACTIVE'::text, 'REASSIGN'::text, 'RETIRED'::text]))) NOT VALI),
+  status character varying DEFAULT 'ACTIVE'::character varying CHECK (NULLIF(btrim(status::text), ''::text) IS NULL OR (upper(NULLIF(btrim(status::text), ''::text)) = ANY (ARRAY['ACTIVE'::text, 'INACTIVE'::text, 'REASSIGN'::text, 'RETIRED'::text]))),
   profile_image_path text,
   sss_certain_path text,
   tin_id_path text,

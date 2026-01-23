@@ -168,9 +168,18 @@ function DocLink({ title, url }: { title: string; url: string | null }) {
   );
 }
 
+function safeBackHref(from: string | null) {
+  if (!from) return "/Main_Modules/Employees/";
+  // basic safety: only allow internal module routes
+  if (!from.startsWith("/Main_Modules/")) return "/Main_Modules/Employees/";
+  return from;
+}
+
 function EmployeeDetailsInner() {
   const params = useSearchParams();
   const id = params.get("id");
+  const from = params.get("from");
+  const backHref = safeBackHref(from);
 
   const { role: sessionRole } = useAuthRole();
   const canEdit = sessionRole !== "employee";
@@ -345,10 +354,10 @@ function EmployeeDetailsInner() {
         <div className="text-red-600 font-semibold">{error}</div>
         <div className="mt-4">
           <Link
-            href="/Main_Modules/Employees/"
+            href={backHref}
             className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border bg-white text-black"
           >
-            <ArrowLeft className="w-4 h-4" /> Back to Employees
+            <ArrowLeft className="w-4 h-4" /> Back
           </Link>
         </div>
       </div>
@@ -369,7 +378,7 @@ function EmployeeDetailsInner() {
     <div className="space-y-6">
       <div className="flex items-center justify-between gap-3">
         <Link
-          href="/Main_Modules/Employees/"
+          href={backHref}
           className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border bg-white text-black"
         >
           <ArrowLeft className="w-4 h-4" /> Back

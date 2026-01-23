@@ -184,7 +184,9 @@ export default function RetiredPage() {
           {filtered.map((e) => {
             const name = getFullName(e);
             const profileUrl = getProfileUrl(e.profile_image_path);
-            const detailsHref = `/Main_Modules/Employees/details/?id=${encodeURIComponent(e.applicant_id)}`;
+            const detailsHref = `/Main_Modules/Employees/details/?id=${encodeURIComponent(e.applicant_id)}&from=${encodeURIComponent(
+              "/Main_Modules/Retired/"
+            )}`;
 
             return (
               <div

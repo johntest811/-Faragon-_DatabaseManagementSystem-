@@ -293,7 +293,11 @@ export default function EmployeesPage() {
 	async function onSaved(applicantId: string) {
 		await fetchEmployees();
 		if (editorMode === "create") {
-			router.push(`/Main_Modules/Employees/details/?id=${encodeURIComponent(applicantId)}`);
+			router.push(
+				`/Main_Modules/Employees/details/?id=${encodeURIComponent(applicantId)}&from=${encodeURIComponent(
+					"/Main_Modules/Employees/"
+				)}`
+			);
 		}
 	}
 
@@ -349,7 +353,9 @@ export default function EmployeesPage() {
 						const status = (e.status ?? "").trim().toUpperCase();
 						const isActive = status === "ACTIVE";
 						const canClick = sessionRole !== "employee";
-						const detailsHref = `/Main_Modules/Employees/details/?id=${encodeURIComponent(e.applicant_id)}`;
+						const detailsHref = `/Main_Modules/Employees/details/?id=${encodeURIComponent(e.applicant_id)}&from=${encodeURIComponent(
+							"/Main_Modules/Employees/"
+						)}`;
 
 						return (
 							<div
@@ -611,18 +617,18 @@ export default function EmployeesPage() {
 					<div className="w-full max-w-lg bg-white rounded-3xl border shadow-xl overflow-hidden">
 						<div className="px-6 py-4 border-b flex items-center justify-between">
 							<div>
-								<div className="text-lg font-semibold">Archive Employee</div>
+								<div className="text-lg font-semibold text-black">Archive Employee</div>
 								<div className="text-xs text-gray-500">{getFullName(archiveEmployee)}</div>
 							</div>
-							<button onClick={() => setArchiveOpen(false)} className="px-3 py-2 rounded-xl border bg-white">
+							{/* <button onClick={() => setArchiveOpen(false)} className="px-3 py-2 rounded-xl border bg-white">
 								Close
-							</button>
+							</button> */}
 						</div>
 
 						<div className="p-6 text-sm text-gray-700">This will move the employee to the Archive page.</div>
 
 						<div className="px-6 pb-6 flex items-center justify-end gap-2">
-							<button onClick={() => setArchiveOpen(false)} className="px-4 py-2 rounded-xl border bg-white">
+							<button onClick={() => setArchiveOpen(false)} className="px-4 py-2 rounded-xl border bg-white text-black">
 								Cancel
 							</button>
 							<button onClick={confirmArchive} className="px-4 py-2 rounded-xl bg-gray-900 text-white font-semibold">
