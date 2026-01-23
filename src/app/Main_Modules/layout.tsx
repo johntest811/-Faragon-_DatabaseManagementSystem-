@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "../Client/SupabaseClients";
 import { useAuthRole, useMyModules } from "../Client/useRbac";
 import { useRealtimeRefresh } from "../Client/useRealtimeRefresh";
@@ -46,11 +46,41 @@ function titleFromPath(pathname: string) {
 export default function MainModulesLayout({ children }: LayoutProps) {
   const router = useRouter();
   const pathname = usePathname() ?? "";
+  const searchParams = useSearchParams();
   const [collapsed, setCollapsed] = useState(false);
   const [search, setSearch] = useState("");
   const { role: sessionRole } = useAuthRole();
   const { modules: myModules } = useMyModules();
   useRealtimeRefresh(["applicants"]);
+
+  const menuActivePath = useMemo(() => {
+    const isDetails = pathname.startsWith("/Main_Modules/Employees/details");
+    if (!isDetails) return pathname;
+
+    const from = searchParams?.get("from");
+    if (from && from.startsWith("/Main_Modules/")) return from;
+
+    try {
+      const last = sessionStorage.getItem("lastModulePath");
+      if (last && last.startsWith("/Main_Modules/")) return last;
+    } catch {
+      // ignore
+    }
+
+    return "/Main_Modules/Employees/";
+  }, [pathname, searchParams]);
+
+  useEffect(() => {
+    // Track the last non-details page so we can keep the sidebar highlight stable
+    // when opening the shared /Employees/details view.
+    if (!pathname) return;
+    if (pathname.startsWith("/Main_Modules/Employees/details")) return;
+    try {
+      sessionStorage.setItem("lastModulePath", pathname);
+    } catch {
+      // ignore
+    }
+  }, [pathname]);
 
   function hasLegacySession() {
     try {
@@ -148,8 +178,8 @@ export default function MainModulesLayout({ children }: LayoutProps) {
         <nav className="flex-1 px-3 space-y-1">
           {menu.map((item) => {
             const active =
-              pathname === item.href ||
-              pathname.startsWith(item.href);
+              menuActivePath === item.href ||
+              menuActivePath.startsWith(item.href);
 
             return (
               <Link

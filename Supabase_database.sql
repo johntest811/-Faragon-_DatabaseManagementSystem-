@@ -64,9 +64,15 @@ CREATE TABLE public.applicants (
   is_trashed boolean NOT NULL DEFAULT false,
   trashed_at timestamp with time zone,
   trashed_by uuid,
+  retired_date date,
+  retired_reason text,
+  retired_remarks text,
+  retired_at timestamp with time zone,
+  retired_by uuid,
   CONSTRAINT applicants_pkey PRIMARY KEY (applicant_id),
   CONSTRAINT applicants_archived_by_fkey FOREIGN KEY (archived_by) REFERENCES public.admins(id),
-  CONSTRAINT applicants_trashed_by_fkey FOREIGN KEY (trashed_by) REFERENCES public.admins(id)
+  CONSTRAINT applicants_trashed_by_fkey FOREIGN KEY (trashed_by) REFERENCES public.admins(id),
+  CONSTRAINT applicants_retired_by_fkey FOREIGN KEY (retired_by) REFERENCES public.admins(id)
 );
 CREATE TABLE public.biodata (
   applicant_id uuid NOT NULL,
