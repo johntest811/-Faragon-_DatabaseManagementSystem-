@@ -258,6 +258,32 @@ function normalizeStatus(value: string | null | undefined) {
   return "ACTIVE";
 }
 
+function generateUuidV4(): string {
+  try {
+    type CryptoLike = {
+      randomUUID?: () => string;
+      getRandomValues?: (arr: Uint8Array) => Uint8Array;
+    };
+    const cryptoLike = (globalThis as unknown as { crypto?: CryptoLike }).crypto;
+    if (cryptoLike?.randomUUID) return cryptoLike.randomUUID();
+
+    const bytes = new Uint8Array(16);
+    if (cryptoLike?.getRandomValues) cryptoLike.getRandomValues(bytes);
+    else for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
+
+    // RFC 4122 v4
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+
+    const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+  } catch {
+    // Very unlikely; last resort.
+    const s = () => Math.floor((1 + Math.random()) * 0x10000).toString(16).slice(1);
+    return `${s()}${s()}-${s()}-${s()}-${s()}-${s()}${s()}${s()}`;
+  }
+}
+
 function publicUrl(bucket: string, path: string | null) {
   if (!path) return null;
   const { data } = supabase.storage.from(bucket).getPublicUrl(path);
@@ -294,9 +320,18 @@ export default function EmployeeEditorModal({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string>("");
 
+  const STEPS = useMemo(
+    () => ["personal", "education", "social", "licensure", "employment", "documents"] as const,
+    []
+  );
+  type Step = (typeof STEPS)[number];
+
   const [tab, setTab] = useState<
     "personal" | "education" | "social" | "licensure" | "employment" | "documents"
   >("personal");
+
+  const [maxStepIndex, setMaxStepIndex] = useState(0);
+  const [draftApplicantId, setDraftApplicantId] = useState<string | null>(null);
 
   const [app, setApp] = useState<ApplicantDraft>(emptyApplicantDraft);
   const [certs, setCerts] = useState<CertificatesDraft>(emptyCertificatesDraft);
@@ -304,7 +339,38 @@ export default function EmployeeEditorModal({
   const [bio, setBio] = useState<BiodataDraft>(emptyBiodataDraft);
   const [jobs, setJobs] = useState<EmploymentItem[]>([]);
 
-  const effectiveId = mode === "edit" ? applicantId ?? null : null;
+  const effectiveId = mode === "edit" ? applicantId ?? null : draftApplicantId;
+
+  const currentStepIndex = useMemo(() => STEPS.indexOf(tab as Step), [STEPS, tab]);
+  const isLastStep = currentStepIndex === STEPS.length - 1;
+
+  function canNavigateTo(step: Step) {
+    if (mode === "edit") return true;
+    const idx = STEPS.indexOf(step);
+    return idx <= maxStepIndex;
+  }
+
+  function goToStep(step: Step) {
+    if (canNavigateTo(step)) {
+      setTab(step);
+      // setError("");
+      return;
+    }
+    setError("Please use Next to proceed chronologically. You can go back anytime.");
+  }
+
+  function goNext() {
+    const next = Math.min(currentStepIndex + 1, STEPS.length - 1);
+    setMaxStepIndex((v) => Math.max(v, next));
+    setTab(STEPS[next]);
+    setError("");
+  }
+
+  function goBack() {
+    const prev = Math.max(currentStepIndex - 1, 0);
+    setTab(STEPS[prev]);
+    setError("");
+  }
 
   const docPreview = useMemo(() => {
     return {
@@ -332,6 +398,15 @@ export default function EmployeeEditorModal({
     setTab("personal");
 
     if (mode === "create") {
+      setMaxStepIndex(0);
+      setDraftApplicantId(generateUuidV4());
+    } else {
+      // In edit mode, all sections should be accessible.
+      setMaxStepIndex(999);
+      setDraftApplicantId(null);
+    }
+
+    if (mode === "create") {
       setApp(emptyApplicantDraft());
       setCerts(emptyCertificatesDraft());
       setLic(emptyLicensureDraft());
@@ -340,7 +415,8 @@ export default function EmployeeEditorModal({
       return;
     }
 
-    if (!effectiveId) return;
+    const idToLoad = mode === "edit" ? applicantId ?? null : null;
+    if (!idToLoad) return;
 
     let cancelled = false;
 
@@ -354,7 +430,7 @@ export default function EmployeeEditorModal({
           .select(
             "applicant_id, first_name, middle_name, last_name, extn_name, gender, birth_date, age, client_contact_num, client_email, present_address, province_address, emergency_contact_person, emergency_contact_num, education_attainment, date_hired_fsai, client_position, detachment, status, security_licensed_num, sss_number, pagibig_number, philhealth_number, tin_number, profile_image_path, sss_certain_path, tin_id_path, pag_ibig_id_path, philhealth_id_path, security_license_path"
           )
-          .eq("applicant_id", effectiveId)
+          .eq("applicant_id", idToLoad)
           .maybeSingle();
 
         if (aRes.error) throw aRes.error;
@@ -364,26 +440,26 @@ export default function EmployeeEditorModal({
           .select(
             "course_title_degree, training_path, seminar_path, gun_safety_certificate_path, highschool_diploma_path, college_diploma_path, vocational_path, training_when_where, seminar_when_where, highschool_when_where, college_when_where, vocational_when_where, course_when_where"
           )
-          .eq("applicant_id", effectiveId)
+          .eq("applicant_id", idToLoad)
           .maybeSingle();
 
         const lRes = await supabase
           .from("licensure")
           .select("driver_license_number, driver_expiration, security_license_number, security_expiration")
-          .eq("applicant_id", effectiveId)
+          .eq("applicant_id", idToLoad)
           .maybeSingle();
 
         const bRes = await supabase
           .from("biodata")
           .select("applicant_form_path")
-          .eq("applicant_id", effectiveId)
+          .eq("applicant_id", idToLoad)
           .maybeSingle();
 
         // Employment: prefer employment_history (multi-row); fall back to employment_record.
         const hRes = await supabase
           .from("employment_history")
           .select("employment_id, company_name, position, telephone, inclusive_dates, leave_reason")
-          .eq("applicant_id", effectiveId)
+          .eq("applicant_id", idToLoad)
           .order("created_at", { ascending: true });
 
         let employmentItems: EmploymentItem[] = [];
@@ -403,7 +479,7 @@ export default function EmployeeEditorModal({
           const legacy = await supabase
             .from("employment_record")
             .select("company_name, position, leave_reason")
-            .eq("applicant_id", effectiveId)
+            .eq("applicant_id", idToLoad)
             .maybeSingle();
           if (!legacy.error && legacy.data) {
             const legacyRow = legacy.data as unknown as EmploymentRecordRow;
@@ -497,7 +573,7 @@ export default function EmployeeEditorModal({
     return () => {
       cancelled = true;
     };
-  }, [open, mode, effectiveId]);
+  }, [open, mode, applicantId]);
 
   async function uploadToBucket(bucket: string, id: string, file: File, prefix: string) {
     const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
@@ -514,9 +590,9 @@ export default function EmployeeEditorModal({
     file?: File | null
   ) {
     if (!file) return;
-    const id = mode === "edit" ? effectiveId : null;
+    const id = effectiveId;
     if (!id) {
-      setError("Save the employee first before uploading documents.");
+      setError("Missing employee id; please try reopening the modal.");
       return;
     }
     setError("");
@@ -533,38 +609,6 @@ export default function EmployeeEditorModal({
     setSaving(true);
 
     try {
-      // Required: Social Welfare
-      if (
-        !app.sss_number.trim() ||
-        !app.pagibig_number.trim() ||
-        !app.philhealth_number.trim() ||
-        !app.tin_number.trim()
-      ) {
-        setTab("social");
-        setError("Social Welfare fields are required: SSS No., Pag-ibig No., Philhealth No., and TIN.");
-        setSaving(false);
-        return;
-      }
-
-      // Required: at least one Education / Training field
-      const hasAnyEducation = [
-        app.education_attainment,
-        certs.highschool_when_where,
-        certs.college_when_where,
-        certs.vocational_when_where,
-        certs.course_title_degree,
-        certs.course_when_where,
-      ].some((v) => v.trim().length > 0);
-
-      if (!hasAnyEducation) {
-        setTab("education");
-        setError(
-          "At least one Education/Training field is required (High School, College, Vocational, or Course/Title/Degree)."
-        );
-        setSaving(false);
-        return;
-      }
-
       if (mode === "create") {
         if (!app.first_name.trim() || !app.last_name.trim()) {
           setError("First Name and Last Name are required");
@@ -572,7 +616,11 @@ export default function EmployeeEditorModal({
           return;
         }
 
+        const createId =
+          draftApplicantId || generateUuidV4();
+
         const aPayload: Record<string, string | number | null> = {
+          applicant_id: createId,
           first_name: toNullableText(app.first_name),
           middle_name: toNullableText(app.middle_name),
           last_name: toNullableText(app.last_name),
@@ -606,10 +654,15 @@ export default function EmployeeEditorModal({
           security_license_path: toNullableText(app.security_license_path),
         };
 
-        const ins = await supabase.from("applicants").insert(aPayload).select("applicant_id").single();
+        const ins = await supabase
+          .from("applicants")
+          .insert(aPayload)
+          .select("applicant_id")
+          .single();
         if (ins.error) throw ins.error;
 
         const newId = (ins.data as { applicant_id: string }).applicant_id;
+        setDraftApplicantId(newId);
 
         // Related tables (best-effort)
         await supabase.from("certificates").upsert({
@@ -796,6 +849,11 @@ export default function EmployeeEditorModal({
               {title ?? (mode === "create" ? "New Employee" : "Edit Employee")}
             </div>
             {subtitle ? <div className="text-xs text-gray-500 truncate">{subtitle}</div> : null}
+            {mode === "create" ? (
+              <div className="mt-1 text-[11px] text-gray-500">
+                Step {currentStepIndex + 1}/{STEPS.length} • You can enter “N/A” when information is not available.
+              </div>
+            ) : null}
           </div>
           <button onClick={onClose} className="px-3 py-2 rounded-xl border bg-white text-black">
             Close
@@ -803,27 +861,27 @@ export default function EmployeeEditorModal({
         </div>
 
         <div className="px-6 py-3 border-b flex flex-wrap gap-2">
-          <button className={sectionButton(tab === "personal")} onClick={() => setTab("personal")}
+          <button className={sectionButton(tab === "personal")} onClick={() => goToStep("personal")}
             type="button">
             Personal
           </button>
-          <button className={sectionButton(tab === "education")} onClick={() => setTab("education")}
+          <button className={sectionButton(tab === "education")} onClick={() => goToStep("education")}
             type="button">
             Education
           </button>
-          <button className={sectionButton(tab === "social")} onClick={() => setTab("social")}
+          <button className={sectionButton(tab === "social")} onClick={() => goToStep("social")}
             type="button">
             Social Welfare
           </button>
-          <button className={sectionButton(tab === "licensure")} onClick={() => setTab("licensure")}
+          <button className={sectionButton(tab === "licensure")} onClick={() => goToStep("licensure")}
             type="button">
             Licensure
           </button>
-          <button className={sectionButton(tab === "employment")} onClick={() => setTab("employment")}
+          <button className={sectionButton(tab === "employment")} onClick={() => goToStep("employment")}
             type="button">
             Employment
           </button>
-          <button className={sectionButton(tab === "documents")} onClick={() => setTab("documents")}
+          <button className={sectionButton(tab === "documents")} onClick={() => goToStep("documents")}
             type="button">
             Documents
           </button>
@@ -1345,17 +1403,40 @@ export default function EmployeeEditorModal({
           )}
         </div>
 
-        <div className="px-6 pb-6 flex items-center justify-end gap-2">
+        <div className="px-6 pb-6 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            {mode === "create" ? (
+              <button
+                type="button"
+                disabled={saving || currentStepIndex === 0}
+                onClick={goBack}
+                className={`px-4 py-2 rounded-xl border bg-white text-black ${
+                  saving || currentStepIndex === 0 ? "opacity-60" : ""
+                }`}
+              >
+                Back
+              </button>
+            ) : null}
+          </div>
+
+          <div className="flex items-center justify-end gap-2">
           <button onClick={onClose} className="px-4 py-2 rounded-xl border bg-white text-black">
             Cancel
           </button>
           <button
             disabled={saving}
-            onClick={save}
+            onClick={() => {
+              if (mode === "create" && !isLastStep) {
+                goNext();
+                return;
+              }
+              save();
+            }}
             className={`px-4 py-2 rounded-xl bg-[#FFDA03] text-black font-semibold ${saving ? "opacity-70" : ""}`}
           >
-            {saving ? "Saving…" : "Save"}
+            {saving ? "Saving…" : mode === "create" && !isLastStep ? "Next" : "Save"}
           </button>
+          </div>
         </div>
       </div>
     </div>

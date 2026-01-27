@@ -3,9 +3,10 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../Client/SupabaseClients";
-import { Pencil, Eye, SlidersHorizontal, ChevronDown, Trash2 } from "lucide-react";
+import { Pencil, Eye, SlidersHorizontal, ChevronDown, Trash2, Upload } from "lucide-react";
 import { useAuthRole } from "../../Client/useRbac";
 import EmployeeEditorModal from "../../Components/EmployeeEditorModal";
+import EmployeeExcelImportModal from "../../Components/EmployeeExcelImportModal";
 
 type Applicant = {
 	applicant_id: string;
@@ -73,6 +74,7 @@ export default function EmployeesPage() {
 	const [editorOpen, setEditorOpen] = useState(false);
 	const [editorMode, setEditorMode] = useState<"create" | "edit">("edit");
 	const [editorApplicantId, setEditorApplicantId] = useState<string | null>(null);
+	const [excelOpen, setExcelOpen] = useState(false);
 
 	const [archiveOpen, setArchiveOpen] = useState(false);
 	const [archiveEmployee, setArchiveEmployee] = useState<Applicant | null>(null);
@@ -219,6 +221,10 @@ export default function EmployeesPage() {
 		setEditorOpen(true);
 	}
 
+	function openExcelImport() {
+		setExcelOpen(true);
+	}
+
 	function openEdit(employee: Applicant) {
 		setEditorMode("edit");
 		setEditorApplicantId(employee.applicant_id);
@@ -332,9 +338,18 @@ export default function EmployeesPage() {
 						</button>
 					</div>
 					{sessionRole !== "employee" ? (
-						<button onClick={openCreate} className="px-4 py-2 rounded-full bg-[#FFDA03] text-black font-semibold">
-							New Employee
-						</button>
+						<div className="flex items-center gap-2">
+							<button
+								onClick={openExcelImport}
+								className="px-4 py-2 rounded-full bg-white border text-black font-semibold flex items-center gap-2"
+							>
+								<Upload className="w-4 h-4" />
+								Import Excel
+							</button>
+							<button onClick={openCreate} className="px-4 py-2 rounded-full bg-[#FFDA03] text-black font-semibold">
+								New Employee
+							</button>
+						</div>
 					) : null}
 				</div>
 			</div>
@@ -495,6 +510,14 @@ export default function EmployeesPage() {
 				applicantId={editorApplicantId}
 				onClose={() => setEditorOpen(false)}
 				onSaved={onSaved}
+			/>
+
+			<EmployeeExcelImportModal
+				open={excelOpen}
+				onClose={() => setExcelOpen(false)}
+				onImported={() => {
+					fetchEmployees();
+				}}
 			/>
 
 			{filtersOpen ? (
