@@ -19,6 +19,7 @@ import {
   Search,
   ChevronLeft,
   Power,
+  Badge,
 } from "lucide-react";
 
 type LayoutProps = Readonly<{ children: React.ReactNode }>;
