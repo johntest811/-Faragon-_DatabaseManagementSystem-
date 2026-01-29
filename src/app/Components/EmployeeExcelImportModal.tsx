@@ -55,9 +55,15 @@ function toText(v: unknown): string {
   return String(v);
 }
 
-function toNullableText(v: unknown): string | null {
+const NA_TEXT = "N/A";
+
+function toTextOrNA(v: unknown): string {
   const s = toText(v).trim();
-  return s ? s : null;
+  return s ? s : NA_TEXT;
+}
+
+function isRowEffectivelyEmpty(row: RowObject) {
+  return Object.values(row).every((v) => !toText(v).trim());
 }
 
 function normalizeStatus(value: unknown) {
@@ -116,45 +122,102 @@ function pick(row: RowObject, keys: string[]): unknown {
   return undefined;
 }
 
-function rowToApplicant(row: RowObject): { payload: ApplicantInsert | null; error?: string } {
-  const firstName = toNullableText(pick(row, ["first_name", "first name", "firstname"]));
-  const lastName = toNullableText(pick(row, ["last_name", "last name", "lastname"]));
+function hasHeader(row: RowObject, header: string) {
+  const target = normKey(header);
+  return Object.keys(row).some((k) => normKey(k) === target);
+}
 
-  if (!firstName || !lastName) {
-    return { payload: null, error: "Missing first_name/last_name" };
+function rowToApplicant(row: RowObject): { payload: ApplicantInsert | null; error?: string } {
+  if (isRowEffectivelyEmpty(row)) {
+    return { payload: null, error: "Empty row" };
   }
+
+  // Keep imports tolerant: if required identity columns are missing, fill with N/A
+  // so the record can still be inserted.
+  const firstName = toTextOrNA(pick(row, ["first_name", "first name", "firstname"]));
+  const lastName = toTextOrNA(pick(row, ["last_name", "last name", "lastname"]));
+
+  // Disambiguate "Contact Number": if the sheet has "Your Contact Number",
+  // assume plain "Contact Number" belongs to the emergency contact section.
+  const hasYourContactHeader =
+    hasHeader(row, "Your Contact Number") ||
+    hasHeader(row, "Your Contact Number ") ||
+    hasHeader(row, "Your Contact No") ||
+    hasHeader(row, "Your Contact No.");
 
   const payload: ApplicantInsert = {
     first_name: firstName,
-    middle_name: toNullableText(pick(row, ["middle_name", "middle name", "middlename"])),
+    middle_name: toTextOrNA(pick(row, ["middle_name", "middle name", "middlename"])),
     last_name: lastName,
-    extn_name: toNullableText(pick(row, ["extn_name", "extn", "suffix"])),
+    extn_name: toTextOrNA(pick(row, ["extn_name", "extn", "suffix"])),
 
-    gender: toNullableText(pick(row, ["gender", "sex"])),
+    gender: toTextOrNA(pick(row, ["gender", "sex"])),
     birth_date: toDateYmd(pick(row, ["birth_date", "birthdate", "date of birth", "dob"])),
     age: toNullableInt(pick(row, ["age"])),
 
-    client_contact_num: toNullableText(pick(row, ["client_contact_num", "contact", "contact number", "phone"])),
-    client_email: toNullableText(pick(row, ["client_email", "email"])),
+    client_contact_num: toTextOrNA(
+      pick(row, [
+        "client_contact_num",
+        "your contact number",
+        "contact",
+        "phone",
+        // Keep "contact number" last to reduce ambiguity with emergency contact.
+        ...(hasYourContactHeader ? [] : ["contact number"]),
+      ])
+    ),
+    client_email: toTextOrNA(pick(row, ["client_email", "your email address", "email address", "email"])),
 
-    present_address: toNullableText(pick(row, ["present_address", "present address", "address"])),
-    province_address: toNullableText(pick(row, ["province_address", "province address"])),
+    present_address: toTextOrNA(
+      pick(row, [
+        "present_address",
+        "present address",
+        "complete present address (house # street barangay city)",
+        "complete present address",
+        "address",
+      ])
+    ),
+    province_address: toTextOrNA(
+      pick(row, [
+        "province_address",
+        "province address",
+        "complete province address (house # street barangay city)",
+        "complete province address",
+      ])
+    ),
 
-    emergency_contact_person: toNullableText(pick(row, ["emergency_contact_person", "emergency contact person"])),
-    emergency_contact_num: toNullableText(pick(row, ["emergency_contact_num", "emergency contact num", "emergency contact number"])),
+    emergency_contact_person: toTextOrNA(
+      pick(row, [
+        "emergency_contact_person",
+        "emergency contact person",
+        "contact person incase of emergency",
+        "contact person in case of emergency",
+      ])
+    ),
+    emergency_contact_num: toTextOrNA(
+      pick(row, [
+        "emergency_contact_num",
+        "emergency contact num",
+        "emergency contact number",
+        "contact number incase of emergency",
+        "contact number in case of emergency",
+        ...(hasYourContactHeader ? ["contact number"] : []),
+      ])
+    ),
 
-    education_attainment: toNullableText(pick(row, ["education_attainment", "education", "educational attainment"])),
-    date_hired_fsai: toDateYmd(pick(row, ["date_hired_fsai", "date hired", "date hired fsai"])),
+    education_attainment: toTextOrNA(pick(row, ["education_attainment", "education", "educational attainment"])),
+    date_hired_fsai: toDateYmd(pick(row, ["date_hired_fsai", "date hired", "date hired fsai", "date hired in fsai"])),
 
-    client_position: toNullableText(pick(row, ["client_position", "position"])),
-    detachment: toNullableText(pick(row, ["detachment"])),
+    client_position: toTextOrNA(pick(row, ["client_position", "position"])),
+    detachment: toTextOrNA(pick(row, ["detachment"])),
     status: normalizeStatus(pick(row, ["status"])),
 
-    security_licensed_num: toNullableText(pick(row, ["security_licensed_num", "security licensed num", "security licensed number"])),
-    sss_number: toNullableText(pick(row, ["sss_number", "sss no", "sss"])),
-    pagibig_number: toNullableText(pick(row, ["pagibig_number", "pag ibig", "pagibig"])),
-    philhealth_number: toNullableText(pick(row, ["philhealth_number", "philhealth", "phil health"])),
-    tin_number: toNullableText(pick(row, ["tin_number", "tin"])),
+    security_licensed_num: toTextOrNA(
+      pick(row, ["security_licensed_num", "security licensed num", "security licensed number", "security licensed number "])
+    ),
+    sss_number: toTextOrNA(pick(row, ["sss_number", "sss number", "sss no", "sss"])),
+    pagibig_number: toTextOrNA(pick(row, ["pagibig_number", "pag ibig fund number", "pag ibig", "pagibig"])),
+    philhealth_number: toTextOrNA(pick(row, ["philhealth_number", "philhealth number", "philhealth", "phil health"])),
+    tin_number: toTextOrNA(pick(row, ["tin_number", "tin", "tin "])),
   };
 
   return { payload };
