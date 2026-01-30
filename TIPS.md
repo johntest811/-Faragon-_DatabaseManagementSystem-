@@ -35,3 +35,7 @@
 # one-time if not logged in
 - gh repo create database-management-app --public --source=. --remote=origin --push
 
+
+npm view @electron/rebuild@3.7.2 engines
+npm view electron-builder@26.4.0 dependencies --json
+npm ls @electron/rebuild

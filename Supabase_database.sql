@@ -155,11 +155,48 @@ CREATE TABLE public.licensure (
   CONSTRAINT licensure_pkey PRIMARY KEY (applicant_id),
   CONSTRAINT licenseure_applicant_id_fkey FOREIGN KEY (applicant_id) REFERENCES public.applicants(applicant_id)
 );
+CREATE TABLE public.licensure_notification_log (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  applicant_id uuid NOT NULL,
+  license_type text NOT NULL CHECK (license_type = ANY (ARRAY['DRIVER_LICENSE'::text, 'SECURITY_LICENSE'::text, 'INSURANCE'::text])),
+  expires_on date NOT NULL,
+  recipient_email text,
+  status text NOT NULL DEFAULT 'QUEUED'::text CHECK (status = ANY (ARRAY['QUEUED'::text, 'SENT'::text, 'FAILED'::text, 'SKIPPED'::text])),
+  error_message text,
+  CONSTRAINT licensure_notification_log_pkey PRIMARY KEY (id),
+  CONSTRAINT licensure_notification_log_applicant_id_fkey FOREIGN KEY (applicant_id) REFERENCES public.applicants(applicant_id)
+);
 CREATE TABLE public.modules (
   module_key text NOT NULL,
   display_name text NOT NULL,
   path text NOT NULL,
   CONSTRAINT modules_pkey PRIMARY KEY (module_key)
+);
+CREATE TABLE public.notification_email_settings (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  provider text NOT NULL DEFAULT 'gmail'::text CHECK (provider = 'gmail'::text),
+  gmail_user text NOT NULL,
+  from_email text NOT NULL,
+  gmail_app_password text,
+  is_active boolean NOT NULL DEFAULT true,
+  notes text,
+  CONSTRAINT notification_email_settings_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.notification_preferences (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  is_enabled boolean NOT NULL DEFAULT true,
+  days_before_expiry integer NOT NULL DEFAULT 30 CHECK (days_before_expiry >= 1 AND days_before_expiry <= 365),
+  include_driver_license boolean NOT NULL DEFAULT false,
+  include_security_license boolean NOT NULL DEFAULT true,
+  include_insurance boolean NOT NULL DEFAULT false,
+  send_time_local time without time zone NOT NULL DEFAULT '08:00:00'::time without time zone,
+  timezone text NOT NULL DEFAULT 'Asia/Manila'::text,
+  CONSTRAINT notification_preferences_pkey PRIMARY KEY (id)
 );
 CREATE TABLE public.role_module_access (
   role_id uuid NOT NULL,
