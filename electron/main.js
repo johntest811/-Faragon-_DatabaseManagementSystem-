@@ -1,6 +1,7 @@
-const { app, BrowserWindow, protocol, dialog, ipcMain } = require('electron');
+const { app, BrowserWindow, protocol, dialog, ipcMain, shell, safeStorage } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const http = require('http');
 
 // Load env vars for Electron main (dev + packaged). This keeps the service role key out of the renderer.
 try {
@@ -32,6 +33,198 @@ function safeText(v) {
   return String(v ?? '').trim();
 }
 
+function clampInt(n, { min, max, fallback }) {
+  const v = Number(n);
+  if (!Number.isFinite(v)) return fallback;
+  const i = Math.trunc(v);
+  if (i < min) return min;
+  if (i > max) return max;
+  return i;
+}
+
+function readEncryptedJson(filePath) {
+  try {
+    if (!fs.existsSync(filePath)) return null;
+    const buf = fs.readFileSync(filePath);
+    const text = safeStorage?.isEncryptionAvailable?.()
+      ? safeStorage.decryptString(buf)
+      : buf.toString('utf8');
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+function writeEncryptedJson(filePath, value) {
+  const text = JSON.stringify(value ?? null);
+  const buf = safeStorage?.isEncryptionAvailable?.()
+    ? safeStorage.encryptString(text)
+    : Buffer.from(text, 'utf8');
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, buf);
+}
+
+function deleteFileIfExists(filePath) {
+  try {
+    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+  } catch {
+    // ignore
+  }
+}
+
+function getGmailOAuthFilePath() {
+  return path.join(app.getPath('userData'), 'gmail_oauth.enc');
+}
+
+function getLocalNotificationPrefsFilePath() {
+  return path.join(app.getPath('userData'), 'notification_prefs_local.enc');
+}
+
+function loadLocalNotificationPrefs() {
+  const raw = readEncryptedJson(getLocalNotificationPrefsFilePath()) || {};
+  return {
+    includeExpired: Boolean(raw.includeExpired),
+    expiredWithinDays: clampInt(raw.expiredWithinDays, { min: 1, max: 365, fallback: 7 }),
+  };
+}
+
+function saveLocalNotificationPrefs(payload) {
+  const next = {
+    includeExpired: Boolean(payload?.includeExpired),
+    expiredWithinDays: clampInt(payload?.expiredWithinDays, { min: 1, max: 365, fallback: 7 }),
+  };
+  writeEncryptedJson(getLocalNotificationPrefsFilePath(), next);
+  return next;
+}
+
+function loadGmailOAuth() {
+  const raw = readEncryptedJson(getGmailOAuthFilePath()) || null;
+  if (!raw || typeof raw !== 'object') return null;
+  const email = safeText(raw.email);
+  const refreshToken = safeText(raw.refresh_token);
+  if (!email || !refreshToken) return null;
+  return { email, refresh_token: refreshToken };
+}
+
+function gmailOAuthStatus() {
+  const oauth = loadGmailOAuth();
+  return {
+    connected: Boolean(oauth?.refresh_token && oauth?.email),
+    email: oauth?.email || null,
+  };
+}
+
+async function connectGmailOAuth() {
+  const clientId = safeText(process.env.GMAIL_OAUTH_CLIENT_ID);
+  const clientSecret = safeText(process.env.GMAIL_OAUTH_CLIENT_SECRET);
+  if (!clientId || !clientSecret) {
+    throw new Error('Missing GMAIL_OAUTH_CLIENT_ID or GMAIL_OAUTH_CLIENT_SECRET in environment.');
+  }
+
+  const { OAuth2Client } = require('google-auth-library');
+
+  const scopes = [
+    'https://www.googleapis.com/auth/gmail.send',
+    'openid',
+    'email',
+    'profile',
+  ];
+
+  return await new Promise((resolve, reject) => {
+    let finished = false;
+    let oauthClient;
+    let timeoutId;
+
+    const server = http.createServer(async (req, res) => {
+      try {
+        const url = new URL(req.url || '/', 'http://127.0.0.1');
+        if (url.pathname !== '/oauth2callback') {
+          res.writeHead(404, { 'Content-Type': 'text/plain' });
+          res.end('Not found');
+          return;
+        }
+
+        const err = safeText(url.searchParams.get('error'));
+        const code = safeText(url.searchParams.get('code'));
+        res.writeHead(200, { 'Content-Type': 'text/html' });
+        res.end(
+          '<html><body style="font-family:Arial,Helvetica,sans-serif"><h2>Gmail connected</h2><p>You can close this window and return to the app.</p></body></html>'
+        );
+
+        if (finished) return;
+        finished = true;
+        clearTimeout(timeoutId);
+        server.close();
+
+        if (err) throw new Error(`Google sign-in error: ${err}`);
+        if (!code) throw new Error('Missing OAuth code from Google callback.');
+
+        const { tokens } = await oauthClient.getToken(code);
+        if (!tokens?.refresh_token) {
+          throw new Error(
+            'No refresh token returned by Google. Try disconnecting and connecting again, or ensure consent is forced.'
+          );
+        }
+
+        const accessToken = safeText(tokens.access_token);
+        if (!accessToken) throw new Error('Missing access token from Google.');
+
+        const infoRes = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+        if (!infoRes.ok) {
+          throw new Error(`Failed to fetch Google user info (${infoRes.status}).`);
+        }
+        const info = await infoRes.json();
+        const email = safeText(info?.email);
+        if (!email) throw new Error('Google sign-in succeeded, but email address was not returned.');
+
+        writeEncryptedJson(getGmailOAuthFilePath(), {
+          email,
+          refresh_token: tokens.refresh_token,
+          connected_at: new Date().toISOString(),
+        });
+
+        resolve({ connected: true, email });
+      } catch (e) {
+        if (!finished) {
+          finished = true;
+          clearTimeout(timeoutId);
+          server.close();
+          reject(e);
+        }
+      }
+    });
+
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address();
+      const port = typeof address === 'object' && address ? address.port : null;
+      if (!port) {
+        finished = true;
+        server.close();
+        reject(new Error('Failed to start local OAuth callback server.'));
+        return;
+      }
+
+      const redirectUri = `http://127.0.0.1:${port}/oauth2callback`;
+      oauthClient = new OAuth2Client(clientId, clientSecret, redirectUri);
+      const authUrl = oauthClient.generateAuthUrl({
+        access_type: 'offline',
+        scope: scopes,
+        prompt: 'consent',
+      });
+      shell.openExternal(authUrl);
+
+      timeoutId = setTimeout(() => {
+        if (finished) return;
+        finished = true;
+        server.close();
+        reject(new Error('Gmail sign-in timed out. Please try again.'));
+      }, 3 * 60 * 1000);
+    });
+  });
+}
+
 function ymd(d) {
   const dt = d instanceof Date ? d : new Date(d);
   if (Number.isNaN(dt.getTime())) return null;
@@ -56,6 +249,7 @@ function daysUntil(dateYmd) {
 }
 
 async function loadNotificationConfig(admin) {
+  const localPrefs = loadLocalNotificationPrefs();
   const [emailRes, prefRes] = await Promise.all([
     admin
       .from('notification_email_settings')
@@ -80,6 +274,8 @@ async function loadNotificationConfig(admin) {
   return {
     email: emailRes.data ?? null,
     preferences: prefRes.data ?? null,
+    localPrefs,
+    gmailOAuth: gmailOAuthStatus(),
     env: {
       hasGmailUser: Boolean(process.env.GMAIL_USER),
       hasGmailPass: Boolean(process.env.GMAIL_PASS),
@@ -90,6 +286,26 @@ async function loadNotificationConfig(admin) {
 
 function buildTransport(emailSettingsRow) {
   const nodemailer = require('nodemailer');
+
+  // Prefer OAuth if the admin connected Gmail in the desktop app.
+  const oauth = loadGmailOAuth();
+  const clientId = safeText(process.env.GMAIL_OAUTH_CLIENT_ID);
+  const clientSecret = safeText(process.env.GMAIL_OAUTH_CLIENT_SECRET);
+  if (oauth?.refresh_token && oauth?.email && clientId && clientSecret) {
+    const from = safeText(process.env.GMAIL_FROM) || safeText(emailSettingsRow?.from_email) || oauth.email;
+    const transporter = nodemailer.createTransport({
+      service: 'gmail',
+      auth: {
+        type: 'OAuth2',
+        user: oauth.email,
+        clientId,
+        clientSecret,
+        refreshToken: oauth.refresh_token,
+      },
+    });
+
+    return { transporter, user: oauth.email, from };
+  }
 
   const user = safeText(process.env.GMAIL_USER) || safeText(emailSettingsRow?.gmail_user);
   const pass = safeText(process.env.GMAIL_PASS) || safeText(emailSettingsRow?.gmail_app_password);
@@ -118,14 +334,24 @@ function escapeHtml(s) {
     .replace(/'/g, '&#039;');
 }
 
-function renderEmailHtml({ recipientName, items, daysBefore }) {
+function renderEmailHtml({ recipientName, items, daysBefore, message }) {
+  const msg = safeText(message);
+
+  function fmtDays(d) {
+    const n = Number(d);
+    if (!Number.isFinite(n)) return '';
+    if (n >= 0) return String(n);
+    const abs = Math.abs(n);
+    return `Expired ${abs} day${abs === 1 ? '' : 's'} ago`;
+  }
+
   const rows = items
     .map((it) => {
       return `
         <tr>
           <td style="padding:8px 6px;border-bottom:1px solid #eee;">${escapeHtml(it.license_type)}</td>
           <td style="padding:8px 6px;border-bottom:1px solid #eee;">${escapeHtml(it.expires_on)}</td>
-          <td style="padding:8px 6px;border-bottom:1px solid #eee;">${escapeHtml(String(it.days_until_expiry))}</td>
+          <td style="padding:8px 6px;border-bottom:1px solid #eee;">${escapeHtml(fmtDays(it.days_until_expiry))}</td>
         </tr>`;
     })
     .join('');
@@ -137,12 +363,13 @@ function renderEmailHtml({ recipientName, items, daysBefore }) {
       String(daysBefore)
     )} days.</div>
     <div style="margin-bottom:12px;">Hello ${escapeHtml(recipientName || 'there')},</div>
+    ${msg ? `<div style="margin:0 0 12px 0;padding:10px 12px;border:1px solid #eee;background:#fafafa;border-radius:8px;">${escapeHtml(msg)}</div>` : ''}
     <table style="border-collapse:collapse;width:100%;max-width:640px;">
       <thead>
         <tr>
           <th align="left" style="padding:8px 6px;border-bottom:2px solid #ddd;">Type</th>
           <th align="left" style="padding:8px 6px;border-bottom:2px solid #ddd;">Expires On</th>
-          <th align="left" style="padding:8px 6px;border-bottom:2px solid #ddd;">Days Left</th>
+          <th align="left" style="padding:8px 6px;border-bottom:2px solid #ddd;">Days</th>
         </tr>
       </thead>
       <tbody>
@@ -153,8 +380,10 @@ function renderEmailHtml({ recipientName, items, daysBefore }) {
   </div>`;
 }
 
-async function fetchExpiringRows(admin, preferences, limit) {
+async function fetchExpiringRows(admin, preferences, localPrefs, limit) {
   const daysBefore = Number(preferences?.days_before_expiry ?? 30);
+  const includeExpired = Boolean(localPrefs?.includeExpired);
+  const expiredWithinDays = clampInt(localPrefs?.expiredWithinDays, { min: 1, max: 365, fallback: 7 });
 
   // Pull licensure first, then applicants in chunks.
   const res = await admin
@@ -201,21 +430,33 @@ async function fetchExpiringRows(admin, preferences, limit) {
     if (includeDriver) {
       const exp = ymd(row.driver_expiration);
       const du = daysUntil(exp);
-      if (exp && du !== null && du >= 0 && du <= daysBefore) {
+      if (
+        exp &&
+        du !== null &&
+        ((du >= 0 && du <= daysBefore) || (includeExpired && du < 0 && Math.abs(du) <= expiredWithinDays))
+      ) {
         out.push({ ...base, expires_on: exp, license_type: 'DRIVER_LICENSE', days_until_expiry: du });
       }
     }
     if (includeSecurity) {
       const exp = ymd(row.security_expiration);
       const du = daysUntil(exp);
-      if (exp && du !== null && du >= 0 && du <= daysBefore) {
+      if (
+        exp &&
+        du !== null &&
+        ((du >= 0 && du <= daysBefore) || (includeExpired && du < 0 && Math.abs(du) <= expiredWithinDays))
+      ) {
         out.push({ ...base, expires_on: exp, license_type: 'SECURITY_LICENSE', days_until_expiry: du });
       }
     }
     if (includeInsurance) {
       const exp = ymd(row.insurance_expiration);
       const du = daysUntil(exp);
-      if (exp && du !== null && du >= 0 && du <= daysBefore) {
+      if (
+        exp &&
+        du !== null &&
+        ((du >= 0 && du <= daysBefore) || (includeExpired && du < 0 && Math.abs(du) <= expiredWithinDays))
+      ) {
         out.push({ ...base, expires_on: exp, license_type: 'INSURANCE', days_until_expiry: du });
       }
     }
@@ -240,7 +481,8 @@ async function runNotificationSend(admin) {
   }
 
   const { transporter, from } = buildTransport(email);
-  const expiring = await fetchExpiringRows(admin, preferences);
+  const localPrefs = loadLocalNotificationPrefs();
+  const expiring = await fetchExpiringRows(admin, preferences, localPrefs);
 
   // Avoid re-sending the same applicant/type/expires_on within today.
   const todayIso = startOfTodayLocal().toISOString();
@@ -284,7 +526,12 @@ async function runNotificationSend(admin) {
   for (const [to, items] of byRecipient.entries()) {
     const recipientName = displayNameFromRow(items[0]);
     const subject = `Expiring Licensure Warning (${items.length})`;
-    const html = renderEmailHtml({ recipientName, items, daysBefore: preferences.days_before_expiry });
+    const html = renderEmailHtml({
+      recipientName,
+      items,
+      daysBefore: preferences.days_before_expiry,
+      message: email?.notes,
+    });
 
     try {
       await transporter.sendMail({
@@ -431,6 +678,51 @@ ipcMain.handle('settings:loadNotificationConfig', async () => {
   return await loadNotificationConfig(admin);
 });
 
+ipcMain.handle('settings:saveLocalNotificationPrefs', async (_event, payload) => {
+  const next = saveLocalNotificationPrefs(payload);
+  return { success: true, localPrefs: next };
+});
+
+ipcMain.handle('settings:clearStoredGmailAppPassword', async () => {
+  const admin = getAdminSupabase();
+  const existingEmail = await admin
+    .from('notification_email_settings')
+    .select('id')
+    .eq('provider', 'gmail')
+    .order('updated_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (existingEmail.error) throw existingEmail.error;
+  if (!existingEmail.data?.id) return { success: true };
+
+  const upd = await admin
+    .from('notification_email_settings')
+    .update({ gmail_app_password: null })
+    .eq('id', existingEmail.data.id);
+  if (upd.error) throw upd.error;
+  return { success: true };
+});
+
+ipcMain.handle('settings:removeGmailSender', async () => {
+  const admin = getAdminSupabase();
+  const del = await admin.from('notification_email_settings').delete().eq('provider', 'gmail');
+  if (del.error) throw del.error;
+  return { success: true };
+});
+
+ipcMain.handle('gmail:getStatus', async () => {
+  return gmailOAuthStatus();
+});
+
+ipcMain.handle('gmail:disconnect', async () => {
+  deleteFileIfExists(getGmailOAuthFilePath());
+  return { success: true };
+});
+
+ipcMain.handle('gmail:connect', async () => {
+  return await connectGmailOAuth();
+});
+
 ipcMain.handle('settings:saveNotificationConfig', async (_event, payload) => {
   const admin = getAdminSupabase();
   const email = payload?.email ?? {};
@@ -504,8 +796,9 @@ ipcMain.handle('settings:saveNotificationConfig', async (_event, payload) => {
 ipcMain.handle('notifications:previewExpiring', async (_event, payload) => {
   const admin = getAdminSupabase();
   const { preferences } = await loadNotificationConfig(admin);
+  const localPrefs = loadLocalNotificationPrefs();
   const limit = Number(payload?.limit ?? 25);
-  const rows = await fetchExpiringRows(admin, preferences ?? {}, limit);
+  const rows = await fetchExpiringRows(admin, preferences ?? {}, localPrefs, limit);
   return { rows };
 });
 
@@ -535,71 +828,21 @@ ipcMain.handle('notifications:sendTestEmail', async (_event, payload) => {
   if (!to) throw new Error('Missing test recipient email.');
 
   const subject = safeText(payload?.subject) || 'Test: Expiring Licensure Notifications';
-  const html = `
-    <div style="font-family:Arial,Helvetica,sans-serif;color:#111">
-      <h2 style="margin:0 0 8px 0;">Test Email</h2>
-      <div style="color:#444;margin-bottom:12px;">If you received this, Gmail sending is working.</div>
-      <div style="font-size:12px;color:#666">Days before expiry: ${escapeHtml(
-        String(preferences?.days_before_expiry ?? 30)
-      )}</div>
-    </div>`;
+  const html = renderEmailHtml({
+    recipientName: 'Test',
+    items: [
+      {
+        license_type: 'TEST',
+        expires_on: ymd(new Date()) || '',
+        days_until_expiry: 0,
+      },
+    ],
+    daysBefore: preferences?.days_before_expiry ?? 30,
+    message: email?.notes,
+  });
 
   await transporter.sendMail({ from, to, subject, html });
   return { success: true };
-});
-
-ipcMain.handle('settings:clearGmailPassword', async () => {
-  const admin = getAdminSupabase();
-  const existing = await admin
-    .from('notification_email_settings')
-    .select('id')
-    .eq('provider', 'gmail')
-    .order('updated_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  if (existing.error) throw existing.error;
-  if (existing.data?.id) {
-    const upd = await admin
-      .from('notification_email_settings')
-      .update({ gmail_app_password: null })
-      .eq('id', existing.data.id);
-    if (upd.error) throw upd.error;
-  }
-  return { success: true };
-});
-
-ipcMain.handle('settings:removeGmailAccount', async () => {
-  const admin = getAdminSupabase();
-  const existing = await admin
-    .from('notification_email_settings')
-    .select('id')
-    .eq('provider', 'gmail')
-    .order('updated_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  if (existing.error) throw existing.error;
-  if (existing.data?.id) {
-    const upd = await admin
-      .from('notification_email_settings')
-      .update({
-        gmail_user: '',
-        from_email: '',
-        gmail_app_password: null,
-        is_active: false,
-        notes: null,
-      })
-      .eq('id', existing.data.id);
-    if (upd.error) throw upd.error;
-  }
-  return { success: true };
-});
-
-ipcMain.handle('settings:startGoogleOAuth', async () => {
-  // NOTE: Implementing a full OAuth flow requires registering Google OAuth credentials and
-  // adding token exchange / storage. For now provide a clear error so UI can surface guidance.
-  throw new Error(
-    'Google OAuth is not configured. To enable, add OAuth client credentials and implement the OAuth flow in Electron main.'
-  );
 });
 
 ipcMain.handle('notifications:runNow', async () => {

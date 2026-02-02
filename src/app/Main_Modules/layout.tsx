@@ -202,9 +202,9 @@ export default function MainModulesLayout({ children }: LayoutProps) {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 flex">
+    <div className="h-screen bg-gray-50 flex overflow-hidden">
       <aside
-        className={`bg-white border-r flex flex-col overflow-hidden h-screen
+        className={`bg-white border-r flex flex-col min-h-0
           transition-[width] duration-500 ease-in-out
           ${collapsed ? "w-20" : "w-72"}`}
       >
@@ -225,7 +225,7 @@ export default function MainModulesLayout({ children }: LayoutProps) {
           </div>
         </div>
 
-        <nav className="flex-1 px-3 space-y-1 min-h-0 overflow-y-auto">
+        <nav className="flex-1 min-h-0 overflow-y-auto px-3 space-y-1 pb-3">
           {menu.map((item) => {
             // Render the workforce group once at the first workforce item.
             const isFirstWorkforce = firstWorkforceKey && item.key === firstWorkforceKey;
@@ -319,7 +319,7 @@ export default function MainModulesLayout({ children }: LayoutProps) {
           })}
         </nav>
 
-        <div className="px-3 pb-4 space-y-2">
+        <div className="mt-auto shrink-0 px-3 pb-4 pt-3 space-y-2 border-t bg-white">
           <button
             onClick={() => setCollapsed((v) => !v)}
             className="w-full flex items-center gap-3 px-4 py-3 rounded-xl
@@ -354,9 +354,7 @@ export default function MainModulesLayout({ children }: LayoutProps) {
         </div>
       </aside>
 
-      <div className="flex-1 min-w-0 flex flex-col">
-
-
+      <div className="flex-1 min-w-0 flex flex-col min-h-0">
         {/* Top Navigation */}
         <header className="bg-gray-50 sticky top-0 z-10">
           <div className="px-6 pt-6">
@@ -415,7 +413,7 @@ export default function MainModulesLayout({ children }: LayoutProps) {
           </div>
         </header>
 
-        <main className="flex-1 px-6 pb-10 pt-6 overflow-auto">{children}</main>
+        <main className="flex-1 min-h-0 px-6 pb-10 pt-6 overflow-y-auto overflow-x-hidden">{children}</main>
       </div>
     </div>
   );

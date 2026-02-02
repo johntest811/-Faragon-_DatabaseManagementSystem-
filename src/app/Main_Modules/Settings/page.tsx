@@ -25,6 +25,11 @@ type PreferencesRow = {
 	timezone: string;
 };
 
+type LocalNotificationPrefs = {
+	includeExpired: boolean;
+	expiredWithinDays: number;
+};
+
 type ExpiringRow = {
 	applicant_id: string;
 	last_name: string | null;
@@ -88,12 +93,19 @@ function getElectronAPI() {
 				loadNotificationConfig?: () => Promise<{
 					email: EmailSettingsRow | null;
 					preferences: PreferencesRow | null;
+					localPrefs?: LocalNotificationPrefs;
+					gmailOAuth?: { connected?: boolean; email?: string | null };
 					env?: { hasGmailUser?: boolean; hasGmailPass?: boolean; hasGmailFrom?: boolean };
 				}>;
 				saveNotificationConfig?: (payload: unknown) => Promise<unknown>;
-					clearGmailPassword?: () => Promise<unknown>;
-					removeGmailAccount?: () => Promise<unknown>;
-					startGoogleOAuth?: () => Promise<unknown>;
+				saveLocalNotificationPrefs?: (payload: unknown) => Promise<unknown>;
+				clearStoredGmailAppPassword?: () => Promise<unknown>;
+				removeGmailSender?: () => Promise<unknown>;
+			};
+			gmail?: {
+				getStatus?: () => Promise<{ connected?: boolean; email?: string | null }>;
+				connect?: () => Promise<{ connected?: boolean; email?: string | null }>;
+				disconnect?: () => Promise<unknown>;
 			};
 			notifications?: {
 				previewExpiring?: (payload?: unknown) => Promise<{ rows: ExpiringRow[] }>;
@@ -147,15 +159,21 @@ export default function SettingsPage() {
 	const [notes, setNotes] = useState("");
 	const [storeAppPassword, setStoreAppPassword] = useState(false);
 	const [gmailAppPassword, setGmailAppPassword] = useState("");
+	const [dbHasStoredPassword, setDbHasStoredPassword] = useState(false);
+	const [oauthConnected, setOauthConnected] = useState(false);
+	const [oauthEmail, setOauthEmail] = useState<string | null>(null);
+	const [oauthBusy, setOauthBusy] = useState(false);
 
 	// Preferences
 	const [enabled, setEnabled] = useState(true);
-	const [daysBefore, setDaysBefore] = useState(30);
+	const [daysBeforeInput, setDaysBeforeInput] = useState("30");
 	const [includeDriver, setIncludeDriver] = useState(false);
 	const [includeSecurity, setIncludeSecurity] = useState(true);
 	const [includeInsurance, setIncludeInsurance] = useState(false);
 	const [sendTimeLocal, setSendTimeLocal] = useState("08:00");
 	const [timezone, setTimezone] = useState("Asia/Manila");
+
+	const daysBeforeNum = useMemo(() => Number(daysBeforeInput), [daysBeforeInput]);
 
 	// Preview
 	const [preview, setPreview] = useState<ExpiringRow[]>([]);
@@ -171,7 +189,14 @@ export default function SettingsPage() {
 	const [runSummary, setRunSummary] = useState<string>("");
 	const [envHasGmailPass, setEnvHasGmailPass] = useState<boolean | null>(null);
 
-	const canPreview = useMemo(() => enabled && daysBefore >= 1 && daysBefore <= 365, [enabled, daysBefore]);
+	// Local-only notification prefs (desktop)
+	const [includeExpired, setIncludeExpired] = useState(false);
+	const [expiredWithinDays, setExpiredWithinDays] = useState(7);
+
+	const canPreview = useMemo(
+		() => enabled && Number.isFinite(daysBeforeNum) && daysBeforeNum >= 1 && daysBeforeNum <= 365,
+		[enabled, daysBeforeNum]
+	);
 
 	useEffect(() => {
 		let cancelled = false;
@@ -209,21 +234,28 @@ export default function SettingsPage() {
 					if (cancelled) return;
 
 					setEnvHasGmailPass(Boolean(cfg?.env?.hasGmailPass));
+					setOauthConnected(Boolean(cfg?.gmailOAuth?.connected));
+					setOauthEmail((cfg?.gmailOAuth?.email as string | null) ?? null);
+					setIncludeExpired(Boolean(cfg?.localPrefs?.includeExpired));
+					setExpiredWithinDays(Number(cfg?.localPrefs?.expiredWithinDays ?? 7));
 					const email = (cfg.email as EmailSettingsRow | null) ?? null;
 					if (email) {
 						setGmailUser(email.gmail_user ?? "");
 						setFromEmail(email.from_email ?? "");
 						setIsActive(Boolean(email.is_active));
 						setNotes(email.notes ?? "");
+						setDbHasStoredPassword(Boolean(email.gmail_app_password));
 						setGmailAppPassword("");
 						setStoreAppPassword(false);
 						setTestToEmail(email.gmail_user ?? "");
+					} else {
+						setDbHasStoredPassword(false);
 					}
 
 					const pref = (cfg.preferences as PreferencesRow | null) ?? null;
 					if (pref) {
 						setEnabled(Boolean(pref.is_enabled));
-						setDaysBefore(Number(pref.days_before_expiry ?? 30));
+						setDaysBeforeInput(String(pref.days_before_expiry ?? 30));
 						setIncludeDriver(Boolean(pref.include_driver_license));
 						setIncludeSecurity(Boolean(pref.include_security_license));
 						setIncludeInsurance(Boolean(pref.include_insurance));
@@ -258,15 +290,18 @@ export default function SettingsPage() {
 						setFromEmail(email.from_email ?? "");
 						setIsActive(Boolean(email.is_active));
 						setNotes(email.notes ?? "");
+						setDbHasStoredPassword(Boolean(email.gmail_app_password));
 						setGmailAppPassword("");
 						setStoreAppPassword(false);
 						setTestToEmail(email.gmail_user ?? "");
+					} else {
+						setDbHasStoredPassword(false);
 					}
 
 					const pref = (prefRes.data as PreferencesRow | null) ?? null;
 					if (pref) {
 						setEnabled(Boolean(pref.is_enabled));
-						setDaysBefore(Number(pref.days_before_expiry ?? 30));
+						setDaysBeforeInput(String(pref.days_before_expiry ?? 30));
 						setIncludeDriver(Boolean(pref.include_driver_license));
 						setIncludeSecurity(Boolean(pref.include_security_license));
 						setIncludeInsurance(Boolean(pref.include_insurance));
@@ -323,7 +358,8 @@ export default function SettingsPage() {
 				}
 			}
 
-			const daysBeforeExpiry = Number(daysBefore);
+			const daysBeforeExpiry = Number(daysBeforeNum);
+			if (!Number.isFinite(daysBeforeExpiry)) throw new Error("Days before expiry must be a number.");
 			const include = {
 				driver: Boolean(includeDriver),
 				security: Boolean(includeSecurity),
@@ -346,6 +382,8 @@ export default function SettingsPage() {
 			}
 
 			const out: ExpiringRow[] = [];
+			const allowExpired = Boolean(includeExpired);
+			const expiredWindow = Math.max(1, Math.min(365, Number(expiredWithinDays || 7)));
 			for (const row of licRows) {
 				const a = applicantsById.get(row.applicant_id);
 				const base = {
@@ -361,21 +399,33 @@ export default function SettingsPage() {
 				if (include.driver) {
 					const exp = toYmd(row.driver_expiration);
 					const du = exp ? daysUntilYmd(exp) : null;
-					if (exp && du !== null && du >= 0 && du <= daysBeforeExpiry) {
+					if (
+						exp &&
+						du !== null &&
+						((du >= 0 && du <= daysBeforeExpiry) || (allowExpired && du < 0 && Math.abs(du) <= expiredWindow))
+					) {
 						out.push({ ...base, expires_on: exp, license_type: "DRIVER_LICENSE", days_until_expiry: du });
 					}
 				}
 				if (include.security) {
 					const exp = toYmd(row.security_expiration);
 					const du = exp ? daysUntilYmd(exp) : null;
-					if (exp && du !== null && du >= 0 && du <= daysBeforeExpiry) {
+					if (
+						exp &&
+						du !== null &&
+						((du >= 0 && du <= daysBeforeExpiry) || (allowExpired && du < 0 && Math.abs(du) <= expiredWindow))
+					) {
 						out.push({ ...base, expires_on: exp, license_type: "SECURITY_LICENSE", days_until_expiry: du });
 					}
 				}
 				if (include.insurance) {
 					const exp = toYmd(row.insurance_expiration);
 					const du = exp ? daysUntilYmd(exp) : null;
-					if (exp && du !== null && du >= 0 && du <= daysBeforeExpiry) {
+					if (
+						exp &&
+						du !== null &&
+						((du >= 0 && du <= daysBeforeExpiry) || (allowExpired && du < 0 && Math.abs(du) <= expiredWindow))
+					) {
 						out.push({ ...base, expires_on: exp, license_type: "INSURANCE", days_until_expiry: du });
 					}
 				}
@@ -398,10 +448,11 @@ export default function SettingsPage() {
 		try {
 			const cleanGmailUser = safeText(gmailUser);
 			const cleanFromEmail = safeText(fromEmail);
+			const daysBeforeValue = Number(daysBeforeNum);
 			if (!cleanGmailUser || !cleanFromEmail) {
 				throw new Error("Gmail User and From Email are required.");
 			}
-			if (daysBefore < 1 || daysBefore > 365) {
+			if (!Number.isFinite(daysBeforeValue) || daysBeforeValue < 1 || daysBeforeValue > 365) {
 				throw new Error("Days before expiry must be between 1 and 365.");
 			}
 
@@ -416,7 +467,7 @@ export default function SettingsPage() {
 					},
 					preferences: {
 						is_enabled: Boolean(enabled),
-						days_before_expiry: Number(daysBefore),
+						days_before_expiry: daysBeforeValue,
 						include_driver_license: Boolean(includeDriver),
 						include_security_license: Boolean(includeSecurity),
 						include_insurance: Boolean(includeInsurance),
@@ -425,6 +476,13 @@ export default function SettingsPage() {
 					},
 					storeAppPassword: Boolean(storeAppPassword),
 				});
+
+				if (electronAPI?.settings?.saveLocalNotificationPrefs) {
+					await electronAPI.settings.saveLocalNotificationPrefs({
+						includeExpired: Boolean(includeExpired),
+						expiredWithinDays: Math.max(1, Math.min(365, Number(expiredWithinDays || 7))),
+					});
+				}
 			} else {
 				// Web fallback (anon key) – may be blocked by RLS.
 				const existingEmail = await supabase
@@ -476,7 +534,7 @@ export default function SettingsPage() {
 						.from("notification_preferences")
 						.update({
 							is_enabled: Boolean(enabled),
-							days_before_expiry: Number(daysBefore),
+							days_before_expiry: daysBeforeValue,
 							include_driver_license: Boolean(includeDriver),
 							include_security_license: Boolean(includeSecurity),
 							include_insurance: Boolean(includeInsurance),
@@ -488,7 +546,7 @@ export default function SettingsPage() {
 				} else {
 					const ins = await supabase.from("notification_preferences").insert({
 						is_enabled: Boolean(enabled),
-						days_before_expiry: Number(daysBefore),
+						days_before_expiry: daysBeforeValue,
 						include_driver_license: Boolean(includeDriver),
 						include_security_license: Boolean(includeSecurity),
 						include_insurance: Boolean(includeInsurance),
@@ -573,9 +631,116 @@ export default function SettingsPage() {
 						<div className="rounded-2xl border p-4">
 							<div className="font-semibold mb-2 text-black">Gmail Sender</div>
 							<div className="text-xs text-gray-500 mb-4">
-								Used to send notification emails. Recommended: keep the Gmail App Password in a server/secret, not in
-								the client.
+								Used to send notification emails. Gmail password login is not supported by Google anymore — use an App Password
+								or “Connect Gmail” (Google sign-in).
 							</div>
+
+							{isDesktop ? (
+								<div className="rounded-xl border bg-gray-50 px-3 py-2 text-sm text-gray-700 mb-3">
+									<div className="flex flex-wrap items-center gap-2">
+										<span className="font-semibold">Connected Gmail:</span>
+										<span>{oauthConnected ? (oauthEmail ?? "(unknown)") : "Not connected"}</span>
+										<span className="text-gray-500">•</span>
+										<span>
+											Stored app password in DB: {dbHasStoredPassword ? "yes" : "no"}
+										</span>
+									</div>
+									<div className="mt-2 flex flex-wrap gap-2">
+										<button
+											onClick={async () => {
+												setOauthBusy(true);
+												setError("");
+												setSuccess("");
+												try {
+													if (!electronAPI?.gmail?.connect) throw new Error("Gmail connect is only available in the desktop app.");
+													const r = await electronAPI.gmail.connect();
+													setOauthConnected(Boolean(r?.connected));
+													setOauthEmail((r?.email as string | null) ?? null);
+													if (safeText(r?.email)) {
+														setGmailUser(String(r?.email));
+														setFromEmail(String(r?.email));
+														setTestToEmail(String(r?.email));
+													}
+													setSuccess("Gmail connected. You can now send without an App Password.");
+												} catch (e: unknown) {
+													setError(errorMessage(e));
+												} finally {
+													setOauthBusy(false);
+												}
+											}}
+											disabled={oauthBusy}
+											className="px-3 py-2 rounded-xl bg-black text-white disabled:opacity-50"
+										>
+											{oauthBusy ? "Connecting…" : "Connect Gmail"}
+										</button>
+										<button
+											onClick={async () => {
+												setOauthBusy(true);
+												setError("");
+												setSuccess("");
+												try {
+													if (!electronAPI?.gmail?.disconnect) throw new Error("Gmail disconnect is only available in the desktop app.");
+													await electronAPI.gmail.disconnect();
+													setOauthConnected(false);
+													setOauthEmail(null);
+													setSuccess("Gmail disconnected.");
+												} catch (e: unknown) {
+													setError(errorMessage(e));
+												} finally {
+													setOauthBusy(false);
+												}
+											}}
+											disabled={oauthBusy || !oauthConnected}
+											className="px-3 py-2 rounded-xl bg-white border disabled:opacity-50 text-black"
+										>
+											Disconnect
+										</button>
+										<button
+											onClick={async () => {
+												setError("");
+												setSuccess("");
+												try {
+													if (!electronAPI?.settings?.clearStoredGmailAppPassword) {
+														throw new Error("This action is only available in the Electron desktop app.");
+													}
+													await electronAPI.settings.clearStoredGmailAppPassword();
+													setDbHasStoredPassword(false);
+													setSuccess("Stored Gmail App Password cleared from database.");
+												} catch (e: unknown) {
+													setError(errorMessage(e));
+												}
+											}}
+											disabled={!dbHasStoredPassword}
+											className="px-3 py-2 rounded-xl bg-white border disabled:opacity-50 text-black"
+										>
+											Clear stored app password
+										</button>
+										<button
+											onClick={async () => {
+												setError("");
+												setSuccess("");
+												try {
+													if (!electronAPI?.settings?.removeGmailSender) {
+														throw new Error("This action is only available in the Electron desktop app.");
+													}
+													await electronAPI.settings.removeGmailSender();
+													setGmailUser("");
+													setFromEmail("");
+													setNotes("");
+													setIsActive(true);
+													setDbHasStoredPassword(false);
+													setSuccess("Gmail sender settings removed.");
+												} catch (e: unknown) {
+													setError(errorMessage(e));
+												}
+											}}
+											className="px-3 py-2 rounded-xl bg-red-600 text-white"
+										>
+											Remove sender
+										</button>
+									</div>
+								</div>
+							) : null}
 
 							<label className="block text-sm mb-1 text-black">Gmail User</label>
 							<input
@@ -633,123 +798,11 @@ export default function SettingsPage() {
 								</div>
 							) : null}
 
-							<div className="flex items-center gap-3 mt-3">
-				<button
-					onClick={async () => {
-						if (!confirm('Clear the saved Gmail app password?')) return;
-						setError('');
-						try {
-							if (electronAPI?.settings?.clearGmailPassword) {
-								await electronAPI.settings.clearGmailPassword();
-								setSuccess('Cleared saved Gmail app password.');
-								setGmailAppPassword('');
-								setStoreAppPassword(false);
-								setEnvHasGmailPass(false);
-							} else {
-								// Web fallback
-								const existingEmail = await supabase
-									.from('notification_email_settings')
-									.select('id')
-									.eq('provider', 'gmail')
-									.limit(1)
-									.maybeSingle();
-								if (existingEmail.error) throw existingEmail.error;
-								if (existingEmail.data?.id) {
-									const upd = await supabase
-										.from('notification_email_settings')
-										.update({ gmail_app_password: null })
-										.eq('id', existingEmail.data.id);
-									if (upd.error) throw upd.error;
-								}
-								setSuccess('Cleared saved Gmail app password.');
-								setGmailAppPassword('');
-								setStoreAppPassword(false);
-								setEnvHasGmailPass(false);
-							}
-						} catch (e: unknown) {
-							setError(errorMessage(e));
-						}
-					}}
-					className="px-3 py-2 rounded-xl bg-white border text-black"
-				>
-					Clear saved app password
-				</button>
-
-				<button
-					onClick={async () => {
-						if (!confirm('Remove the configured Gmail account? This will clear the user, from email and any saved password.')) return;
-						setError('');
-						try {
-							if (electronAPI?.settings?.removeGmailAccount) {
-								await electronAPI.settings.removeGmailAccount();
-								setSuccess('Removed Gmail account settings.');
-								setGmailUser('');
-								setFromEmail('');
-								setGmailAppPassword('');
-								setStoreAppPassword(false);
-								setIsActive(false);
-							} else {
-								// Web fallback
-								const existingEmail = await supabase
-									.from('notification_email_settings')
-									.select('id')
-									.eq('provider', 'gmail')
-									.limit(1)
-									.maybeSingle();
-								if (existingEmail.error) throw existingEmail.error;
-								if (existingEmail.data?.id) {
-									const upd = await supabase
-										.from('notification_email_settings')
-										.update({
-											gmail_user: '',
-											from_email: '',
-											gmail_app_password: null,
-											is_active: false,
-											notes: null,
-										})
-										.eq('id', existingEmail.data.id);
-									if (upd.error) throw upd.error;
-								}
-								setSuccess('Removed Gmail account settings.');
-								setGmailUser('');
-								setFromEmail('');
-								setGmailAppPassword('');
-								setStoreAppPassword(false);
-								setIsActive(false);
-							}
-						} catch (e: unknown) {
-							setError(errorMessage(e));
-						}
-					}}
-					className="px-3 py-2 rounded-xl bg-red-50 text-red-700 border"
-				>
-					Remove Gmail account
-				</button>
-
-				<button
-					onClick={async () => {
-						setError('');
-						try {
-							if (!electronAPI?.settings?.startGoogleOAuth) {
-								throw new Error('Google OAuth is only available in the desktop app and is not configured.');
-							}
-							await electronAPI.settings.startGoogleOAuth();
-							setSuccess('Google OAuth started (check desktop UI / browser).');
-						} catch (e: unknown) {
-							setError(errorMessage(e));
-						}
-					}}
-					className="px-3 py-2 rounded-xl bg-white border text-black"
-				>
-					Sign in with Google
-				</button>
-			</div>
-
-<label className="block text-sm mt-3 mb-1 text-black">Notes</label>
+							<label className="block text-sm mt-3 mb-1 text-black">Message included in emails</label>
 							<textarea
 								value={notes}
 								onChange={(e) => setNotes(e.target.value)}
-								placeholder="Optional"
+								placeholder="Optional message shown inside the email body"
 								className="w-full rounded-xl border px-3 py-2 min-h-[88px] text-black"
 							/>
 						</div>
@@ -771,11 +824,29 @@ export default function SettingsPage() {
 
 							<label className="block text-sm mt-3 mb-1 text-black">Days before expiry</label>
 							<input
-								type="number"
-								min={1}
-								max={365}
-								value={daysBefore}
-								onChange={(e) => setDaysBefore(Number(e.target.value))}
+								type="text"
+								inputMode="numeric"
+								pattern="[0-9]*"
+								value={daysBeforeInput}
+								onChange={(e) => {
+									const next = e.target.value;
+									if (next === "" || /^\d+$/.test(next)) setDaysBeforeInput(next);
+								}}
+								onBlur={() => {
+									const trimmed = daysBeforeInput.trim();
+									if (!trimmed) {
+										setDaysBeforeInput("30");
+										return;
+									}
+									const n = Number(trimmed);
+									if (!Number.isFinite(n)) {
+										setDaysBeforeInput("30");
+										return;
+									}
+									const clamped = Math.min(365, Math.max(1, Math.trunc(n)));
+									setDaysBeforeInput(String(clamped));
+								}}
+								placeholder="30"
 								className="w-full rounded-xl border px-3 py-2 text-black"
 							/>
 
@@ -821,6 +892,40 @@ export default function SettingsPage() {
 								placeholder="Asia/Manila"
 								className="w-full rounded-xl border px-3 py-2 text-black"
 							/>
+						</div>
+
+						<div className="mt-4 rounded-xl border p-3">
+							<div className="font-semibold text-black text-sm mb-2">Expired licenses</div>
+							<div className="text-xs text-gray-500 mb-2">
+								If enabled, reminders will also include licenses that already expired (within the chosen window).
+							</div>
+							<div className="flex flex-wrap items-center gap-3">
+								<label className="flex items-center gap-2 text-sm text-black">
+									<input
+										type="checkbox"
+										checked={includeExpired}
+										onChange={(e) => setIncludeExpired(e.target.checked)}
+									/>
+									Include expired
+								</label>
+								<div className="flex items-center gap-2">
+									<span className="text-sm text-black">Expired within</span>
+									<input
+										type="number"
+										min={1}
+										max={365}
+										value={expiredWithinDays}
+										onChange={(e) => setExpiredWithinDays(Number(e.target.value))}
+										className="w-24 rounded-xl border px-3 py-2 text-black"
+									/>
+									<span className="text-sm text-black">days</span>
+								</div>
+							</div>
+							{!isDesktop ? (
+								<div className="text-xs text-gray-500 mt-2">
+									This setting affects Preview only on the web; sending runs in the desktop app.
+								</div>
+							) : null}
 						</div>
 					</div>
 
