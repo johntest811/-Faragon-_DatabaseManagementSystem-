@@ -91,6 +91,9 @@ function getElectronAPI() {
 					env?: { hasGmailUser?: boolean; hasGmailPass?: boolean; hasGmailFrom?: boolean };
 				}>;
 				saveNotificationConfig?: (payload: unknown) => Promise<unknown>;
+					clearGmailPassword?: () => Promise<unknown>;
+					removeGmailAccount?: () => Promise<unknown>;
+					startGoogleOAuth?: () => Promise<unknown>;
 			};
 			notifications?: {
 				previewExpiring?: (payload?: unknown) => Promise<{ rows: ExpiringRow[] }>;
@@ -630,7 +633,119 @@ export default function SettingsPage() {
 								</div>
 							) : null}
 
-							<label className="block text-sm mt-3 mb-1 text-black">Notes</label>
+							<div className="flex items-center gap-3 mt-3">
+				<button
+					onClick={async () => {
+						if (!confirm('Clear the saved Gmail app password?')) return;
+						setError('');
+						try {
+							if (electronAPI?.settings?.clearGmailPassword) {
+								await electronAPI.settings.clearGmailPassword();
+								setSuccess('Cleared saved Gmail app password.');
+								setGmailAppPassword('');
+								setStoreAppPassword(false);
+								setEnvHasGmailPass(false);
+							} else {
+								// Web fallback
+								const existingEmail = await supabase
+									.from('notification_email_settings')
+									.select('id')
+									.eq('provider', 'gmail')
+									.limit(1)
+									.maybeSingle();
+								if (existingEmail.error) throw existingEmail.error;
+								if (existingEmail.data?.id) {
+									const upd = await supabase
+										.from('notification_email_settings')
+										.update({ gmail_app_password: null })
+										.eq('id', existingEmail.data.id);
+									if (upd.error) throw upd.error;
+								}
+								setSuccess('Cleared saved Gmail app password.');
+								setGmailAppPassword('');
+								setStoreAppPassword(false);
+								setEnvHasGmailPass(false);
+							}
+						} catch (e: unknown) {
+							setError(errorMessage(e));
+						}
+					}}
+					className="px-3 py-2 rounded-xl bg-white border text-black"
+				>
+					Clear saved app password
+				</button>
+
+				<button
+					onClick={async () => {
+						if (!confirm('Remove the configured Gmail account? This will clear the user, from email and any saved password.')) return;
+						setError('');
+						try {
+							if (electronAPI?.settings?.removeGmailAccount) {
+								await electronAPI.settings.removeGmailAccount();
+								setSuccess('Removed Gmail account settings.');
+								setGmailUser('');
+								setFromEmail('');
+								setGmailAppPassword('');
+								setStoreAppPassword(false);
+								setIsActive(false);
+							} else {
+								// Web fallback
+								const existingEmail = await supabase
+									.from('notification_email_settings')
+									.select('id')
+									.eq('provider', 'gmail')
+									.limit(1)
+									.maybeSingle();
+								if (existingEmail.error) throw existingEmail.error;
+								if (existingEmail.data?.id) {
+									const upd = await supabase
+										.from('notification_email_settings')
+										.update({
+											gmail_user: '',
+											from_email: '',
+											gmail_app_password: null,
+											is_active: false,
+											notes: null,
+										})
+										.eq('id', existingEmail.data.id);
+									if (upd.error) throw upd.error;
+								}
+								setSuccess('Removed Gmail account settings.');
+								setGmailUser('');
+								setFromEmail('');
+								setGmailAppPassword('');
+								setStoreAppPassword(false);
+								setIsActive(false);
+							}
+						} catch (e: unknown) {
+							setError(errorMessage(e));
+						}
+					}}
+					className="px-3 py-2 rounded-xl bg-red-50 text-red-700 border"
+				>
+					Remove Gmail account
+				</button>
+
+				<button
+					onClick={async () => {
+						setError('');
+						try {
+							if (!electronAPI?.settings?.startGoogleOAuth) {
+								throw new Error('Google OAuth is only available in the desktop app and is not configured.');
+							}
+							await electronAPI.settings.startGoogleOAuth();
+							setSuccess('Google OAuth started (check desktop UI / browser).');
+						} catch (e: unknown) {
+							setError(errorMessage(e));
+						}
+					}}
+					className="px-3 py-2 rounded-xl bg-white border text-black"
+				>
+					Sign in with Google
+				</button>
+			</div>
+
+<label className="block text-sm mt-3 mb-1 text-black">Notes</label>
 							<textarea
 								value={notes}
 								onChange={(e) => setNotes(e.target.value)}

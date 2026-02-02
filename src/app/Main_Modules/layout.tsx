@@ -204,7 +204,7 @@ export default function MainModulesLayout({ children }: LayoutProps) {
   return (
     <div className="min-h-screen bg-gray-50 flex">
       <aside
-        className={`bg-white border-r flex flex-col overflow-hidden
+        className={`bg-white border-r flex flex-col overflow-hidden h-screen
           transition-[width] duration-500 ease-in-out
           ${collapsed ? "w-20" : "w-72"}`}
       >
@@ -225,7 +225,7 @@ export default function MainModulesLayout({ children }: LayoutProps) {
           </div>
         </div>
 
-        <nav className="flex-1 px-3 space-y-1">
+        <nav className="flex-1 px-3 space-y-1 min-h-0 overflow-y-auto">
           {menu.map((item) => {
             // Render the workforce group once at the first workforce item.
             const isFirstWorkforce = firstWorkforceKey && item.key === firstWorkforceKey;

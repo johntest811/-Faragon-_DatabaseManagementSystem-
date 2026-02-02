@@ -548,6 +548,60 @@ ipcMain.handle('notifications:sendTestEmail', async (_event, payload) => {
   return { success: true };
 });
 
+ipcMain.handle('settings:clearGmailPassword', async () => {
+  const admin = getAdminSupabase();
+  const existing = await admin
+    .from('notification_email_settings')
+    .select('id')
+    .eq('provider', 'gmail')
+    .order('updated_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (existing.error) throw existing.error;
+  if (existing.data?.id) {
+    const upd = await admin
+      .from('notification_email_settings')
+      .update({ gmail_app_password: null })
+      .eq('id', existing.data.id);
+    if (upd.error) throw upd.error;
+  }
+  return { success: true };
+});
+
+ipcMain.handle('settings:removeGmailAccount', async () => {
+  const admin = getAdminSupabase();
+  const existing = await admin
+    .from('notification_email_settings')
+    .select('id')
+    .eq('provider', 'gmail')
+    .order('updated_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (existing.error) throw existing.error;
+  if (existing.data?.id) {
+    const upd = await admin
+      .from('notification_email_settings')
+      .update({
+        gmail_user: '',
+        from_email: '',
+        gmail_app_password: null,
+        is_active: false,
+        notes: null,
+      })
+      .eq('id', existing.data.id);
+    if (upd.error) throw upd.error;
+  }
+  return { success: true };
+});
+
+ipcMain.handle('settings:startGoogleOAuth', async () => {
+  // NOTE: Implementing a full OAuth flow requires registering Google OAuth credentials and
+  // adding token exchange / storage. For now provide a clear error so UI can surface guidance.
+  throw new Error(
+    'Google OAuth is not configured. To enable, add OAuth client credentials and implement the OAuth flow in Electron main.'
+  );
+});
+
 ipcMain.handle('notifications:runNow', async () => {
   const admin = getAdminSupabase();
   return await runNotificationSend(admin);
