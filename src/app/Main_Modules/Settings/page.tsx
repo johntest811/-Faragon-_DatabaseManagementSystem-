@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/app/Client/SupabaseClients";
 
@@ -94,18 +94,13 @@ function getElectronAPI() {
 					email: EmailSettingsRow | null;
 					preferences: PreferencesRow | null;
 					localPrefs?: LocalNotificationPrefs;
-					gmailOAuth?: { connected?: boolean; email?: string | null };
-					env?: { hasGmailUser?: boolean; hasGmailPass?: boolean; hasGmailFrom?: boolean };
+					env?: { hasGmailUser?: boolean; hasGmailPass?: boolean; gmailUser?: string | null };
 				}>;
 				saveNotificationConfig?: (payload: unknown) => Promise<unknown>;
 				saveLocalNotificationPrefs?: (payload: unknown) => Promise<unknown>;
+				getStoredGmailAppPassword?: () => Promise<{ password: string | null }>;
 				clearStoredGmailAppPassword?: () => Promise<unknown>;
 				removeGmailSender?: () => Promise<unknown>;
-			};
-			gmail?: {
-				getStatus?: () => Promise<{ connected?: boolean; email?: string | null }>;
-				connect?: () => Promise<{ connected?: boolean; email?: string | null }>;
-				disconnect?: () => Promise<unknown>;
 			};
 			notifications?: {
 				previewExpiring?: (payload?: unknown) => Promise<{ rows: ExpiringRow[] }>;
@@ -121,6 +116,42 @@ function getElectronAPI() {
 
 function safeText(v: unknown) {
 	return String(v ?? "").trim();
+}
+
+function escapeHtml(s: string) {
+	return s
+		.replace(/&/g, "&amp;")
+		.replace(/</g, "&lt;")
+		.replace(/>/g, "&gt;")
+		.replace(/\"/g, "&quot;")
+		.replace(/'/g, "&#039;");
+}
+
+function textToSimpleHtml(text: string) {
+	const safe = escapeHtml(text);
+	return safe ? `<div>${safe.replace(/\n/g, "<br/>")}</div>` : "";
+}
+
+function parseTemplateNotes(notesRaw: string | null | undefined): { subject: string; bodyHtml: string } {
+	const raw = safeText(notesRaw);
+	if (!raw) return { subject: "", bodyHtml: "" };
+	try {
+		const parsed = JSON.parse(raw) as unknown;
+		if (parsed && typeof parsed === "object") {
+			const p = parsed as { subject?: unknown; bodyHtml?: unknown };
+			return { subject: safeText(p.subject), bodyHtml: safeText(p.bodyHtml) };
+		}
+	} catch {
+		// legacy plain-text notes
+	}
+	return { subject: "", bodyHtml: textToSimpleHtml(raw) };
+}
+
+function buildTemplateNotes(subject: string, bodyHtml: string) {
+	const sub = safeText(subject);
+	const body = safeText(bodyHtml);
+	if (!sub && !body) return null;
+	return JSON.stringify({ subject: sub || null, bodyHtml: body || null });
 }
 
 function errorMessage(e: unknown) {
@@ -142,6 +173,201 @@ function fullName(r: Pick<ExpiringRow, "first_name" | "middle_name" | "last_name
 	return parts.length ? parts.join(" ") : "(No name)";
 }
 
+function RichTextEditor({ value, onChange }: { value: string; onChange: (next: string) => void }) {
+	const ref = useRef<HTMLDivElement | null>(null);
+	const [state, setState] = useState({
+		bold: false,
+		italic: false,
+		underline: false,
+		ul: false,
+		ol: false,
+		canUndo: true,
+		canRedo: true,
+	});
+
+	useEffect(() => {
+		const el = ref.current;
+		if (!el) return;
+		if (el.innerHTML !== value) el.innerHTML = value;
+	}, [value]);
+
+	function refreshToolbar() {
+		try {
+			setState({
+				bold: Boolean(document.queryCommandState("bold")),
+				italic: Boolean(document.queryCommandState("italic")),
+				underline: Boolean(document.queryCommandState("underline")),
+				ul: Boolean(document.queryCommandState("insertUnorderedList")),
+				ol: Boolean(document.queryCommandState("insertOrderedList")),
+				canUndo: Boolean(document.queryCommandEnabled("undo")),
+				canRedo: Boolean(document.queryCommandEnabled("redo")),
+			});
+		} catch {
+			// ignore
+		}
+	}
+
+	function placeCaretAtEnd(el: HTMLDivElement) {
+		const sel = window.getSelection?.();
+		if (!sel) return;
+		const range = document.createRange();
+		range.selectNodeContents(el);
+		range.collapse(false);
+		sel.removeAllRanges();
+		sel.addRange(range);
+	}
+
+	function ensureSelectionInEditor() {
+		const el = ref.current;
+		if (!el) return;
+		el.focus();
+		const sel = window.getSelection?.();
+		if (!sel || sel.rangeCount === 0) {
+			placeCaretAtEnd(el);
+			return;
+		}
+		const range = sel.getRangeAt(0);
+		const startOk = el.contains(range.startContainer);
+		const endOk = el.contains(range.endContainer);
+		if (!startOk || !endOk) placeCaretAtEnd(el);
+	}
+
+	useEffect(() => {
+		const onSel = () => {
+			// Only refresh when this editor is active.
+			const el = ref.current;
+			if (!el) return;
+			const active = document.activeElement;
+			if (active !== el && !el.contains(active)) return;
+			refreshToolbar();
+		};
+		document.addEventListener("selectionchange", onSel);
+		return () => document.removeEventListener("selectionchange", onSel);
+	}, []);
+
+	function exec(cmd: string, arg?: string) {
+		try {
+			ensureSelectionInEditor();
+			document.execCommand(cmd, false, arg);
+			const el = ref.current;
+			if (el) onChange(el.innerHTML);
+			setTimeout(() => refreshToolbar(), 0);
+		} catch {
+			// ignore
+		}
+	}
+
+	function btnClass(active: boolean) {
+		return [
+			"px-2 py-1 rounded-lg border text-sm text-black",
+			active ? "bg-gray-200" : "bg-white",
+		].join(" ");
+	}
+
+	return (
+		<div className="rounded-xl border bg-white">
+			<div className="flex flex-wrap gap-2 border-b px-2 py-2">
+				<button
+					type="button"
+					onMouseDown={(e) => {
+						e.preventDefault();
+						exec("bold");
+					}}
+					className={btnClass(state.bold)}
+					aria-pressed={state.bold}
+				>
+					B
+				</button>
+				<button
+					type="button"
+					onMouseDown={(e) => {
+						e.preventDefault();
+						exec("italic");
+					}}
+					className={[btnClass(state.italic), "italic"].join(" ")}
+					aria-pressed={state.italic}
+				>
+					I
+				</button>
+				<button
+					type="button"
+					onMouseDown={(e) => {
+						e.preventDefault();
+						exec("underline");
+					}}
+					className={[btnClass(state.underline), "underline"].join(" ")}
+					aria-pressed={state.underline}
+				>
+					U
+				</button>
+				<button
+					type="button"
+					onMouseDown={(e) => {
+						e.preventDefault();
+						exec("insertUnorderedList");
+					}}
+					className={btnClass(state.ul)}
+					aria-pressed={state.ul}
+				>
+					• List
+				</button>
+				<button
+					type="button"
+					onMouseDown={(e) => {
+						e.preventDefault();
+						exec("insertOrderedList");
+					}}
+					className={btnClass(state.ol)}
+					aria-pressed={state.ol}
+				>
+					1. List
+				</button>
+				<button
+					type="button"
+					disabled={!state.canUndo}
+					onMouseDown={(e) => {
+						e.preventDefault();
+						exec("undo");
+					}}
+					className={["px-2 py-1 rounded-lg border text-sm text-black", !state.canUndo ? "opacity-50" : ""].join(
+						" "
+					)}
+				>
+					Undo
+				</button>
+				<button
+					type="button"
+					disabled={!state.canRedo}
+					onMouseDown={(e) => {
+						e.preventDefault();
+						exec("redo");
+					}}
+					className={["px-2 py-1 rounded-lg border text-sm text-black", !state.canRedo ? "opacity-50" : ""].join(
+						" "
+					)}
+				>
+					Redo
+				</button>
+			</div>
+			<div
+				ref={ref}
+				className="min-h-[140px] px-3 py-2 text-black outline-none [&_ul]:list-disc [&_ul]:pl-6 [&_ol]:list-decimal [&_ol]:pl-6 [&_li]:my-1"
+				contentEditable
+				onFocus={() => refreshToolbar()}
+				onKeyUp={() => refreshToolbar()}
+				onMouseUp={() => refreshToolbar()}
+				onInput={() => {
+					const el = ref.current;
+					if (!el) return;
+					onChange(el.innerHTML);
+					refreshToolbar();
+				}}
+				suppressContentEditableWarning
+			/>
+		</div>
+	);
+}
+
 export default function SettingsPage() {
 	const router = useRouter();
 	const electronAPI = useMemo(() => getElectronAPI(), []);
@@ -154,15 +380,15 @@ export default function SettingsPage() {
 
 	// Email settings (gmail)
 	const [gmailUser, setGmailUser] = useState("");
-	const [fromEmail, setFromEmail] = useState("");
 	const [isActive, setIsActive] = useState(true);
-	const [notes, setNotes] = useState("");
+	const [emailSubject, setEmailSubject] = useState("");
+	const [emailBodyHtml, setEmailBodyHtml] = useState("");
 	const [storeAppPassword, setStoreAppPassword] = useState(false);
 	const [gmailAppPassword, setGmailAppPassword] = useState("");
 	const [dbHasStoredPassword, setDbHasStoredPassword] = useState(false);
-	const [oauthConnected, setOauthConnected] = useState(false);
-	const [oauthEmail, setOauthEmail] = useState<string | null>(null);
-	const [oauthBusy, setOauthBusy] = useState(false);
+	const [dbStoredPasswordCache, setDbStoredPasswordCache] = useState("");
+	const [showAppPassword, setShowAppPassword] = useState(false);
+	const [loadedStoredPassword, setLoadedStoredPassword] = useState(false);
 
 	// Preferences
 	const [enabled, setEnabled] = useState(true);
@@ -187,6 +413,7 @@ export default function SettingsPage() {
 	const [testSending, setTestSending] = useState(false);
 	const [runSending, setRunSending] = useState(false);
 	const [runSummary, setRunSummary] = useState<string>("");
+	const [envHasGmailUser, setEnvHasGmailUser] = useState<boolean | null>(null);
 	const [envHasGmailPass, setEnvHasGmailPass] = useState<boolean | null>(null);
 
 	// Local-only notification prefs (desktop)
@@ -232,24 +459,30 @@ export default function SettingsPage() {
 				if (electronAPI?.settings?.loadNotificationConfig) {
 					const cfg = await electronAPI.settings.loadNotificationConfig();
 					if (cancelled) return;
-
+					setEnvHasGmailUser(Boolean(cfg?.env?.hasGmailUser));
 					setEnvHasGmailPass(Boolean(cfg?.env?.hasGmailPass));
-					setOauthConnected(Boolean(cfg?.gmailOAuth?.connected));
-					setOauthEmail((cfg?.gmailOAuth?.email as string | null) ?? null);
 					setIncludeExpired(Boolean(cfg?.localPrefs?.includeExpired));
 					setExpiredWithinDays(Number(cfg?.localPrefs?.expiredWithinDays ?? 7));
 					const email = (cfg.email as EmailSettingsRow | null) ?? null;
 					if (email) {
-						setGmailUser(email.gmail_user ?? "");
-						setFromEmail(email.from_email ?? "");
+						setGmailUser(email.gmail_user ?? safeText(cfg?.env?.gmailUser) ?? "");
 						setIsActive(Boolean(email.is_active));
-						setNotes(email.notes ?? "");
+						const tpl = parseTemplateNotes(email.notes);
+						setEmailSubject(tpl.subject);
+						setEmailBodyHtml(tpl.bodyHtml);
 						setDbHasStoredPassword(Boolean(email.gmail_app_password));
+						setDbStoredPasswordCache(email.gmail_app_password ?? "");
 						setGmailAppPassword("");
 						setStoreAppPassword(false);
-						setTestToEmail(email.gmail_user ?? "");
+						setLoadedStoredPassword(false);
+						setTestToEmail(email.gmail_user ?? safeText(cfg?.env?.gmailUser) ?? "");
 					} else {
 						setDbHasStoredPassword(false);
+						setDbStoredPasswordCache("");
+						setGmailUser(safeText(cfg?.env?.gmailUser) || "");
+						setEmailSubject("");
+						setEmailBodyHtml("");
+						setTestToEmail(safeText(cfg?.env?.gmailUser) || "");
 					}
 
 					const pref = (cfg.preferences as PreferencesRow | null) ?? null;
@@ -287,15 +520,20 @@ export default function SettingsPage() {
 					const email = (emailRes.data as EmailSettingsRow | null) ?? null;
 					if (email) {
 						setGmailUser(email.gmail_user ?? "");
-						setFromEmail(email.from_email ?? "");
 						setIsActive(Boolean(email.is_active));
-						setNotes(email.notes ?? "");
+						const tpl = parseTemplateNotes(email.notes);
+						setEmailSubject(tpl.subject);
+						setEmailBodyHtml(tpl.bodyHtml);
 						setDbHasStoredPassword(Boolean(email.gmail_app_password));
+						setDbStoredPasswordCache(email.gmail_app_password ?? "");
 						setGmailAppPassword("");
 						setStoreAppPassword(false);
-						setTestToEmail(email.gmail_user ?? "");
+						setLoadedStoredPassword(false);
 					} else {
 						setDbHasStoredPassword(false);
+						setDbStoredPasswordCache("");
+						setEmailSubject("");
+						setEmailBodyHtml("");
 					}
 
 					const pref = (prefRes.data as PreferencesRow | null) ?? null;
@@ -447,10 +685,15 @@ export default function SettingsPage() {
 
 		try {
 			const cleanGmailUser = safeText(gmailUser);
-			const cleanFromEmail = safeText(fromEmail);
+			if (storeAppPassword && dbHasStoredPassword && !safeText(gmailAppPassword) && !loadedStoredPassword) {
+				throw new Error(
+					"A stored app password exists in the database. Load it (enable the checkbox) or paste a new app password before saving to avoid clearing it."
+				);
+			}
+			const templateNotes = buildTemplateNotes(emailSubject, emailBodyHtml);
 			const daysBeforeValue = Number(daysBeforeNum);
-			if (!cleanGmailUser || !cleanFromEmail) {
-				throw new Error("Gmail User and From Email are required.");
+			if (!cleanGmailUser) {
+				throw new Error("Gmail User is required.");
 			}
 			if (!Number.isFinite(daysBeforeValue) || daysBeforeValue < 1 || daysBeforeValue > 365) {
 				throw new Error("Days before expiry must be between 1 and 365.");
@@ -460,9 +703,8 @@ export default function SettingsPage() {
 				await electronAPI.settings.saveNotificationConfig({
 					email: {
 						gmail_user: cleanGmailUser,
-						from_email: cleanFromEmail,
 						is_active: Boolean(isActive),
-						notes: safeText(notes) || null,
+						notes: templateNotes,
 						gmail_app_password: safeText(gmailAppPassword) || null,
 					},
 					preferences: {
@@ -484,44 +726,7 @@ export default function SettingsPage() {
 					});
 				}
 			} else {
-				// Web fallback (anon key) – may be blocked by RLS.
-				const existingEmail = await supabase
-					.from("notification_email_settings")
-					.select("id")
-					.eq("provider", "gmail")
-					.limit(1)
-					.maybeSingle();
-				if (existingEmail.error) throw existingEmail.error;
-
-				const baseEmailPayload: Partial<EmailSettingsRow> & {
-					provider: "gmail";
-					gmail_user: string;
-					from_email: string;
-					is_active: boolean;
-					notes: string | null;
-				} = {
-					provider: "gmail",
-					gmail_user: cleanGmailUser,
-					from_email: cleanFromEmail,
-					is_active: Boolean(isActive),
-					notes: safeText(notes) || null,
-				};
-
-				const passwordPayload = storeAppPassword ? { gmail_app_password: safeText(gmailAppPassword) || null } : {};
-
-				if (existingEmail.data?.id) {
-					const updEmail = await supabase
-						.from("notification_email_settings")
-						.update({ ...baseEmailPayload, ...passwordPayload })
-						.eq("id", existingEmail.data.id);
-					if (updEmail.error) throw updEmail.error;
-				} else {
-					const insEmail = await supabase
-						.from("notification_email_settings")
-						.insert({ ...baseEmailPayload, ...passwordPayload });
-					if (insEmail.error) throw insEmail.error;
-				}
-
+				// Web fallback (anon key) – saving sender credentials is desktop-only.
 				const existingPref = await supabase
 					.from("notification_preferences")
 					.select("id")
@@ -557,6 +762,9 @@ export default function SettingsPage() {
 				}
 			}
 
+			if (storeAppPassword) {
+				setDbHasStoredPassword(Boolean(safeText(gmailAppPassword)));
+			}
 			setSuccess("Saved notification settings.");
 		} catch (e: unknown) {
 			setError(errorMessage(e));
@@ -603,7 +811,8 @@ export default function SettingsPage() {
 				</div>
 				{isDesktop ? (
 					<div className="text-xs text-gray-500">
-						Gmail pass in env: {envHasGmailPass ? "yes" : envHasGmailPass === false ? "no" : "unknown"}
+						Gmail user in env: {envHasGmailUser ? "yes" : envHasGmailUser === false ? "no" : "unknown"} • Gmail pass in env:{" "}
+						{envHasGmailPass ? "yes" : envHasGmailPass === false ? "no" : "unknown"}
 					</div>
 				) : (
 					<div className="text-xs text-gray-500">
@@ -631,70 +840,25 @@ export default function SettingsPage() {
 						<div className="rounded-2xl border p-4">
 							<div className="font-semibold mb-2 text-black">Gmail Sender</div>
 							<div className="text-xs text-gray-500 mb-4">
-								Used to send notification emails. Gmail password login is not supported by Google anymore — use an App Password
-								or “Connect Gmail” (Google sign-in).
+								Used to send notification emails. This app uses Gmail App Password auth only.
+								The sender address is read from <span className="font-mono">GMAIL_USER</span> in <span className="font-mono">.env.local</span>.
 							</div>
 
 							{isDesktop ? (
 								<div className="rounded-xl border bg-gray-50 px-3 py-2 text-sm text-gray-700 mb-3">
 									<div className="flex flex-wrap items-center gap-2">
-										<span className="font-semibold">Connected Gmail:</span>
-										<span>{oauthConnected ? (oauthEmail ?? "(unknown)") : "Not connected"}</span>
+										<span className="font-semibold">Sender priority:</span>
+										<span className="font-mono">GMAIL_USER</span>
+										<span className="text-gray-500">(env)</span>
+										<span className="text-gray-500">→</span>
+										<span>this saved Gmail User</span>
+										<span className="text-gray-500">(Settings)</span>
 										<span className="text-gray-500">•</span>
-										<span>
-											Stored app password in DB: {dbHasStoredPassword ? "yes" : "no"}
-										</span>
+										<span>Env app password: {envHasGmailPass ? "yes" : envHasGmailPass === false ? "no" : "unknown"}</span>
+										<span className="text-gray-500">•</span>
+										<span>Stored app password in DB: {dbHasStoredPassword ? "yes" : "no"}</span>
 									</div>
 									<div className="mt-2 flex flex-wrap gap-2">
-										<button
-											onClick={async () => {
-												setOauthBusy(true);
-												setError("");
-												setSuccess("");
-												try {
-													if (!electronAPI?.gmail?.connect) throw new Error("Gmail connect is only available in the desktop app.");
-													const r = await electronAPI.gmail.connect();
-													setOauthConnected(Boolean(r?.connected));
-													setOauthEmail((r?.email as string | null) ?? null);
-													if (safeText(r?.email)) {
-														setGmailUser(String(r?.email));
-														setFromEmail(String(r?.email));
-														setTestToEmail(String(r?.email));
-													}
-													setSuccess("Gmail connected. You can now send without an App Password.");
-												} catch (e: unknown) {
-													setError(errorMessage(e));
-												} finally {
-													setOauthBusy(false);
-												}
-											}}
-											disabled={oauthBusy}
-											className="px-3 py-2 rounded-xl bg-black text-white disabled:opacity-50"
-										>
-											{oauthBusy ? "Connecting…" : "Connect Gmail"}
-										</button>
-										<button
-											onClick={async () => {
-												setOauthBusy(true);
-												setError("");
-												setSuccess("");
-												try {
-													if (!electronAPI?.gmail?.disconnect) throw new Error("Gmail disconnect is only available in the desktop app.");
-													await electronAPI.gmail.disconnect();
-													setOauthConnected(false);
-													setOauthEmail(null);
-													setSuccess("Gmail disconnected.");
-												} catch (e: unknown) {
-													setError(errorMessage(e));
-												} finally {
-													setOauthBusy(false);
-												}
-											}}
-											disabled={oauthBusy || !oauthConnected}
-											className="px-3 py-2 rounded-xl bg-white border disabled:opacity-50 text-black"
-										>
-											Disconnect
-										</button>
 										<button
 											onClick={async () => {
 												setError("");
@@ -705,17 +869,20 @@ export default function SettingsPage() {
 													}
 													await electronAPI.settings.clearStoredGmailAppPassword();
 													setDbHasStoredPassword(false);
+													setDbStoredPasswordCache("");
+													setGmailAppPassword("");
+													setLoadedStoredPassword(false);
 													setSuccess("Stored Gmail App Password cleared from database.");
 												} catch (e: unknown) {
 													setError(errorMessage(e));
 												}
-											}}
-											disabled={!dbHasStoredPassword}
-											className="px-3 py-2 rounded-xl bg-white border disabled:opacity-50 text-black"
-										>
-											Clear stored app password
-										</button>
-										<button
+										}}
+										disabled={!dbHasStoredPassword}
+										className="px-3 py-2 rounded-xl bg-white border disabled:opacity-50 text-black"
+									>
+										Clear stored app password
+									</button>
+									<button
 											onClick={async () => {
 												setError("");
 												setSuccess("");
@@ -725,35 +892,29 @@ export default function SettingsPage() {
 													}
 													await electronAPI.settings.removeGmailSender();
 													setGmailUser("");
-													setFromEmail("");
-													setNotes("");
+													setEmailSubject("");
+													setEmailBodyHtml("");
 													setIsActive(true);
 													setDbHasStoredPassword(false);
+													setDbStoredPasswordCache("");
+													setLoadedStoredPassword(false);
 													setSuccess("Gmail sender settings removed.");
 												} catch (e: unknown) {
 													setError(errorMessage(e));
 												}
-											}}
-											className="px-3 py-2 rounded-xl bg-red-600 text-white"
-										>
-											Remove sender
-										</button>
-									</div>
+										}}
+										className="px-3 py-2 rounded-xl bg-red-600 text-white"
+									>
+										Remove sender
+									</button>
 								</div>
-							) : null}
+							</div>
+						) : null}
 
 							<label className="block text-sm mb-1 text-black">Gmail User</label>
 							<input
 								value={gmailUser}
 								onChange={(e) => setGmailUser(e.target.value)}
-								placeholder="yourcompany.notifications@gmail.com"
-								className="w-full rounded-xl border px-3 py-2 text-black"
-							/>
-
-							<label className="block text-sm mt-3 mb-1 text-black">From Email</label>
-							<input
-								value={fromEmail}
-								onChange={(e) => setFromEmail(e.target.value)}
 								placeholder="yourcompany.notifications@gmail.com"
 								className="w-full rounded-xl border px-3 py-2 text-black"
 							/>
@@ -775,7 +936,38 @@ export default function SettingsPage() {
 									id="storePass"
 									type="checkbox"
 									checked={storeAppPassword}
-									onChange={(e) => setStoreAppPassword(e.target.checked)}
+									onChange={async (e) => {
+									const next = e.target.checked;
+									setStoreAppPassword(next);
+									setError("");
+									setSuccess("");
+
+									if (!next) {
+										setGmailAppPassword("");
+										setLoadedStoredPassword(false);
+										return;
+									}
+
+									// If DB already has one, auto-load it (we already received it via loadNotificationConfig).
+									if (!dbHasStoredPassword) return;
+									if (safeText(dbStoredPasswordCache)) {
+										setGmailAppPassword(dbStoredPasswordCache);
+										setLoadedStoredPassword(true);
+										return;
+									}
+
+									// Fallback for older/partial configs: try fetching via IPC if available.
+									if (!electronAPI?.settings?.getStoredGmailAppPassword) return;
+									try {
+										const res = await electronAPI.settings.getStoredGmailAppPassword();
+										setGmailAppPassword(res?.password ?? "");
+										setLoadedStoredPassword(true);
+									} catch (err: unknown) {
+										setError(errorMessage(err));
+										setStoreAppPassword(false);
+										setLoadedStoredPassword(false);
+									}
+								}}
 								/>
 								<label htmlFor="storePass" className="text-sm text-black">
 									Store Gmail App Password in database (not recommended)
@@ -786,25 +978,45 @@ export default function SettingsPage() {
 								<div className="mt-3">
 									<label className="block text-sm mb-1 text-black">Gmail App Password</label>
 									<input
-										type="password"
+										type={showAppPassword ? "text" : "password"}
 										value={gmailAppPassword}
-										onChange={(e) => setGmailAppPassword(e.target.value)}
+										onChange={(e) => {
+											setLoadedStoredPassword(false);
+											setGmailAppPassword(e.target.value);
+										}}
 										placeholder="xxxx xxxx xxxx xxxx"
 										className="w-full rounded-xl border px-3 py-2 text-black"
 									/>
+									<label className="mt-2 inline-flex items-center gap-2 text-xs text-gray-700">
+										<input
+											type="checkbox"
+											checked={showAppPassword}
+											onChange={(e) => setShowAppPassword(e.target.checked)}
+										/>
+										Show app password
+									</label>
 									<div className="text-xs text-gray-500 mt-1">
-										If you leave this blank, the saved password will be cleared.
+										If a stored password exists, it will auto-fill when you enable the checkbox.
 									</div>
 								</div>
 							) : null}
 
-							<label className="block text-sm mt-3 mb-1 text-black">Message included in emails</label>
-							<textarea
-								value={notes}
-								onChange={(e) => setNotes(e.target.value)}
-								placeholder="Optional message shown inside the email body"
-								className="w-full rounded-xl border px-3 py-2 min-h-[88px] text-black"
+							<label className="block text-sm mt-4 mb-1 text-black">Email Subject</label>
+							<input
+								value={emailSubject}
+								onChange={(e) => setEmailSubject(e.target.value)}
+								placeholder="Expiring Licensure Warning ({count})"
+								className="w-full rounded-xl border px-3 py-2 text-black"
 							/>
+							<div className="text-xs text-gray-500 mt-1">
+								Tip: use <span className="font-mono">{'{count}'}</span> to insert number of expiring items.
+							</div>
+
+							<label className="block text-sm mt-4 mb-1 text-black">Email Body</label>
+							<RichTextEditor value={emailBodyHtml} onChange={setEmailBodyHtml} />
+							<div className="text-xs text-gray-500 mt-1">
+								This content appears above the expiring licenses table.
+							</div>
 						</div>
 
 						<div className="rounded-2xl border p-4">

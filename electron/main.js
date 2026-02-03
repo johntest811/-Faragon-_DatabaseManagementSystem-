@@ -1,7 +1,6 @@
-const { app, BrowserWindow, protocol, dialog, ipcMain, shell, safeStorage } = require('electron');
+const { app, BrowserWindow, protocol, dialog, ipcMain, safeStorage } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const http = require('http');
 
 // Load env vars for Electron main (dev + packaged). This keeps the service role key out of the renderer.
 try {
@@ -64,18 +63,6 @@ function writeEncryptedJson(filePath, value) {
   fs.writeFileSync(filePath, buf);
 }
 
-function deleteFileIfExists(filePath) {
-  try {
-    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-  } catch {
-    // ignore
-  }
-}
-
-function getGmailOAuthFilePath() {
-  return path.join(app.getPath('userData'), 'gmail_oauth.enc');
-}
-
 function getLocalNotificationPrefsFilePath() {
   return path.join(app.getPath('userData'), 'notification_prefs_local.enc');
 }
@@ -93,136 +80,9 @@ function saveLocalNotificationPrefs(payload) {
     includeExpired: Boolean(payload?.includeExpired),
     expiredWithinDays: clampInt(payload?.expiredWithinDays, { min: 1, max: 365, fallback: 7 }),
   };
+
   writeEncryptedJson(getLocalNotificationPrefsFilePath(), next);
   return next;
-}
-
-function loadGmailOAuth() {
-  const raw = readEncryptedJson(getGmailOAuthFilePath()) || null;
-  if (!raw || typeof raw !== 'object') return null;
-  const email = safeText(raw.email);
-  const refreshToken = safeText(raw.refresh_token);
-  if (!email || !refreshToken) return null;
-  return { email, refresh_token: refreshToken };
-}
-
-function gmailOAuthStatus() {
-  const oauth = loadGmailOAuth();
-  return {
-    connected: Boolean(oauth?.refresh_token && oauth?.email),
-    email: oauth?.email || null,
-  };
-}
-
-async function connectGmailOAuth() {
-  const clientId = safeText(process.env.GMAIL_OAUTH_CLIENT_ID);
-  const clientSecret = safeText(process.env.GMAIL_OAUTH_CLIENT_SECRET);
-  if (!clientId || !clientSecret) {
-    throw new Error('Missing GMAIL_OAUTH_CLIENT_ID or GMAIL_OAUTH_CLIENT_SECRET in environment.');
-  }
-
-  const { OAuth2Client } = require('google-auth-library');
-
-  const scopes = [
-    'https://www.googleapis.com/auth/gmail.send',
-    'openid',
-    'email',
-    'profile',
-  ];
-
-  return await new Promise((resolve, reject) => {
-    let finished = false;
-    let oauthClient;
-    let timeoutId;
-
-    const server = http.createServer(async (req, res) => {
-      try {
-        const url = new URL(req.url || '/', 'http://127.0.0.1');
-        if (url.pathname !== '/oauth2callback') {
-          res.writeHead(404, { 'Content-Type': 'text/plain' });
-          res.end('Not found');
-          return;
-        }
-
-        const err = safeText(url.searchParams.get('error'));
-        const code = safeText(url.searchParams.get('code'));
-        res.writeHead(200, { 'Content-Type': 'text/html' });
-        res.end(
-          '<html><body style="font-family:Arial,Helvetica,sans-serif"><h2>Gmail connected</h2><p>You can close this window and return to the app.</p></body></html>'
-        );
-
-        if (finished) return;
-        finished = true;
-        clearTimeout(timeoutId);
-        server.close();
-
-        if (err) throw new Error(`Google sign-in error: ${err}`);
-        if (!code) throw new Error('Missing OAuth code from Google callback.');
-
-        const { tokens } = await oauthClient.getToken(code);
-        if (!tokens?.refresh_token) {
-          throw new Error(
-            'No refresh token returned by Google. Try disconnecting and connecting again, or ensure consent is forced.'
-          );
-        }
-
-        const accessToken = safeText(tokens.access_token);
-        if (!accessToken) throw new Error('Missing access token from Google.');
-
-        const infoRes = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
-          headers: { Authorization: `Bearer ${accessToken}` },
-        });
-        if (!infoRes.ok) {
-          throw new Error(`Failed to fetch Google user info (${infoRes.status}).`);
-        }
-        const info = await infoRes.json();
-        const email = safeText(info?.email);
-        if (!email) throw new Error('Google sign-in succeeded, but email address was not returned.');
-
-        writeEncryptedJson(getGmailOAuthFilePath(), {
-          email,
-          refresh_token: tokens.refresh_token,
-          connected_at: new Date().toISOString(),
-        });
-
-        resolve({ connected: true, email });
-      } catch (e) {
-        if (!finished) {
-          finished = true;
-          clearTimeout(timeoutId);
-          server.close();
-          reject(e);
-        }
-      }
-    });
-
-    server.listen(0, '127.0.0.1', () => {
-      const address = server.address();
-      const port = typeof address === 'object' && address ? address.port : null;
-      if (!port) {
-        finished = true;
-        server.close();
-        reject(new Error('Failed to start local OAuth callback server.'));
-        return;
-      }
-
-      const redirectUri = `http://127.0.0.1:${port}/oauth2callback`;
-      oauthClient = new OAuth2Client(clientId, clientSecret, redirectUri);
-      const authUrl = oauthClient.generateAuthUrl({
-        access_type: 'offline',
-        scope: scopes,
-        prompt: 'consent',
-      });
-      shell.openExternal(authUrl);
-
-      timeoutId = setTimeout(() => {
-        if (finished) return;
-        finished = true;
-        server.close();
-        reject(new Error('Gmail sign-in timed out. Please try again.'));
-      }, 3 * 60 * 1000);
-    });
-  });
 }
 
 function ymd(d) {
@@ -275,11 +135,10 @@ async function loadNotificationConfig(admin) {
     email: emailRes.data ?? null,
     preferences: prefRes.data ?? null,
     localPrefs,
-    gmailOAuth: gmailOAuthStatus(),
     env: {
       hasGmailUser: Boolean(process.env.GMAIL_USER),
       hasGmailPass: Boolean(process.env.GMAIL_PASS),
-      hasGmailFrom: Boolean(process.env.GMAIL_FROM),
+      gmailUser: safeText(process.env.GMAIL_USER) || null,
     },
   };
 }
@@ -287,33 +146,16 @@ async function loadNotificationConfig(admin) {
 function buildTransport(emailSettingsRow) {
   const nodemailer = require('nodemailer');
 
-  // Prefer OAuth if the admin connected Gmail in the desktop app.
-  const oauth = loadGmailOAuth();
-  const clientId = safeText(process.env.GMAIL_OAUTH_CLIENT_ID);
-  const clientSecret = safeText(process.env.GMAIL_OAUTH_CLIENT_SECRET);
-  if (oauth?.refresh_token && oauth?.email && clientId && clientSecret) {
-    const from = safeText(process.env.GMAIL_FROM) || safeText(emailSettingsRow?.from_email) || oauth.email;
-    const transporter = nodemailer.createTransport({
-      service: 'gmail',
-      auth: {
-        type: 'OAuth2',
-        user: oauth.email,
-        clientId,
-        clientSecret,
-        refreshToken: oauth.refresh_token,
-      },
-    });
-
-    return { transporter, user: oauth.email, from };
-  }
-
+  // App-password auth only (no Google OAuth in this app).
   const user = safeText(process.env.GMAIL_USER) || safeText(emailSettingsRow?.gmail_user);
   const pass = safeText(process.env.GMAIL_PASS) || safeText(emailSettingsRow?.gmail_app_password);
-  const from = safeText(process.env.GMAIL_FROM) || safeText(emailSettingsRow?.from_email) || user;
-  if (!user) throw new Error('Missing Gmail user. Set Settings Gmail User or env GMAIL_USER.');
+  const from = user;
+  if (!user) {
+    throw new Error('Missing Gmail sender email. Set GMAIL_USER in .env.local or set Gmail User in Settings.');
+  }
   if (!pass) {
     throw new Error(
-      'Missing Gmail App Password. Set env GMAIL_PASS (recommended) or enable “store app password” in Settings.'
+      'Missing Gmail App Password. Set GMAIL_PASS in .env.local (recommended) or enable “store app password” in Settings.'
     );
   }
 
@@ -334,8 +176,57 @@ function escapeHtml(s) {
     .replace(/'/g, '&#039;');
 }
 
-function renderEmailHtml({ recipientName, items, daysBefore, message }) {
-  const msg = safeText(message);
+function parseEmailTemplateNotes(notes) {
+  const raw = safeText(notes);
+  if (!raw) return { subject: null, bodyHtml: null, legacyMessage: null };
+
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object') {
+      const subject = safeText(parsed.subject);
+      const bodyHtml = safeText(parsed.bodyHtml);
+      return {
+        subject: subject || null,
+        bodyHtml: bodyHtml || null,
+        legacyMessage: null,
+      };
+    }
+  } catch {
+    // ignore
+  }
+
+  return { subject: null, bodyHtml: null, legacyMessage: raw };
+}
+
+function sanitizeEmailBodyHtml(inputHtml) {
+  let html = String(inputHtml ?? '');
+
+  // Remove scripts/styles and embedded content.
+  html = html.replace(/<\s*script[^>]*>[\s\S]*?<\s*\/\s*script\s*>/gi, '');
+  html = html.replace(/<\s*style[^>]*>[\s\S]*?<\s*\/\s*style\s*>/gi, '');
+  html = html.replace(/<\s*(iframe|object|embed)[^>]*>[\s\S]*?<\s*\/\s*\1\s*>/gi, '');
+  html = html.replace(/<\s*(iframe|object|embed)[^>]*\/\s*>/gi, '');
+
+  // Remove inline event handlers (onclick, onload, etc.)
+  html = html.replace(/\son\w+\s*=\s*"[^"]*"/gi, '');
+  html = html.replace(/\son\w+\s*=\s*'[^']*'/gi, '');
+
+  // Neutralize javascript: URLs
+  html = html.replace(/(href|src)\s*=\s*"\s*javascript:[^"]*"/gi, '$1="#"');
+  html = html.replace(/(href|src)\s*=\s*'\s*javascript:[^']*'/gi, "$1='#'");
+
+  return html;
+}
+
+function computeEmailSubject(templateSubject, itemsCount) {
+  const sub = safeText(templateSubject);
+  if (!sub) return `Expiring Licensure Warning (${itemsCount})`;
+  return sub.replace(/\{count\}/g, String(itemsCount));
+}
+
+function renderEmailHtml({ recipientName, items, daysBefore, bodyHtml, legacyMessage }) {
+  const msg = safeText(legacyMessage);
+  const safeBody = safeText(bodyHtml) ? sanitizeEmailBodyHtml(bodyHtml) : '';
 
   function fmtDays(d) {
     const n = Number(d);
@@ -363,7 +254,8 @@ function renderEmailHtml({ recipientName, items, daysBefore, message }) {
       String(daysBefore)
     )} days.</div>
     <div style="margin-bottom:12px;">Hello ${escapeHtml(recipientName || 'there')},</div>
-    ${msg ? `<div style="margin:0 0 12px 0;padding:10px 12px;border:1px solid #eee;background:#fafafa;border-radius:8px;">${escapeHtml(msg)}</div>` : ''}
+    ${safeBody ? `<div style="margin:0 0 12px 0;">${safeBody}</div>` : ''}
+    ${!safeBody && msg ? `<div style="margin:0 0 12px 0;padding:10px 12px;border:1px solid #eee;background:#fafafa;border-radius:8px;">${escapeHtml(msg)}</div>` : ''}
     <table style="border-collapse:collapse;width:100%;max-width:640px;">
       <thead>
         <tr>
@@ -476,7 +368,7 @@ async function runNotificationSend(admin) {
   if (!preferences?.is_enabled) {
     return { ok: true, summary: { sent: 0, failed: 0, skipped: 0 }, message: 'Notifications are disabled.' };
   }
-  if (!email?.is_active) {
+  if (email && !email.is_active) {
     return { ok: true, summary: { sent: 0, failed: 0, skipped: 0 }, message: 'Gmail sender is not active.' };
   }
 
@@ -525,12 +417,14 @@ async function runNotificationSend(admin) {
 
   for (const [to, items] of byRecipient.entries()) {
     const recipientName = displayNameFromRow(items[0]);
-    const subject = `Expiring Licensure Warning (${items.length})`;
+    const tpl = parseEmailTemplateNotes(email?.notes);
+    const subject = computeEmailSubject(tpl.subject, items.length);
     const html = renderEmailHtml({
       recipientName,
       items,
       daysBefore: preferences.days_before_expiry,
-      message: email?.notes,
+      bodyHtml: tpl.bodyHtml,
+      legacyMessage: tpl.legacyMessage,
     });
 
     try {
@@ -703,6 +597,29 @@ ipcMain.handle('settings:clearStoredGmailAppPassword', async () => {
   return { success: true };
 });
 
+ipcMain.handle('settings:getStoredGmailAppPassword', async () => {
+  const admin = getAdminSupabase();
+  const existingEmail = await admin
+    .from('notification_email_settings')
+    .select('gmail_app_password')
+    .eq('provider', 'gmail')
+    .order('updated_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (existingEmail.error) throw existingEmail.error;
+  return { password: safeText(existingEmail.data?.gmail_app_password) || null };
+});
+
+// Dev diagnostic: helps confirm IPC handlers are registered.
+try {
+  if (process.env.ELECTRON_DEV === '1') {
+    const has = ipcMain?._invokeHandlers?.has?.('settings:getStoredGmailAppPassword');
+    console.log('[electron] IPC registered settings:getStoredGmailAppPassword:', Boolean(has));
+  }
+} catch {
+  // ignore
+}
+
 ipcMain.handle('settings:removeGmailSender', async () => {
   const admin = getAdminSupabase();
   const del = await admin.from('notification_email_settings').delete().eq('provider', 'gmail');
@@ -710,28 +627,14 @@ ipcMain.handle('settings:removeGmailSender', async () => {
   return { success: true };
 });
 
-ipcMain.handle('gmail:getStatus', async () => {
-  return gmailOAuthStatus();
-});
-
-ipcMain.handle('gmail:disconnect', async () => {
-  deleteFileIfExists(getGmailOAuthFilePath());
-  return { success: true };
-});
-
-ipcMain.handle('gmail:connect', async () => {
-  return await connectGmailOAuth();
-});
-
 ipcMain.handle('settings:saveNotificationConfig', async (_event, payload) => {
   const admin = getAdminSupabase();
   const email = payload?.email ?? {};
   const preferences = payload?.preferences ?? {};
 
-  const cleanGmailUser = safeText(email.gmail_user);
-  const cleanFromEmail = safeText(email.from_email);
-  if (!cleanGmailUser || !cleanFromEmail) {
-    throw new Error('Gmail User and From Email are required.');
+  const senderEmail = safeText(process.env.GMAIL_USER) || safeText(email.gmail_user);
+  if (!senderEmail) {
+    throw new Error('Missing Gmail sender email. Set GMAIL_USER in .env.local or input Gmail User in Settings.');
   }
   const daysBefore = Number(preferences.days_before_expiry ?? 30);
   if (!Number.isFinite(daysBefore) || daysBefore < 1 || daysBefore > 365) {
@@ -749,8 +652,8 @@ ipcMain.handle('settings:saveNotificationConfig', async (_event, payload) => {
 
   const baseEmailPayload = {
     provider: 'gmail',
-    gmail_user: cleanGmailUser,
-    from_email: cleanFromEmail,
+    gmail_user: senderEmail,
+    from_email: senderEmail,
     is_active: Boolean(email.is_active ?? true),
     notes: safeText(email.notes) || null,
   };
@@ -821,13 +724,13 @@ ipcMain.handle('notifications:getLog', async (_event, payload) => {
 ipcMain.handle('notifications:sendTestEmail', async (_event, payload) => {
   const admin = getAdminSupabase();
   const { email, preferences } = await loadNotificationConfig(admin);
-  if (!email) throw new Error('No Gmail sender settings found. Save Settings first.');
 
   const { transporter, from } = buildTransport(email);
-  const to = safeText(payload?.to) || safeText(email.gmail_user);
+  const to = safeText(payload?.to) || from;
   if (!to) throw new Error('Missing test recipient email.');
 
-  const subject = safeText(payload?.subject) || 'Test: Expiring Licensure Notifications';
+  const tpl = parseEmailTemplateNotes(email?.notes);
+  const subject = safeText(payload?.subject) || computeEmailSubject(tpl.subject, 1) || 'Test: Expiring Licensure Notifications';
   const html = renderEmailHtml({
     recipientName: 'Test',
     items: [
@@ -838,7 +741,8 @@ ipcMain.handle('notifications:sendTestEmail', async (_event, payload) => {
       },
     ],
     daysBefore: preferences?.days_before_expiry ?? 30,
-    message: email?.notes,
+    bodyHtml: tpl.bodyHtml,
+    legacyMessage: tpl.legacyMessage,
   });
 
   await transporter.sendMail({ from, to, subject, html });

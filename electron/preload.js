@@ -12,14 +12,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     loadNotificationConfig: () => ipcRenderer.invoke('settings:loadNotificationConfig'),
     saveNotificationConfig: (payload) => ipcRenderer.invoke('settings:saveNotificationConfig', payload),
     saveLocalNotificationPrefs: (payload) => ipcRenderer.invoke('settings:saveLocalNotificationPrefs', payload),
+    getStoredGmailAppPassword: () => ipcRenderer.invoke('settings:getStoredGmailAppPassword'),
     clearStoredGmailAppPassword: () => ipcRenderer.invoke('settings:clearStoredGmailAppPassword'),
     removeGmailSender: () => ipcRenderer.invoke('settings:removeGmailSender'),
-  },
-
-  gmail: {
-    getStatus: () => ipcRenderer.invoke('gmail:getStatus'),
-    connect: () => ipcRenderer.invoke('gmail:connect'),
-    disconnect: () => ipcRenderer.invoke('gmail:disconnect'),
   },
 
   notifications: {
