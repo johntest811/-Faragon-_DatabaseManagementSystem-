@@ -41,6 +41,49 @@ function clampInt(n, { min, max, fallback }) {
   return i;
 }
 
+function isMissingAuditLogTableMessage(msg) {
+  const m = String(msg || '');
+  if (!/audit_log/i.test(m)) return false;
+  return (
+    /relation\s+"?audit_log"?\s+does\s+not\s+exist/i.test(m) ||
+    /could\s+not\s+find\s+the\s+table\s+'public\.audit_log'\s+in\s+the\s+schema\s+cache/i.test(m) ||
+    /PGRST205/i.test(m)
+  );
+}
+
+async function insertAuditEvent(admin, payload) {
+  try {
+    const actorUserId = payload?.actor_user_id ? String(payload.actor_user_id) : null;
+    const actorEmail = safeText(payload?.actor_email) || null;
+    const action = safeText(payload?.action);
+    if (!action) return;
+
+    const page = safeText(payload?.page) || null;
+    const entity = safeText(payload?.entity) || null;
+    const details = payload?.details && typeof payload.details === 'object' ? payload.details : null;
+
+    const ins = await admin.from('audit_log').insert({
+      actor_user_id: actorUserId,
+      actor_email: actorEmail,
+      action,
+      page,
+      entity,
+      details,
+    });
+
+    if (ins.error) {
+      const msg = String(ins.error?.message || ins.error);
+      if (isMissingAuditLogTableMessage(msg)) {
+        // Table not installed yet; don't break the app.
+        return;
+      }
+      console.warn('[audit] insert failed:', ins.error);
+    }
+  } catch (e) {
+    console.warn('[audit] insert exception:', e?.message ?? e);
+  }
+}
+
 function readEncryptedJson(filePath) {
   try {
     if (!fs.existsSync(filePath)) return null;
@@ -177,22 +220,43 @@ function escapeHtml(s) {
 }
 
 function parseEmailTemplateNotes(notes) {
+  // Support notes stored as jsonb (object) or as JSON-encoded text.
+  if (notes && typeof notes === 'object') {
+    const subject = safeText(notes.subject);
+    const bodyHtml = safeText(notes.bodyHtml);
+    return {
+      subject: subject || null,
+      bodyHtml: bodyHtml || null,
+      legacyMessage: null,
+    };
+  }
+
   const raw = safeText(notes);
   if (!raw) return { subject: null, bodyHtml: null, legacyMessage: null };
 
-  try {
-    const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed === 'object') {
-      const subject = safeText(parsed.subject);
-      const bodyHtml = safeText(parsed.bodyHtml);
-      return {
-        subject: subject || null,
-        bodyHtml: bodyHtml || null,
-        legacyMessage: null,
-      };
+  function tryParseJson(text) {
+    try {
+      return JSON.parse(text);
+    } catch {
+      return null;
     }
-  } catch {
-    // ignore
+  }
+
+  let parsed = tryParseJson(raw);
+  // Handle double-stringified JSON (e.g. "{\"subject\":...}").
+  if (typeof parsed === 'string') {
+    const nested = tryParseJson(parsed);
+    parsed = nested ?? parsed;
+  }
+
+  if (parsed && typeof parsed === 'object') {
+    const subject = safeText(parsed.subject);
+    const bodyHtml = safeText(parsed.bodyHtml);
+    return {
+      subject: subject || null,
+      bodyHtml: bodyHtml || null,
+      legacyMessage: null,
+    };
   }
 
   return { subject: null, bodyHtml: null, legacyMessage: raw };
@@ -224,9 +288,10 @@ function computeEmailSubject(templateSubject, itemsCount) {
   return sub.replace(/\{count\}/g, String(itemsCount));
 }
 
-function renderEmailHtml({ recipientName, items, daysBefore, bodyHtml, legacyMessage }) {
+function renderEmailHtml({ subject, recipientName, items, daysBefore, bodyHtml, legacyMessage }) {
   const msg = safeText(legacyMessage);
   const safeBody = safeText(bodyHtml) ? sanitizeEmailBodyHtml(bodyHtml) : '';
+  const heading = safeText(subject) || 'Licensure Expiration Warning';
 
   function fmtDays(d) {
     const n = Number(d);
@@ -249,11 +314,10 @@ function renderEmailHtml({ recipientName, items, daysBefore, bodyHtml, legacyMes
 
   return `
   <div style="font-family:Arial,Helvetica,sans-serif;line-height:1.4;color:#111">
-    <h2 style="margin:0 0 8px 0;">Licensure Expiration Warning</h2>
+    <h2 style="margin:0 0 8px 0;">${escapeHtml(heading)}</h2>
     <div style="color:#444;margin-bottom:16px;">This is an automated reminder for licensures expiring within ${escapeHtml(
       String(daysBefore)
     )} days.</div>
-    <div style="margin-bottom:12px;">Hello ${escapeHtml(recipientName || 'there')},</div>
     ${safeBody ? `<div style="margin:0 0 12px 0;">${safeBody}</div>` : ''}
     ${!safeBody && msg ? `<div style="margin:0 0 12px 0;padding:10px 12px;border:1px solid #eee;background:#fafafa;border-radius:8px;">${escapeHtml(msg)}</div>` : ''}
     <table style="border-collapse:collapse;width:100%;max-width:640px;">
@@ -325,7 +389,7 @@ async function fetchExpiringRows(admin, preferences, localPrefs, limit) {
       if (
         exp &&
         du !== null &&
-        ((du >= 0 && du <= daysBefore) || (includeExpired && du < 0 && Math.abs(du) <= expiredWithinDays))
+        ((du >= 1 && du <= daysBefore) || (includeExpired && du < 0 && Math.abs(du) <= expiredWithinDays))
       ) {
         out.push({ ...base, expires_on: exp, license_type: 'DRIVER_LICENSE', days_until_expiry: du });
       }
@@ -336,7 +400,7 @@ async function fetchExpiringRows(admin, preferences, localPrefs, limit) {
       if (
         exp &&
         du !== null &&
-        ((du >= 0 && du <= daysBefore) || (includeExpired && du < 0 && Math.abs(du) <= expiredWithinDays))
+        ((du >= 1 && du <= daysBefore) || (includeExpired && du < 0 && Math.abs(du) <= expiredWithinDays))
       ) {
         out.push({ ...base, expires_on: exp, license_type: 'SECURITY_LICENSE', days_until_expiry: du });
       }
@@ -347,7 +411,7 @@ async function fetchExpiringRows(admin, preferences, localPrefs, limit) {
       if (
         exp &&
         du !== null &&
-        ((du >= 0 && du <= daysBefore) || (includeExpired && du < 0 && Math.abs(du) <= expiredWithinDays))
+        ((du >= 1 && du <= daysBefore) || (includeExpired && du < 0 && Math.abs(du) <= expiredWithinDays))
       ) {
         out.push({ ...base, expires_on: exp, license_type: 'INSURANCE', days_until_expiry: du });
       }
@@ -363,6 +427,64 @@ function displayNameFromRow(r) {
   return parts.length ? parts.join(' ') : 'Employee';
 }
 
+function parseLocalSendTimeHHmm(input, fallback = '08:00') {
+  const raw = safeText(input).slice(0, 5) || fallback;
+  const [hhRaw, mmRaw] = raw.split(':');
+  const hh = clampInt(hhRaw, { min: 0, max: 23, fallback: 8 });
+  const mm = clampInt(mmRaw, { min: 0, max: 59, fallback: 0 });
+  return { hh, mm, raw: `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}` };
+}
+
+function isDueToSendNow(expiresOnYmd, daysBefore, sendTimeLocal) {
+  const exp = ymd(expiresOnYmd);
+  if (!exp) return false;
+
+  const du = daysUntil(exp);
+  // Never send on the day of expiration or after.
+  if (du === null || du <= 0) return false;
+  if (du > Number(daysBefore)) return false;
+
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+
+  const expDt = new Date(exp);
+  const dueDt = new Date(expDt.getFullYear(), expDt.getMonth(), expDt.getDate(), 0, 0, 0, 0);
+  dueDt.setDate(dueDt.getDate() - Number(daysBefore));
+
+  if (today.getTime() < dueDt.getTime()) return false;
+
+  // If today is the due date, wait until the configured local send time.
+  if (today.getTime() === dueDt.getTime()) {
+    const { hh, mm } = parseLocalSendTimeHHmm(sendTimeLocal);
+    const dueTime = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hh, mm, 0, 0);
+    if (now.getTime() < dueTime.getTime()) return false;
+  }
+
+  // Catch-up: if app was closed on the due date, send as soon as possible
+  // on the next run (still before expiration).
+  return true;
+}
+
+async function hasSentLicensureNotice(admin, item) {
+  try {
+    const res = await admin
+      .from('licensure_notification_log')
+      .select('id')
+      .eq('status', 'SENT')
+      .eq('applicant_id', item.applicant_id)
+      .eq('license_type', item.license_type)
+      .eq('expires_on', item.expires_on)
+      .limit(1)
+      .maybeSingle();
+    if (res.error) throw res.error;
+    return Boolean(res.data?.id);
+  } catch (e) {
+    // If log table is missing/misconfigured, fail open to avoid blocking sends.
+    console.warn('[notifications] hasSentLicensureNotice failed:', e?.message ?? e);
+    return false;
+  }
+}
+
 async function runNotificationSend(admin) {
   const { email, preferences } = await loadNotificationConfig(admin);
   if (!preferences?.is_enabled) {
@@ -376,23 +498,17 @@ async function runNotificationSend(admin) {
   const localPrefs = loadLocalNotificationPrefs();
   const expiring = await fetchExpiringRows(admin, preferences, localPrefs);
 
-  // Avoid re-sending the same applicant/type/expires_on within today.
-  const todayIso = startOfTodayLocal().toISOString();
-  const sentTodayRes = await admin
-    .from('licensure_notification_log')
-    .select('applicant_id, license_type, expires_on, status')
-    .gte('created_at', todayIso)
-    .eq('status', 'SENT');
-  if (sentTodayRes.error) throw sentTodayRes.error;
-  const sentKey = new Set(
-    (sentTodayRes.data ?? []).map((x) => `${x.applicant_id}:${x.license_type}:${String(x.expires_on)}`)
-  );
+  const daysBefore = Number(preferences.days_before_expiry ?? 30);
+  const sendTimeLocal = preferences.send_time_local;
 
   // Group email by recipient (client_email) to reduce spam.
   const byRecipient = new Map();
   for (const item of expiring) {
-    const k = `${item.applicant_id}:${item.license_type}:${item.expires_on}`;
-    if (sentKey.has(k)) continue;
+    if (!isDueToSendNow(item.expires_on, daysBefore, sendTimeLocal)) continue;
+
+    const alreadySent = await hasSentLicensureNotice(admin, item);
+    if (alreadySent) continue;
+
     const to = safeText(item.client_email);
     if (!to) {
       // Log skipped.
@@ -420,6 +536,7 @@ async function runNotificationSend(admin) {
     const tpl = parseEmailTemplateNotes(email?.notes);
     const subject = computeEmailSubject(tpl.subject, items.length);
     const html = renderEmailHtml({
+      subject,
       recipientName,
       items,
       daysBefore: preferences.days_before_expiry,
@@ -469,7 +586,9 @@ async function runNotificationSend(admin) {
   }
 
   // Count how many were skipped in this run by comparing totals.
-  skipped = Math.max(0, expiring.length - sent - failed);
+  // Note: expiring includes preview window rows, but we only attempt sends for "due" rows.
+  const dueCount = Array.from(byRecipient.values()).reduce((acc, v) => acc + v.length, 0);
+  skipped = Math.max(0, dueCount - sent - failed);
   return { ok: true, summary: { sent, failed, skipped }, message: 'Run complete.' };
 }
 
@@ -545,6 +664,14 @@ ipcMain.handle('admin:createUser', async (_event, payload) => {
   if (failed?.error) {
     throw failed.error;
   }
+
+  await insertAuditEvent(admin, {
+    actor_user_id: payload?.actor?.user_id ?? null,
+    actor_email: payload?.actor?.email ?? null,
+    action: 'ADMIN_CREATE_USER',
+    entity: user.id,
+    details: { created_email: email, kind, role_name: roleName },
+  });
 
   return { user_id: user.id };
 });
@@ -693,6 +820,21 @@ ipcMain.handle('settings:saveNotificationConfig', async (_event, payload) => {
     if (ins.error) throw ins.error;
   }
 
+  await insertAuditEvent(admin, {
+    actor_user_id: payload?.actor?.user_id ?? null,
+    actor_email: payload?.actor?.email ?? null,
+    action: 'SETTINGS_SAVE_NOTIFICATION_CONFIG',
+    page: '/Main_Modules/Settings/',
+    details: {
+      gmail_user: senderEmail,
+      is_enabled: Boolean(prefPayload.is_enabled),
+      days_before_expiry: daysBefore,
+      include_driver_license: Boolean(prefPayload.include_driver_license),
+      include_security_license: Boolean(prefPayload.include_security_license),
+      include_insurance: Boolean(prefPayload.include_insurance),
+    },
+  });
+
   return { success: true };
 });
 
@@ -703,6 +845,180 @@ ipcMain.handle('notifications:previewExpiring', async (_event, payload) => {
   const limit = Number(payload?.limit ?? 25);
   const rows = await fetchExpiringRows(admin, preferences ?? {}, localPrefs, limit);
   return { rows };
+});
+
+ipcMain.handle('notifications:getExpiringSummary', async (_event, payload) => {
+  const admin = getAdminSupabase();
+  const { preferences } = await loadNotificationConfig(admin);
+  const localPrefs = loadLocalNotificationPrefs();
+  const limit = Math.max(1, Math.min(50, Number(payload?.limit ?? 8)));
+  const all = await fetchExpiringRows(admin, preferences ?? {}, localPrefs);
+
+  const rows = all.slice(0, limit);
+  const applicantIds = Array.from(new Set(rows.map((r) => r.applicant_id).filter(Boolean)));
+  const keys = new Set(rows.map((r) => `${r.applicant_id}:${r.license_type}:${String(r.expires_on)}`));
+
+  const sentStats = new Map();
+  if (applicantIds.length) {
+    try {
+      const logRes = await admin
+        .from('licensure_notification_log')
+        .select('applicant_id, license_type, expires_on, created_at, status')
+        .eq('status', 'SENT')
+        .in('applicant_id', applicantIds)
+        .order('created_at', { ascending: false })
+        .limit(5000);
+      if (logRes.error) throw logRes.error;
+
+      for (const x of logRes.data ?? []) {
+        const k = `${x.applicant_id}:${x.license_type}:${String(x.expires_on)}`;
+        if (!keys.has(k)) continue;
+        const prev = sentStats.get(k) || { sent_count: 0, last_sent_at: null };
+        prev.sent_count += 1;
+        if (!prev.last_sent_at) prev.last_sent_at = x.created_at;
+        sentStats.set(k, prev);
+      }
+    } catch (e) {
+      console.warn('[notifications] getExpiringSummary log lookup failed:', e?.message ?? e);
+    }
+  }
+
+  const enriched = rows.map((r) => {
+    const k = `${r.applicant_id}:${r.license_type}:${String(r.expires_on)}`;
+    const st = sentStats.get(k) || { sent_count: 0, last_sent_at: null };
+    return { ...r, sent_count: st.sent_count, last_sent_at: st.last_sent_at };
+  });
+
+  return { count: all.length, rows: enriched };
+});
+
+ipcMain.handle('notifications:resendLicensureNotice', async (_event, payload) => {
+  const admin = getAdminSupabase();
+  const applicantId = payload?.applicant_id;
+  const licenseType = safeText(payload?.license_type);
+  const expiresOn = ymd(payload?.expires_on);
+  if (!applicantId || !licenseType || !expiresOn) {
+    throw new Error('Missing applicant_id, license_type, or expires_on');
+  }
+
+  const { email, preferences } = await loadNotificationConfig(admin);
+  if (!preferences?.is_enabled) throw new Error('Notifications are disabled.');
+  if (email && !email.is_active) throw new Error('Gmail sender is not active.');
+
+  const aRes = await admin
+    .from('applicants')
+    .select('applicant_id, first_name, middle_name, last_name, extn_name, client_email')
+    .eq('applicant_id', applicantId)
+    .maybeSingle();
+  if (aRes.error) throw aRes.error;
+  const applicant = aRes.data;
+  if (!applicant) throw new Error('Applicant not found.');
+  const to = safeText(applicant.client_email);
+  if (!to) throw new Error('Missing recipient email (client_email).');
+
+  const { transporter, from } = buildTransport(email);
+
+  const item = {
+    applicant_id: applicantId,
+    license_type: licenseType,
+    expires_on: expiresOn,
+    days_until_expiry: daysUntil(expiresOn),
+    first_name: applicant.first_name ?? null,
+    middle_name: applicant.middle_name ?? null,
+    last_name: applicant.last_name ?? null,
+    extn_name: applicant.extn_name ?? null,
+    client_email: to,
+  };
+
+  const recipientName = displayNameFromRow(item);
+  const tpl = parseEmailTemplateNotes(email?.notes);
+  const subject = computeEmailSubject(tpl.subject, 1);
+  const html = renderEmailHtml({
+    subject,
+    recipientName,
+    items: [item],
+    daysBefore: preferences.days_before_expiry,
+    bodyHtml: tpl.bodyHtml,
+    legacyMessage: tpl.legacyMessage,
+  });
+
+  try {
+    await transporter.sendMail({ from, to, subject, html });
+    await admin.from('licensure_notification_log').insert({
+      applicant_id: applicantId,
+      license_type: licenseType,
+      expires_on: expiresOn,
+      recipient_email: to,
+      status: 'SENT',
+      error_message: null,
+    });
+    return { ok: true };
+  } catch (err) {
+    await admin.from('licensure_notification_log').insert({
+      applicant_id: applicantId,
+      license_type: licenseType,
+      expires_on: expiresOn,
+      recipient_email: to,
+      status: 'FAILED',
+      error_message: safeText(err?.message || err),
+    });
+    throw err;
+  }
+});
+
+ipcMain.handle('audit:logEvent', async (_event, payload) => {
+  const admin = getAdminSupabase();
+  await insertAuditEvent(admin, payload);
+  return { success: true };
+});
+
+ipcMain.handle('audit:getRecent', async (_event, payload) => {
+  const admin = getAdminSupabase();
+  const limit = Math.max(1, Math.min(50, Number(payload?.limit ?? 10)));
+  const sinceIso = safeText(payload?.sinceIso);
+
+  try {
+    let q = admin
+      .from('audit_log')
+      .select('id, created_at, actor_email, actor_user_id, action, page, entity, details', { count: 'exact' })
+      .order('created_at', { ascending: false })
+      .limit(limit);
+    if (sinceIso) q = q.gte('created_at', sinceIso);
+
+    const res = await q;
+    if (res.error) throw res.error;
+    return { rows: res.data ?? [], count: res.count ?? 0, missingTable: false };
+  } catch (e) {
+    const msg = safeText(e?.message || e);
+    if (isMissingAuditLogTableMessage(msg)) {
+      return { rows: [], count: 0, missingTable: true };
+    }
+    throw e;
+  }
+});
+
+ipcMain.handle('audit:getPage', async (_event, payload) => {
+  const admin = getAdminSupabase();
+  const pageSize = Math.max(5, Math.min(100, Number(payload?.pageSize ?? 25)));
+  const page = Math.max(1, Number(payload?.page ?? 1));
+  const from = (page - 1) * pageSize;
+  const to = from + pageSize - 1;
+
+  try {
+    const res = await admin
+      .from('audit_log')
+      .select('id, created_at, actor_email, actor_user_id, action, page, entity, details', { count: 'exact' })
+      .order('created_at', { ascending: false })
+      .range(from, to);
+    if (res.error) throw res.error;
+    return { rows: res.data ?? [], count: res.count ?? 0, missingTable: false };
+  } catch (e) {
+    const msg = safeText(e?.message || e);
+    if (isMissingAuditLogTableMessage(msg)) {
+      return { rows: [], count: 0, missingTable: true };
+    }
+    throw e;
+  }
 });
 
 ipcMain.handle('notifications:getLog', async (_event, payload) => {
@@ -718,7 +1034,40 @@ ipcMain.handle('notifications:getLog', async (_event, payload) => {
   if (status && status !== 'ALL') q = q.eq('status', status);
   const res = await q;
   if (res.error) throw res.error;
-  return { rows: res.data ?? [] };
+
+  // UI wants an email-level log, but the table stores one row per license item.
+  // Collapse rows into a single entry per recipient+status+minute bucket.
+  const rawRows = res.data ?? [];
+  const grouped = new Map();
+
+  for (const r of rawRows) {
+    const recipient = safeText(r.recipient_email) || '';
+    const st = safeText(r.status) || '';
+    const ms = Date.parse(String(r.created_at));
+    const minuteBucket = Number.isFinite(ms) ? String(Math.floor(ms / 60000)) : String(r.created_at).slice(0, 16);
+    const key = `${recipient}|${st}|${minuteBucket}`;
+
+    const existing = grouped.get(key);
+    if (!existing) {
+      grouped.set(key, {
+        ...r,
+        _types: new Set([safeText(r.license_type) || '']),
+      });
+      continue;
+    }
+    existing._types.add(safeText(r.license_type) || '');
+  }
+
+  const rows = Array.from(grouped.values()).map((r) => {
+    const types = Array.from(r._types).filter(Boolean);
+    const licenseType = types.length ? types.join(', ') : safeText(r.license_type);
+    // remove internal field
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { _types, ...rest } = r;
+    return { ...rest, license_type: licenseType };
+  });
+
+  return { rows };
 });
 
 ipcMain.handle('notifications:sendTestEmail', async (_event, payload) => {
@@ -732,6 +1081,7 @@ ipcMain.handle('notifications:sendTestEmail', async (_event, payload) => {
   const tpl = parseEmailTemplateNotes(email?.notes);
   const subject = safeText(payload?.subject) || computeEmailSubject(tpl.subject, 1) || 'Test: Expiring Licensure Notifications';
   const html = renderEmailHtml({
+    subject,
     recipientName: 'Test',
     items: [
       {

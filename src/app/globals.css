@@ -24,3 +24,13 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+@font-face {
+  font-family: "FaragonFont";
+  src: url("/fonts/ScholarBlock.ttf") format("truetype");
+  font-weight: bold;
+  font-style: normal;
+}
+
+.font-faragon {
+  font-family: "FaragonFont", sans-serif;
+}

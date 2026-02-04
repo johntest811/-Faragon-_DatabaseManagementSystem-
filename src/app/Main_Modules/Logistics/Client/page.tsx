@@ -108,7 +108,7 @@ export default function ClientsPage() {
         </div>
         <input
           placeholder="Search by contract, client, area, etc..."
-          className="flex-1 outline-none text-sm"
+          className="flex-1 outline-none text-sm text-black placeholder:text-gray-400"
           value={search}
           onChange={(e) => {
             setSearch(e.target.value);
@@ -119,7 +119,7 @@ export default function ClientsPage() {
 
       {/* Table */}
       <div className="relative overflow-x-auto rounded-2xl border">
-        <table className="w-full text-sm">
+        <table className="w-full text-sm text-black">
           <thead className="bg-gray-100 sticky top-0 z-10">
             <tr>
               {[
@@ -137,7 +137,7 @@ export default function ClientsPage() {
                 <th
                   key={key}
                   onClick={() => handleSort(key as keyof ClientRow)}
-                  className="px-4 py-3 text-left font-medium text-gray-700 border-b cursor-pointer select-none"
+                  className="px-4 py-3 text-left font-medium text-black border-b cursor-pointer select-none"
                 >
                   <div className="flex items-center gap-1">
                     {label}

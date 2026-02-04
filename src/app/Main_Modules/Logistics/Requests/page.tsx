@@ -107,14 +107,14 @@ export default function LogisticsRequestsPage() {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search equipment, name or Job ID..."
-            className="w-full pl-9 pr-3 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-yellow-300"
+            className="w-full pl-9 pr-3 py-2 border rounded-xl text-sm text-black placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-yellow-300"
           />
         </div>
 
         <select
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value)}
-          className="border rounded-xl px-3 py-2 text-sm"
+          className="border rounded-xl px-3 py-2 text-sm text-black"
         >
           <option value="All">All Status</option>
           <option value="Pending">Pending</option>
@@ -126,8 +126,8 @@ export default function LogisticsRequestsPage() {
 
       {/* Table */}
       <div className="relative overflow-x-auto rounded-2xl border">
-        <table className="w-full text-sm">
-          <thead className="bg-gray-50 border-b">
+        <table className="w-full text-sm text-black">
+          <thead className="bg-gray-50 border-b text-black">
             <tr>
               <th className="px-4 py-3 text-left">Timestamp & Date</th>
               <th className="px-4 py-3 text-left">Equipment</th>

@@ -136,7 +136,14 @@ function parseTemplateNotes(notesRaw: string | null | undefined): { subject: str
 	const raw = safeText(notesRaw);
 	if (!raw) return { subject: "", bodyHtml: "" };
 	try {
-		const parsed = JSON.parse(raw) as unknown;
+		let parsed = JSON.parse(raw) as unknown;
+		if (typeof parsed === "string") {
+			try {
+				parsed = JSON.parse(parsed) as unknown;
+			} catch {
+				// ignore
+			}
+		}
 		if (parsed && typeof parsed === "object") {
 			const p = parsed as { subject?: unknown; bodyHtml?: unknown };
 			return { subject: safeText(p.subject), bodyHtml: safeText(p.bodyHtml) };
@@ -700,6 +707,11 @@ export default function SettingsPage() {
 			}
 
 			if (electronAPI?.settings?.saveNotificationConfig) {
+				const session = await supabase.auth.getSession();
+				const actor = {
+					user_id: session.data.session?.user?.id ?? null,
+					email: session.data.session?.user?.email ?? null,
+				};
 				await electronAPI.settings.saveNotificationConfig({
 					email: {
 						gmail_user: cleanGmailUser,
@@ -717,6 +729,7 @@ export default function SettingsPage() {
 						timezone: safeText(timezone) || "Asia/Manila",
 					},
 					storeAppPassword: Boolean(storeAppPassword),
+					actor,
 				});
 
 				if (electronAPI?.settings?.saveLocalNotificationPrefs) {
@@ -1265,7 +1278,7 @@ export default function SettingsPage() {
 								{logs.length === 0 ? (
 									<div className="text-sm text-gray-600">No log entries loaded yet.</div>
 								) : (
-									<table className="w-full text-sm">
+									<table className="w-full text-sm text-black">
 										<thead>
 											<tr className="text-left border-b">
 												<th className="py-2 pr-3 text-black">When</th>
@@ -1277,10 +1290,10 @@ export default function SettingsPage() {
 										<tbody>
 											{logs.map((r) => (
 												<tr key={r.id} className="border-b">
-													<td className="py-2 pr-3 whitespace-nowrap">{String(r.created_at).slice(0, 19)}</td>
-													<td className="py-2 pr-3 whitespace-nowrap">{r.status}</td>
-													<td className="py-2 pr-3 whitespace-nowrap">{r.license_type}</td>
-													<td className="py-2 pr-3 whitespace-nowrap">{r.recipient_email ?? ""}</td>
+													<td className="py-2 pr-3 whitespace-nowrap text-black">{String(r.created_at).slice(0, 19)}</td>
+													<td className="py-2 pr-3 whitespace-nowrap text-black">{r.status}</td>
+													<td className="py-2 pr-3 whitespace-nowrap text-black">{r.license_type}</td>
+													<td className="py-2 pr-3 whitespace-nowrap text-black">{r.recipient_email ?? ""}</td>
 												</tr>
 											))}
 										</tbody>

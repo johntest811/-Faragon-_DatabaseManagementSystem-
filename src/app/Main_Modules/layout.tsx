@@ -16,11 +16,13 @@ import {
   Settings,
   Trash2,
   Bell,
-  Search,
   ChevronLeft,
   ChevronDown,
   Truck,
   Power,
+  ClipboardList,
+  Activity,
+  CreditCard,
 } from "lucide-react";
 
 type LayoutProps = Readonly<{ children: React.ReactNode }>;
@@ -34,6 +36,7 @@ const ALL_MENU = [
   { key: "logistics", name: "Logistics", href: "/Main_Modules/Logistics/", icon: Truck },
   { key: "trash", name: "Trash", href: "/Main_Modules/Trash/", icon: Trash2 },
   { key: "roles", name: "Roles", href: "/Main_Modules/Roles/", icon: Shield },
+  { key: "audit", name: "Audit", href: "/Main_Modules/Audit/", icon: ClipboardList },
   { key: "settings", name: "Settings", href: "/Main_Modules/Settings/", icon: Settings },
 ] as const;
 
@@ -50,12 +53,123 @@ export default function MainModulesLayout({ children }: LayoutProps) {
   const router = useRouter();
   const pathname = usePathname() ?? "";
   const [collapsed, setCollapsed] = useState(false);
-  const [workforceOpen, setWorkforceOpen] = useState(true);
+  const [workforceOpen, setWorkforceOpen] = useState(false);
   const [workforceFlyoutOpen, setWorkforceFlyoutOpen] = useState(false);
-  const [search, setSearch] = useState("");
+  const [activityOpen, setActivityOpen] = useState(false);
+  const [expiringOpen, setExpiringOpen] = useState(false);
+  const [activityCount, setActivityCount] = useState(0);
+  const [activityMissingTable, setActivityMissingTable] = useState(false);
+  const [resendingKey, setResendingKey] = useState<string | null>(null);
+  const [recentActivity, setRecentActivity] = useState<
+    Array<{ id: string; created_at: string; actor_email: string | null; action: string; page: string | null }>
+  >([]);
+  const [expiringCount, setExpiringCount] = useState(0);
+  const [expiringRows, setExpiringRows] = useState<
+    Array<{
+      applicant_id: string;
+      first_name: string | null;
+      last_name: string | null;
+      license_type: string;
+      expires_on: string;
+      days_until_expiry: number;
+      sent_count?: number;
+      last_sent_at?: string | null;
+    }>
+  >([]);
   const { role: sessionRole } = useAuthRole();
   const { modules: myModules } = useMyModules();
   useRealtimeRefresh(["applicants"]);
+
+  const api = (globalThis as unknown as { electronAPI?: any }).electronAPI;
+
+  useEffect(() => {
+    // Initialize "last seen" timestamp for activity notifications.
+    try {
+      const key = "auditLastSeenAt";
+      if (!localStorage.getItem(key)) {
+        localStorage.setItem(key, new Date().toISOString());
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  useEffect(() => {
+    // Log navigation events to audit (desktop only).
+    let cancelled = false;
+    async function logNav() {
+      if (!api?.audit?.logEvent) return;
+      try {
+        const session = await supabase.auth.getSession();
+        if (cancelled) return;
+        await api.audit.logEvent({
+          actor_user_id: session.data.session?.user?.id ?? null,
+          actor_email: session.data.session?.user?.email ?? null,
+          action: "NAVIGATE",
+          page: pathname,
+        });
+      } catch {
+        // ignore
+      }
+    }
+    if (pathname) logNav();
+    return () => {
+      cancelled = true;
+    };
+  }, [api, pathname]);
+
+  useEffect(() => {
+    // Close dropdowns when clicking outside.
+    function onDocDown(e: MouseEvent) {
+      const t = e.target as HTMLElement | null;
+      if (!t) return;
+      if (t.closest?.("[data-activity-menu]") || t.closest?.("[data-expiring-menu]")) return;
+      setActivityOpen(false);
+      setExpiringOpen(false);
+    }
+    document.addEventListener("mousedown", onDocDown);
+    return () => document.removeEventListener("mousedown", onDocDown);
+  }, []);
+
+  async function refreshActivity() {
+    if (!api?.audit?.getRecent) return;
+    try {
+      const key = "auditLastSeenAt";
+      const sinceIso = (() => {
+        try {
+          return localStorage.getItem(key) || "";
+        } catch {
+          return "";
+        }
+      })();
+
+      const res = await api.audit.getRecent({ limit: 8, sinceIso });
+      setActivityMissingTable(Boolean(res?.missingTable));
+      setActivityCount(Number(res?.count ?? 0));
+
+      const recentRes = await api.audit.getRecent({ limit: 8 });
+      setRecentActivity((recentRes?.rows ?? []) as any);
+    } catch {
+      // ignore
+    }
+  }
+
+  async function refreshExpiring() {
+    if (!api?.notifications?.getExpiringSummary) return;
+    try {
+      const res = await api.notifications.getExpiringSummary({ limit: 50 });
+      setExpiringCount(Number(res?.count ?? 0));
+      setExpiringRows((res?.rows ?? []) as any);
+    } catch {
+      // ignore
+    }
+  }
+
+  useEffect(() => {
+    refreshActivity();
+    refreshExpiring();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [api]);
 
   const fromParam = useMemo(() => {
     if (typeof window === "undefined") return null;
@@ -136,6 +250,7 @@ export default function MainModulesLayout({ children }: LayoutProps) {
       if (sessionRole === "superadmin" || sessionRole === "admin") {
         fromDb.add("reassign");
         fromDb.add("retired");
+        fromDb.add("audit");
       }
       return fromDb;
     }
@@ -144,7 +259,7 @@ export default function MainModulesLayout({ children }: LayoutProps) {
     if (!sessionRole) return new Set<string>();
     if (sessionRole === "superadmin") return new Set(ALL_MENU.map((m) => m.key));
     if (sessionRole === "admin") {
-      return new Set(["dashboard", "employees", "reassign", "retired", "archive", "logistics", "trash", "settings", "roles"]);
+      return new Set(["dashboard", "employees", "reassign", "retired", "archive", "logistics", "trash", "settings", "roles", "audit"]);
     }
     return new Set(["dashboard", "employees", "archive"]);
   }, [sessionRole, myModules]);
@@ -367,14 +482,171 @@ export default function MainModulesLayout({ children }: LayoutProps) {
               </div>
 
               <div className="flex items-center gap-3">
-                <div className="hidden md:flex items-center gap-2 bg-white border rounded-full px-4 py-2 shadow-sm">
-                  <Search className="w-4 h-4 text-gray-500" />
-                  <input
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                    placeholder="Search Anything"
-                    className="outline-none text-sm w-64"
-                  />
+                <div className="relative" data-activity-menu>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActivityOpen((v) => !v);
+                      setExpiringOpen(false);
+                      refreshActivity();
+                    }}
+                    className="h-10 px-3 rounded-xl bg-[#FFDA03] text-black flex items-center gap-2"
+                    aria-label="Activity"
+                  >
+                    <Activity className="w-5 h-5" />
+                    <span className="text-[11px] font-bold bg-red-600 text-white px-2 py-0.5 rounded-full leading-none">
+                      {activityCount}
+                    </span>
+                  </button>
+
+                  {activityOpen ? (
+                    <div className="absolute right-0 mt-2 w-[360px] max-w-[90vw] rounded-2xl border bg-white shadow-lg overflow-hidden">
+                      <div className="px-4 py-3 border-b flex items-center justify-between">
+                        <div className="text-sm font-semibold text-black">Recent Activity</div>
+                        <Link
+                          href="/Main_Modules/Audit/"
+                          className="text-xs text-blue-600 hover:underline"
+                          onClick={() => setActivityOpen(false)}
+                        >
+                          View all
+                        </Link>
+                      </div>
+
+                      {activityMissingTable ? (
+                        <div className="px-4 py-3 text-sm text-yellow-800 bg-yellow-50">
+                          Install the audit table (Supabase_audit_log.sql).
+                        </div>
+                      ) : null}
+
+                      <div className="max-h-[320px] overflow-auto">
+                        {recentActivity.length ? (
+                          recentActivity.map((r) => (
+                            <div key={r.id} className="px-4 py-3 border-b last:border-b-0">
+                              <div className="text-xs text-gray-500">{new Date(r.created_at).toLocaleString()}</div>
+                              <div className="text-sm text-black font-medium">{r.action}</div>
+                              <div className="text-xs text-gray-600">{r.page || "—"}</div>
+                              <div className="text-[11px] text-gray-500">{r.actor_email || "—"}</div>
+                            </div>
+                          ))
+                        ) : (
+                          <div className="px-4 py-6 text-sm text-gray-500">No activity yet.</div>
+                        )}
+                      </div>
+
+                      <div className="px-4 py-3 border-t bg-gray-50">
+                        <button
+                          type="button"
+                          className="text-xs text-gray-700 hover:underline"
+                          onClick={() => {
+                            try {
+                              localStorage.setItem("auditLastSeenAt", new Date().toISOString());
+                            } catch {
+                              // ignore
+                            }
+                            setActivityCount(0);
+                            setActivityOpen(false);
+                          }}
+                        >
+                          Mark as seen
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+
+                <div className="relative" data-expiring-menu>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setExpiringOpen((v) => !v);
+                      setActivityOpen(false);
+                      refreshExpiring();
+                    }}
+                    className="h-10 px-3 rounded-xl bg-[#FFDA03] text-black flex items-center gap-2"
+                    aria-label="Expiring Licenses"
+                  >
+                    <CreditCard className="w-5 h-5" />
+                    <span className="text-[11px] font-bold bg-red-600 text-white px-2 py-0.5 rounded-full leading-none">
+                      {expiringCount}
+                    </span>
+                  </button>
+
+                  {expiringOpen ? (
+                    <div className="absolute right-0 mt-2 w-[420px] max-w-[92vw] rounded-2xl border bg-white shadow-lg overflow-hidden">
+                      <div className="px-4 py-3 border-b flex items-center justify-between">
+                        <div className="text-sm font-semibold text-black">Expiring Licenses</div>
+                        <Link
+                          href="/Main_Modules/Settings/"
+                          className="text-xs text-blue-600 hover:underline"
+                          onClick={() => setExpiringOpen(false)}
+                        >
+                          Settings
+                        </Link>
+                      </div>
+
+                      <div className="max-h-[360px] overflow-auto">
+                        {expiringRows.length ? (
+                          expiringRows.map((r, idx) => (
+                            <div key={`${r.applicant_id}:${r.license_type}:${idx}`} className="px-4 py-3 border-b last:border-b-0">
+                              <div className="flex items-center justify-between gap-3">
+                                <div className="text-sm font-medium text-black">{r.license_type}</div>
+                                <div className="text-xs text-gray-600 whitespace-nowrap">{r.expires_on}</div>
+                              </div>
+                              <div className="text-xs text-gray-600">
+                                {(r.first_name || r.last_name)
+                                  ? `${r.first_name ?? ""} ${r.last_name ?? ""}`.trim()
+                                  : r.applicant_id}
+                              </div>
+                              <div className="mt-1 flex items-center justify-between gap-3">
+                                <div className="text-[11px] text-gray-500">Days: {r.days_until_expiry}</div>
+                                <div className="flex items-center gap-2">
+                                  <span
+                                    className={
+                                      (Number(r.sent_count ?? 0) > 0)
+                                        ? "text-[11px] px-2 py-0.5 rounded-full bg-green-50 text-green-700 border border-green-200"
+                                        : "text-[11px] px-2 py-0.5 rounded-full bg-gray-50 text-gray-700 border"
+                                    }
+                                  >
+                                    {(Number(r.sent_count ?? 0) > 0) ? `Sent ${r.sent_count}x` : "Not sent"}
+                                  </span>
+
+                                  <button
+                                    type="button"
+                                    disabled={!api?.notifications?.resendLicensureNotice || resendingKey === `${r.applicant_id}:${r.license_type}:${r.expires_on}`}
+                                    className="text-[11px] px-2 py-0.5 rounded-full border bg-white text-gray-800 hover:bg-gray-50 disabled:opacity-50"
+                                    onClick={async () => {
+                                      const k = `${r.applicant_id}:${r.license_type}:${r.expires_on}`;
+                                      if (!api?.notifications?.resendLicensureNotice) return;
+                                      try {
+                                        setResendingKey(k);
+                                        await api.notifications.resendLicensureNotice({
+                                          applicant_id: r.applicant_id,
+                                          license_type: r.license_type,
+                                          expires_on: r.expires_on,
+                                        });
+                                        await refreshExpiring();
+                                      } catch {
+                                        // ignore (Electron main logs failures)
+                                      } finally {
+                                        setResendingKey(null);
+                                      }
+                                    }}
+                                  >
+                                    Resend
+                                  </button>
+                                </div>
+                              </div>
+                              {r.last_sent_at ? (
+                                <div className="text-[11px] text-gray-400 mt-1">Last sent: {new Date(r.last_sent_at).toLocaleString()}</div>
+                              ) : null}
+                            </div>
+                          ))
+                        ) : (
+                          <div className="px-4 py-6 text-sm text-gray-500">No expiring licenses found.</div>
+                        )}
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
 
                 {/* <button
@@ -397,18 +669,6 @@ export default function MainModulesLayout({ children }: LayoutProps) {
                   <span className="text-xs font-semibold text-gray-600">AD</span>
                 </div>
               </div>
-            </div>
-          </div>
-
-          <div className="px-6 pb-4 pt-4 md:hidden">
-            <div className="flex items-center gap-2 bg-white border rounded-full px-4 py-2 shadow-sm">
-              <Search className="w-4 h-4 text-gray-500" />
-              <input
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search Anything"
-                className="outline-none text-sm w-full"
-              />
             </div>
           </div>
         </header>

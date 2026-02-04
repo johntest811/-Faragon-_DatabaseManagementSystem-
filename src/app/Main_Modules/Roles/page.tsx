@@ -8,6 +8,7 @@ import { useAuthRole } from "../../Client/useRbac";
 export default function RolesPage() {
 	const router = useRouter();
 	const { role } = useAuthRole();
+	const api = (globalThis as unknown as { electronAPI?: any }).electronAPI;
 
 	type RoleRow = { role_id: string; role_name: string };
 	type ModuleRow = { module_key: string; display_name: string };
@@ -56,6 +57,22 @@ export default function RolesPage() {
 	}, []);
 
 	const canManage = role === "superadmin";
+
+	async function logAudit(action: string, details?: unknown) {
+		if (!api?.audit?.logEvent) return;
+		try {
+			const session = await supabase.auth.getSession();
+			await api.audit.logEvent({
+				actor_user_id: session.data.session?.user?.id ?? null,
+				actor_email: session.data.session?.user?.email ?? null,
+				action,
+				page: "/Main_Modules/Roles/",
+				details: details && typeof details === "object" ? details : null,
+			});
+		} catch {
+			// ignore
+		}
+	}
 
 	const load = useCallback(async () => {
 		setError("");
@@ -125,6 +142,7 @@ export default function RolesPage() {
 		if (insErr) return setError(insErr.message);
 		setNewRoleName("");
 		setSuccess("Role created.");
+		logAudit("RBAC_CREATE_ROLE", { role_name: name });
 		load();
 	}
 
@@ -149,6 +167,7 @@ export default function RolesPage() {
 		}
 
 		setSuccess("Access updated.");
+		logAudit("RBAC_TOGGLE_ACCESS", { role_id: roleId, module_key: moduleKey, enabled: !current });
 		load();
 	}
 
@@ -181,6 +200,7 @@ export default function RolesPage() {
 			setAccountUsername("");
 			setAccountPassword("");
 			setAccountFullName("");
+			logAudit("ADMIN_CREATE_ACCOUNT", { username: accountUsername.trim(), role: accountRole.trim().toLowerCase() });
 		} catch (e: unknown) {
 			setError(e instanceof Error ? e.message : "Failed to create account");
 		} finally {
@@ -200,6 +220,7 @@ export default function RolesPage() {
 			.eq("id", a.id);
 		if (upErr) return setError(upErr.message);
 		setSuccess("Account updated.");
+		logAudit("ADMIN_TOGGLE_ACCOUNT_ACTIVE", { id: a.id, username: a.username, is_active: !a.is_active });
 	}
 
 	async function deleteAccount(a: AdminRow) {
@@ -213,6 +234,7 @@ export default function RolesPage() {
 		const { error: delErr } = await supabase.from("admins").delete().eq("id", a.id);
 		if (delErr) return setError(delErr.message);
 		setSuccess("Account deleted.");
+		logAudit("ADMIN_DELETE_ACCOUNT", { id: a.id, username: a.username });
 	}
 
 	return (
