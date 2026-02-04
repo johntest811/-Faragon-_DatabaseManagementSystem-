@@ -125,7 +125,7 @@ export default function LogisticsRequestsPage() {
       </div>
 
       {/* Table */}
-      <div className="overflow-x-auto border rounded-xl">
+      <div className="relative overflow-x-auto rounded-2xl border">
         <table className="w-full text-sm">
           <thead className="bg-gray-50 border-b">
             <tr>

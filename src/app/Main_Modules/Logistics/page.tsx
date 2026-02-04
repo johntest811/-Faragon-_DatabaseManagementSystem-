@@ -19,6 +19,11 @@ export default function LogisticsPage() {
       description: "Coming soon.",
       href: "/Main_Modules/Logistics/Reports/",
     },
+    {
+      title: "Clients",
+      description: "Manage client information and details.",
+      href: "/Main_Modules/Logistics/Client/",
+    },
   ];
 
   return (

@@ -1,156 +1,238 @@
-'use client';
+"use client";
 
-import { useState } from 'react';
-import { Search, MoreVertical } from 'lucide-react';
+import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { Search, ArrowUpDown } from "lucide-react";
 
-const mockData = [
+type InventoryRow = {
+  id: string;
+  detachment: string;
+  equipment: string;
+  control: string;
+  serial: string;
+  model: string;
+  assigned: string;
+  status: "Active" | "Available" | "Issued";
+};
+
+const DATA: InventoryRow[] = [
   {
-    detachment: 'HQ',
-    equipment: 'Handheld Radio',
-    control: 'CTRL-001',
-    serial: 'SN-98321',
-    model: 'Motorola XPR 3300',
-    assigned: 'Juan Dela Cruz',
-    remarks: 'Active',
+    id: "1",
+    detachment: "HQ",
+    equipment: "Handheld Radio",
+    control: "CTRL-001",
+    serial: "SN-98321",
+    model: "Motorola XPR 3300",
+    assigned: "Juan Dela Cruz",
+    status: "Active",
   },
   {
-    detachment: 'Warehouse',
-    equipment: 'CCTV Camera',
-    control: 'CTRL-014',
-    serial: 'SN-55521',
-    model: 'Hikvision DS-2CD',
-    assigned: 'Unassigned',
-    remarks: 'Available',
+    id: "2",
+    detachment: "Warehouse",
+    equipment: "CCTV Camera",
+    control: "CTRL-014",
+    serial: "SN-55521",
+    model: "Hikvision DS-2CD",
+    assigned: "Unassigned",
+    status: "Available",
   },
   {
-    detachment: 'HQ',
-    equipment: 'Metal Detector',
-    control: 'CTRL-033',
-    serial: 'SN-77231',
-    model: 'Garrett Pro',
-    assigned: 'Pedro Santos',
-    remarks: 'Issued',
+    id: "3",
+    detachment: "HQ",
+    equipment: "Metal Detector",
+    control: "CTRL-033",
+    serial: "SN-77231",
+    model: "Garrett Pro",
+    assigned: "Pedro Santos",
+    status: "Issued",
   },
   {
-    detachment: 'Gate 1',
-    equipment: 'Flashlight',
-    control: 'CTRL-102',
-    serial: 'SN-33922',
-    model: 'Streamlight',
-    assigned: 'Maria Lopez',
-    remarks: 'Active',
+    id: "4",
+    detachment: "Gate 1",
+    equipment: "Flashlight",
+    control: "CTRL-102",
+    serial: "SN-33922",
+    model: "Streamlight",
+    assigned: "Maria Lopez",
+    status: "Active",
   },
 ];
 
-export default function ItemsPage() {
-  const [search, setSearch] = useState('');
+export default function LogisticsInventoryPage() {
+  const router = useRouter();
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("All");
+  const [sortKey, setSortKey] = useState<keyof InventoryRow>("equipment");
+  const [sortAsc, setSortAsc] = useState(true);
+  const [page, setPage] = useState(1);
+  const [loading, setLoading] = useState(true);
 
-  const filteredData = mockData.filter((row) =>
-    Object.values(row).some((val) =>
-      val.toLowerCase().includes(search.toLowerCase())
-    )
-  );
+  const pageSize = 4;
+
+  useEffect(() => {
+    const t = setTimeout(() => setLoading(false), 1200);
+    return () => clearTimeout(t);
+  }, []);
+
+  const filtered = DATA.filter((item) => {
+    const matchesSearch = Object.values(item)
+      .join(" ")
+      .toLowerCase()
+      .includes(search.toLowerCase());
+    const matchesStatus =
+      statusFilter === "All" || item.status === statusFilter;
+    return matchesSearch && matchesStatus;
+  });
+
+  const sorted = [...filtered].sort((a, b) => {
+    const valA = a[sortKey].toString().toLowerCase();
+    const valB = b[sortKey].toString().toLowerCase();
+    return sortAsc ? valA.localeCompare(valB) : valB.localeCompare(valA);
+  });
+
+  const totalPages = Math.ceil(sorted.length / pageSize);
+  const paginated = sorted.slice((page - 1) * pageSize, page * pageSize);
+
+  function handleSort(key: keyof InventoryRow) {
+    if (key === sortKey) setSortAsc(!sortAsc);
+    else {
+      setSortKey(key);
+      setSortAsc(true);
+    }
+  }
 
   return (
-    <div className="p-6 bg-gray-100 min-h-screen">
-      <div className="bg-white rounded-xl shadow-sm p-6">
-        {/* Header */}
-        <div className="flex justify-between items-center mb-6">
-          <div>
-            <h1 className="text-xl font-bold">All Items</h1>
-            <p className="text-sm text-gray-500">Logistics Inventory</p>
+    <section className="bg-white rounded-3xl border p-6 space-y-5">
+      {/* Search + Filter */}
+      <div className="flex flex-col sm:flex-row gap-4 justify-between">
+        <div className="flex items-center gap-3 border rounded-2xl px-4 py-3 max-w-xl w-full">
+          <div className="h-10 w-10 rounded-xl bg-[#FFDA03] flex items-center justify-center">
+            <Search className="w-5 h-5 text-black" />
           </div>
-          <button className="px-4 py-2 rounded-lg bg-black text-white hover:bg-gray-800">
-            + Add Item
+          <input
+            placeholder="Search by equipment, serial, assigned, etc..."
+            className="flex-1 outline-none text-sm"
+            value={search}
+            onChange={(e) => {
+              setSearch(e.target.value);
+              setPage(1);
+            }}
+          />
+        </div>
+
+        <select
+          className="border rounded-xl px-4 py-2 text-sm"
+          value={statusFilter}
+          onChange={(e) => {
+            setStatusFilter(e.target.value);
+            setPage(1);
+          }}
+        >
+          <option value="All">All Status</option>
+          <option value="Active">Active</option>
+          <option value="Available">Available</option>
+          <option value="Issued">Issued</option>
+        </select>
+      </div>
+
+      {/* Table */}
+      <div className="relative overflow-x-auto rounded-2xl border">
+        <table className="w-full text-sm">
+          <thead className="bg-gray-100 sticky top-0 z-10">
+            <tr>
+              {[
+                ["detachment", "Detachment"],
+                ["equipment", "Equipment"],
+                ["control", "Control #"],
+                ["serial", "Serial"],
+                ["model", "Model"],
+                ["assigned", "Assigned To"],
+                ["status", "Status"],
+              ].map(([key, label]) => (
+                <th
+                  key={key}
+                  onClick={() => handleSort(key as keyof InventoryRow)}
+                  className="px-4 py-3 text-left font-medium text-gray-700 border-b cursor-pointer select-none"
+                >
+                  <div className="flex items-center gap-1">
+                    {label}
+                    <ArrowUpDown className="w-3 h-3" />
+                  </div>
+                </th>
+              ))}
+            </tr>
+          </thead>
+
+          <tbody>
+            {loading
+              ? Array.from({ length: pageSize }).map((_, i) => (
+                  <tr key={i} className="animate-pulse">
+                    {Array.from({ length: 7 }).map((_, j) => (
+                      <td key={j} className="px-4 py-4 border-b">
+                        <div className="h-4 bg-gray-200 rounded w-full" />
+                      </td>
+                    ))}
+                  </tr>
+                ))
+              : paginated.map((item) => (
+                  <tr
+                    key={item.id}
+                    onClick={() =>
+                      router.push(
+                        "/Main_Modules/Logistics/Inventory/" + item.id
+                      )
+                    }
+                    className="hover:bg-yellow-50 cursor-pointer"
+                  >
+                    <td className="px-4 py-3 border-b">{item.detachment}</td>
+                    <td className="px-4 py-3 border-b font-medium">
+                      {item.equipment}
+                    </td>
+                    <td className="px-4 py-3 border-b">{item.control}</td>
+                    <td className="px-4 py-3 border-b">{item.serial}</td>
+                    <td className="px-4 py-3 border-b">{item.model}</td>
+                    <td className="px-4 py-3 border-b">{item.assigned}</td>
+                    <td className="px-4 py-3 border-b">
+                      <span
+                        className={`px-3 py-1 rounded-full text-xs font-medium ${
+                          item.status === "Active"
+                            ? "bg-green-100 text-green-700"
+                            : item.status === "Available"
+                            ? "bg-gray-100 text-gray-600"
+                            : "bg-blue-100 text-blue-700"
+                        }`}
+                      >
+                        {item.status}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Pagination */}
+      <div className="flex justify-between items-center text-sm">
+        <span>
+          Page {page} of {totalPages}
+        </span>
+        <div className="flex gap-2">
+          <button
+            disabled={page === 1}
+            onClick={() => setPage((p) => p - 1)}
+            className="px-3 py-1 border rounded-lg disabled:opacity-40"
+          >
+            Prev
+          </button>
+          <button
+            disabled={page === totalPages}
+            onClick={() => setPage((p) => p + 1)}
+            className="px-3 py-1 border rounded-lg disabled:opacity-40"
+          >
+            Next
           </button>
         </div>
-
-        {/* Search Card */}
-        <div className="mb-4">
-          <div className="flex items-start gap-3 bg-gray-50 p-4 rounded-xl border">
-            <div className="h-10 w-10 rounded-xl bg-[#FFDA03] flex items-center justify-center shrink-0">
-              <Search className="w-5 h-5 text-black" />
-            </div>
-
-            <div className="flex-1 min-w-0">
-              <div className="text-xs text-gray-500">Search Inventory</div>
-              <input
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search by equipment, serial, assigned, etc..."
-                className="w-full bg-transparent outline-none text-sm font-semibold text-gray-900"
-              />
-            </div>
-          </div>
-        </div>
-
-        {/* Table */}
-        <div className="overflow-x-auto border rounded-xl">
-          <table className="w-full text-sm text-left">
-            <thead className="bg-gray-50 border-b">
-              <tr>
-                <th className="px-3 py-2">Detachment</th>
-                <th className="px-3 py-2">Equipment</th>
-                <th className="px-3 py-2">Control #</th>
-                <th className="px-3 py-2">Serial</th>
-                <th className="px-3 py-2">Model</th>
-                <th className="px-3 py-2">Assigned To</th>
-                <th className="px-3 py-2">Status</th>
-                <th className="px-3 py-2">Action</th>
-              </tr>
-            </thead>
-
-            <tbody>
-              {filteredData.map((row, index) => (
-                <tr
-                  key={index}
-                  className="border-b hover:bg-gray-50 transition"
-                >
-                  <td className="px-3 py-2">{row.detachment}</td>
-                  <td className="px-3 py-2 font-medium">
-                    {row.equipment}
-                  </td>
-                  <td className="px-3 py-2">{row.control}</td>
-                  <td className="px-3 py-2">{row.serial}</td>
-                  <td className="px-3 py-2">{row.model}</td>
-                  <td className="px-3 py-2">{row.assigned}</td>
-                  <td className="px-3 py-2">
-                    <span
-                      className={`px-2 py-1 rounded-full text-xs ${
-                        row.remarks === 'Active'
-                          ? 'bg-green-100 text-green-700'
-                          : row.remarks === 'Issued'
-                          ? 'bg-blue-100 text-blue-700'
-                          : 'bg-gray-100 text-gray-700'
-                      }`}
-                    >
-                      {row.remarks}
-                    </span>
-                  </td>
-
-                  <td className="px-3 py-2 text-center">
-                    <button className="px-3 py-1 text-xs rounded-lg bg-black text-white hover:bg-gray-800 flex items-center gap-1 justify-center">
-                      <MoreVertical className="w-4 h-4" />
-                      Action
-                    </button>
-                  </td>
-                </tr>
-              ))}
-
-              {filteredData.length === 0 && (
-                <tr>
-                  <td
-                    colSpan={8}
-                    className="text-center py-6 text-gray-400"
-                  >
-                    No items found
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
       </div>
-    </div>
+    </section>
   );
 }
