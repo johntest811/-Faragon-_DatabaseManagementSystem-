@@ -83,6 +83,17 @@ CREATE TABLE public.applicants (
   CONSTRAINT applicants_trashed_by_fkey FOREIGN KEY (trashed_by) REFERENCES public.admins(id),
   CONSTRAINT applicants_retired_by_fkey FOREIGN KEY (retired_by) REFERENCES public.admins(id)
 );
+CREATE TABLE public.audit_log (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  actor_user_id uuid,
+  actor_email text,
+  action text NOT NULL,
+  page text,
+  entity text,
+  details jsonb,
+  CONSTRAINT audit_log_pkey PRIMARY KEY (id)
+);
 CREATE TABLE public.biodata (
   applicant_id uuid NOT NULL,
   applicant_form bytea,

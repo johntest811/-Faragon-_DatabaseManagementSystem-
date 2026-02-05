@@ -38,6 +38,58 @@ type ApplicantInsert = {
   tin_number?: string | null;
 };
 
+type LicensureUpsert = {
+  applicant_id: string;
+  security_license_number?: string | null;
+  security_expiration?: string | null;
+};
+
+const TEMPLATE_HEADERS = [
+  "Timestamp",
+  "Last Name",
+  "First Name",
+  "Middle Name",
+  "Date of Birth",
+  "Age",
+  "Gender",
+  "Educational Attainment",
+  "Date Hired in FSAI",
+  "Security Licensed Number",
+  "LESP Expired Date",
+  "POSITION",
+  "SSS Number",
+  "Pag-Ibig Fund Number",
+  "Philhealth Number",
+  "TIN",
+  "DETACHMENT",
+  "Your Contact Number",
+  "Your Email Address",
+  "COMPLETE PRESENT ADDRESS (House # Street Barangay City)",
+  "COMPLETE PROVINCE ADDRESS (House # Street Barangay City)",
+  "Contact Person Incase of Emergency",
+  "Contact Number",
+  "STATUS",
+] as const;
+
+function downloadBlob(filename: string, blob: Blob) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function toCsvLine(cells: (string | number | null | undefined)[]) {
+  const esc = (v: unknown) => {
+    const s = String(v ?? "");
+    const needs = /[\n\r,\"]/g.test(s);
+    const out = s.replace(/\"/g, '""');
+    return needs ? `"${out}"` : out;
+  };
+  return cells.map(esc).join(",");
+}
+
 function normKey(input: string) {
   return String(input || "")
     .trim()
@@ -55,11 +107,9 @@ function toText(v: unknown): string {
   return String(v);
 }
 
-const NA_TEXT = "N/A";
-
-function toTextOrNA(v: unknown): string {
+function toNullableText(v: unknown): string | null {
   const s = toText(v).trim();
-  return s ? s : NA_TEXT;
+  return s ? s : null;
 }
 
 function isRowEffectivelyEmpty(row: RowObject) {
@@ -134,8 +184,8 @@ function rowToApplicant(row: RowObject): { payload: ApplicantInsert | null; erro
 
   // Keep imports tolerant: if required identity columns are missing, fill with N/A
   // so the record can still be inserted.
-  const firstName = toTextOrNA(pick(row, ["first_name", "first name", "firstname"]));
-  const lastName = toTextOrNA(pick(row, ["last_name", "last name", "lastname"]));
+  const firstName = toText(pick(row, ["first_name", "first name", "firstname"])).trim() || "N/A";
+  const lastName = toText(pick(row, ["last_name", "last name", "lastname"])).trim() || "N/A";
 
   // Disambiguate "Contact Number": if the sheet has "Your Contact Number",
   // assume plain "Contact Number" belongs to the emergency contact section.
@@ -147,15 +197,15 @@ function rowToApplicant(row: RowObject): { payload: ApplicantInsert | null; erro
 
   const payload: ApplicantInsert = {
     first_name: firstName,
-    middle_name: toTextOrNA(pick(row, ["middle_name", "middle name", "middlename"])),
+    middle_name: toNullableText(pick(row, ["middle_name", "middle name", "middlename"])),
     last_name: lastName,
-    extn_name: toTextOrNA(pick(row, ["extn_name", "extn", "suffix"])),
+    extn_name: toNullableText(pick(row, ["extn_name", "extn", "suffix"])),
 
-    gender: toTextOrNA(pick(row, ["gender", "sex"])),
+    gender: toNullableText(pick(row, ["gender", "sex"])),
     birth_date: toDateYmd(pick(row, ["birth_date", "birthdate", "date of birth", "dob"])),
     age: toNullableInt(pick(row, ["age"])),
 
-    client_contact_num: toTextOrNA(
+    client_contact_num: toNullableText(
       pick(row, [
         "client_contact_num",
         "your contact number",
@@ -165,9 +215,9 @@ function rowToApplicant(row: RowObject): { payload: ApplicantInsert | null; erro
         ...(hasYourContactHeader ? [] : ["contact number"]),
       ])
     ),
-    client_email: toTextOrNA(pick(row, ["client_email", "your email address", "email address", "email"])),
+    client_email: toNullableText(pick(row, ["client_email", "your email address", "email address", "email"])),
 
-    present_address: toTextOrNA(
+    present_address: toNullableText(
       pick(row, [
         "present_address",
         "present address",
@@ -176,7 +226,7 @@ function rowToApplicant(row: RowObject): { payload: ApplicantInsert | null; erro
         "address",
       ])
     ),
-    province_address: toTextOrNA(
+    province_address: toNullableText(
       pick(row, [
         "province_address",
         "province address",
@@ -185,7 +235,7 @@ function rowToApplicant(row: RowObject): { payload: ApplicantInsert | null; erro
       ])
     ),
 
-    emergency_contact_person: toTextOrNA(
+    emergency_contact_person: toNullableText(
       pick(row, [
         "emergency_contact_person",
         "emergency contact person",
@@ -193,7 +243,7 @@ function rowToApplicant(row: RowObject): { payload: ApplicantInsert | null; erro
         "contact person in case of emergency",
       ])
     ),
-    emergency_contact_num: toTextOrNA(
+    emergency_contact_num: toNullableText(
       pick(row, [
         "emergency_contact_num",
         "emergency contact num",
@@ -204,23 +254,52 @@ function rowToApplicant(row: RowObject): { payload: ApplicantInsert | null; erro
       ])
     ),
 
-    education_attainment: toTextOrNA(pick(row, ["education_attainment", "education", "educational attainment"])),
+    education_attainment: toNullableText(pick(row, ["education_attainment", "education", "educational attainment"])),
     date_hired_fsai: toDateYmd(pick(row, ["date_hired_fsai", "date hired", "date hired fsai", "date hired in fsai"])),
 
-    client_position: toTextOrNA(pick(row, ["client_position", "position"])),
-    detachment: toTextOrNA(pick(row, ["detachment"])),
+    client_position: toNullableText(pick(row, ["client_position", "position"])),
+    detachment: toNullableText(pick(row, ["detachment"])),
     status: normalizeStatus(pick(row, ["status"])),
 
-    security_licensed_num: toTextOrNA(
+    security_licensed_num: toNullableText(
       pick(row, ["security_licensed_num", "security licensed num", "security licensed number", "security licensed number "])
     ),
-    sss_number: toTextOrNA(pick(row, ["sss_number", "sss number", "sss no", "sss"])),
-    pagibig_number: toTextOrNA(pick(row, ["pagibig_number", "pag ibig fund number", "pag ibig", "pagibig"])),
-    philhealth_number: toTextOrNA(pick(row, ["philhealth_number", "philhealth number", "philhealth", "phil health"])),
-    tin_number: toTextOrNA(pick(row, ["tin_number", "tin", "tin "])),
+    sss_number: toNullableText(pick(row, ["sss_number", "sss number", "sss no", "sss"])),
+    pagibig_number: toNullableText(pick(row, ["pagibig_number", "pag ibig fund number", "pag ibig", "pagibig"])),
+    philhealth_number: toNullableText(pick(row, ["philhealth_number", "philhealth number", "philhealth", "phil health"])),
+    tin_number: toNullableText(pick(row, ["tin_number", "tin", "tin "])),
   };
 
   return { payload };
+}
+
+function rowToLicensure(row: RowObject) {
+  const securityLicenseNumber = toNullableText(
+    pick(row, [
+      "security licensed number",
+      "security licensed num",
+      "security license number",
+      "security_licensed_num",
+      "security_licensed_number",
+    ])
+  );
+
+  const securityExpiration = toDateYmd(
+    pick(row, [
+      "lesp expired date",
+      "lesp expiry date",
+      "lesp expiration",
+      "lesp expiration date",
+      "security expiration",
+      "security expiry date",
+      "security expired date",
+    ])
+  );
+
+  return {
+    security_license_number: securityLicenseNumber,
+    security_expiration: securityExpiration,
+  } as Omit<LicensureUpsert, "applicant_id">;
 }
 
 export default function EmployeeExcelImportModal({ open, onClose, onImported }: EmployeeExcelImportModalProps) {
@@ -229,6 +308,46 @@ export default function EmployeeExcelImportModal({ open, onClose, onImported }: 
   const [parsingError, setParsingError] = useState<string>("");
   const [importing, setImporting] = useState(false);
   const [resultMsg, setResultMsg] = useState<string>("");
+  const [overwriteExisting, setOverwriteExisting] = useState(true);
+
+  function normalizeMatchKey(v: unknown) {
+    return String(v ?? "")
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, " ");
+  }
+
+  function updatePayloadFromApplicantInsert(payload: ApplicantInsert) {
+    // For overwrites, avoid wiping existing DB values when the sheet has blanks.
+    // Only update fields that have a non-empty value.
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(payload)) {
+      if (v == null) continue;
+      if (typeof v === "string" && !v.trim()) continue;
+      // The importer uses "N/A" when identity columns are missing. Don't overwrite DB with that.
+      if ((k === "first_name" || k === "last_name") && String(v).trim().toUpperCase() === "N/A") continue;
+      out[k] = v;
+    }
+    return out;
+  }
+
+  function downloadCsvTemplate() {
+    const lines = [toCsvLine([...TEMPLATE_HEADERS]), toCsvLine(new Array(TEMPLATE_HEADERS.length).fill(""))];
+    const blob = new Blob([lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
+    downloadBlob("employee_import_template.csv", blob);
+  }
+
+  function downloadXlsxTemplate() {
+    const aoa = [[...TEMPLATE_HEADERS], new Array(TEMPLATE_HEADERS.length).fill("")];
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Employees");
+    const out = XLSX.write(wb, { bookType: "xlsx", type: "array" });
+    const blob = new Blob([out], {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    });
+    downloadBlob("employee_import_template.xlsx", blob);
+  }
 
   const preview = useMemo(() => {
     const converted = rows.map((r, idx) => {
@@ -257,16 +376,25 @@ export default function EmployeeExcelImportModal({ open, onClose, onImported }: 
     setFileName(file.name);
 
     try {
-      const buf = await file.arrayBuffer();
-      const wb = XLSX.read(buf, { type: "array", cellDates: true });
+      const lower = file.name.toLowerCase();
+      const isCsv = lower.endsWith(".csv") || file.type === "text/csv";
+
+      const wb = isCsv
+        ? XLSX.read(await file.text(), { type: "string", cellDates: true })
+        : XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: true });
       const sheetName = wb.SheetNames[0];
       if (!sheetName) throw new Error("No sheets found in Excel file");
       const sheet = wb.Sheets[sheetName];
-      const json = XLSX.utils.sheet_to_json<RowObject>(sheet, { defval: "" });
+      const json = XLSX.utils.sheet_to_json<RowObject>(sheet, {
+        defval: "",
+        // Use formatted cell text where possible to preserve values like IDs that
+        // Excel may otherwise parse as numbers (and display in scientific notation).
+        raw: false,
+      });
       setRows(json);
     } catch (e: unknown) {
       setRows([]);
-      setParsingError(e instanceof Error ? e.message : "Failed to parse Excel file");
+      setParsingError(e instanceof Error ? e.message : "Failed to parse file");
     }
   }
 
@@ -275,7 +403,7 @@ export default function EmployeeExcelImportModal({ open, onClose, onImported }: 
     setResultMsg("");
 
     const errors: string[] = [];
-    const payloads: ApplicantInsert[] = [];
+    const prepared: { applicant: ApplicantInsert; licensure: Omit<LicensureUpsert, "applicant_id"> }[] = [];
 
     rows.forEach((r, i) => {
       const { payload, error } = rowToApplicant(r);
@@ -283,26 +411,136 @@ export default function EmployeeExcelImportModal({ open, onClose, onImported }: 
         errors.push(`Row ${i + 2}: ${error || "Invalid row"}`);
         return;
       }
-      payloads.push(payload);
+		prepared.push({ applicant: payload, licensure: rowToLicensure(r) });
     });
 
     let inserted = 0;
+    let updated = 0;
     try {
       const chunkSize = 100;
-      for (let i = 0; i < payloads.length; i += chunkSize) {
-        const chunk = payloads.slice(i, i + chunkSize);
-        const res = await supabase.from("applicants").insert(chunk);
-        if (res.error) {
-          errors.push(`Insert failed at batch starting row ${i + 2}: ${res.error.message}`);
-          break;
+      for (let i = 0; i < prepared.length; i += chunkSize) {
+        const slice = prepared.slice(i, i + chunkSize);
+
+        // If overwrite is enabled, try to match existing applicants in this batch.
+        const secNums = overwriteExisting
+          ? Array.from(
+              new Set(
+                slice
+                  .map((x) => normalizeMatchKey(x.applicant.security_licensed_num))
+                  .filter(Boolean)
+              )
+            )
+          : [];
+        const emails = overwriteExisting
+          ? Array.from(
+              new Set(
+                slice
+                  .map((x) => normalizeMatchKey(x.applicant.client_email))
+                  .filter(Boolean)
+              )
+            )
+          : [];
+
+        const existingBySec = new Map<string, string>();
+        const existingByEmail = new Map<string, string>();
+        if (overwriteExisting && (secNums.length || emails.length)) {
+          if (secNums.length) {
+            const ex = await supabase
+              .from("applicants")
+              .select("applicant_id, security_licensed_num")
+              .in("security_licensed_num", secNums);
+            if (!ex.error) {
+              for (const r of (ex.data as any[]) ?? []) {
+                const k = normalizeMatchKey(r?.security_licensed_num);
+                const id = String(r?.applicant_id ?? "").trim();
+                if (k && id) existingBySec.set(k, id);
+              }
+            }
+          }
+          if (emails.length) {
+            const ex = await supabase
+              .from("applicants")
+              .select("applicant_id, client_email")
+              .in("client_email", emails);
+            if (!ex.error) {
+              for (const r of (ex.data as any[]) ?? []) {
+                const k = normalizeMatchKey(r?.client_email);
+                const id = String(r?.applicant_id ?? "").trim();
+                if (k && id) existingByEmail.set(k, id);
+              }
+            }
+          }
         }
-        inserted += chunk.length;
+
+        const toInsert: ApplicantInsert[] = [];
+        const toInsertIdx: number[] = [];
+        const licRows: LicensureUpsert[] = [];
+
+        for (let j = 0; j < slice.length; j++) {
+          const item = slice[j];
+          const secKey = normalizeMatchKey(item.applicant.security_licensed_num);
+          const emailKey = normalizeMatchKey(item.applicant.client_email);
+          const existingId = overwriteExisting
+            ? (secKey && existingBySec.get(secKey)) || (emailKey && existingByEmail.get(emailKey)) || null
+            : null;
+
+          if (existingId) {
+            const updPayload = updatePayloadFromApplicantInsert(item.applicant);
+            if (Object.keys(updPayload).length) {
+              const updRes = await supabase.from("applicants").update(updPayload).eq("applicant_id", existingId);
+              if (updRes.error) {
+                errors.push(`Row ${i + j + 2}: Update failed: ${updRes.error.message}`);
+                continue;
+              }
+            }
+            updated += 1;
+
+            const lic = item.licensure;
+            const hasAny = Boolean(lic?.security_license_number || lic?.security_expiration);
+            if (hasAny) licRows.push({ applicant_id: existingId, ...lic });
+          } else {
+            toInsert.push(item.applicant);
+            toInsertIdx.push(j);
+          }
+        }
+
+        if (toInsert.length) {
+          const insRes = await supabase.from("applicants").insert(toInsert).select("applicant_id");
+          if (insRes.error) {
+            errors.push(`Insert failed at batch starting row ${i + 2}: ${insRes.error.message}`);
+            break;
+          }
+
+          const insertedRows = ((insRes.data as unknown) as { applicant_id: string }[]) ?? [];
+          inserted += insertedRows.length;
+
+          // Best-effort licensure upsert (security license number + expiry)
+          for (let k = 0; k < insertedRows.length; k++) {
+            const applicant_id = String(insertedRows[k]?.applicant_id || "").trim();
+            if (!applicant_id) continue;
+            const sliceIndex = toInsertIdx[k];
+            const lic = slice[sliceIndex]?.licensure;
+            const hasAny = Boolean(lic?.security_license_number || lic?.security_expiration);
+            if (!hasAny) continue;
+            licRows.push({ applicant_id, ...lic });
+          }
+        }
+
+        if (licRows.length) {
+          const licRes = await supabase.from("licensure").upsert(licRows);
+          if (licRes.error) {
+            errors.push(`Licensure upsert failed for batch starting row ${i + 2}: ${licRes.error.message}`);
+          }
+        }
       }
     } catch (e: unknown) {
       errors.push(e instanceof Error ? e.message : "Import failed");
     } finally {
-      const skipped = rows.length - inserted;
-      const msg = `Imported ${inserted} employee(s). Skipped ${skipped}.`;
+      const processed = inserted + updated;
+      const skipped = Math.max(0, rows.length - processed);
+      const msg = overwriteExisting
+        ? `Imported ${inserted} • Updated ${updated} • Skipped ${skipped}.`
+        : `Imported ${inserted} • Skipped ${skipped}.`;
       setResultMsg(msg);
       onImported?.({ inserted, skipped, errors });
       setImporting(false);
@@ -316,9 +554,9 @@ export default function EmployeeExcelImportModal({ open, onClose, onImported }: 
       <div className="w-full max-w-3xl bg-white rounded-3xl border shadow-xl overflow-hidden">
         <div className="px-6 py-4 border-b flex items-center justify-between gap-3">
           <div className="min-w-0">
-            <div className="text-lg font-semibold text-black">Import Employees (Excel)</div>
+            <div className="text-lg font-semibold text-black">Import Employees (Excel/CSV)</div>
             <div className="text-xs text-gray-500 truncate">
-              Upload an Excel file (.xlsx/.xls) with headers like First Name, Last Name, Status, etc.
+              Upload an Excel (.xlsx/.xls) or CSV (.csv) file with headers like Last Name, First Name, Status, etc.
             </div>
           </div>
           <button onClick={onClose} className="px-3 py-2 rounded-xl border bg-white text-black">
@@ -330,23 +568,54 @@ export default function EmployeeExcelImportModal({ open, onClose, onImported }: 
           <div className="rounded-2xl border p-4">
             <div className="flex items-center justify-between gap-3 flex-wrap">
               <div>
-                <div className="text-sm font-semibold text-black">Excel file</div>
+                <div className="text-sm font-semibold text-black">Excel/CSV file</div>
                 <div className="text-xs text-gray-500">{fileName || "No file selected"}</div>
               </div>
 
-              <label className="px-3 py-2 rounded-xl bg-[#FFDA03] text-black text-sm font-semibold cursor-pointer">
-                Choose File
-                <input
-                  type="file"
-                  className="hidden"
-                  accept=".xlsx,.xls,.csv"
-                  onChange={(e) => onPick(e.target.files?.[0])}
-                />
-              </label>
+              <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={downloadCsvTemplate}
+                    className="px-3 py-2 rounded-xl border bg-white text-black text-sm font-semibold"
+                  >
+                    Template CSV
+                  </button>
+                  <button
+                    type="button"
+                    onClick={downloadXlsxTemplate}
+                    className="px-3 py-2 rounded-xl border bg-white text-black text-sm font-semibold"
+                  >
+                    Template XLSX
+                  </button>
+                </div>
+
+                <label className="px-3 py-2 rounded-xl bg-[#FFDA03] text-black text-sm font-semibold cursor-pointer">
+                  Choose File
+                  <input
+                    type="file"
+                    className="hidden"
+                    accept=".xlsx,.xls,.csv"
+                    onChange={(e) => onPick(e.target.files?.[0])}
+                  />
+                </label>
+              </div>
             </div>
 
             {parsingError ? <div className="mt-3 text-sm text-red-600">{parsingError}</div> : null}
             {resultMsg ? <div className="mt-3 text-sm text-green-700">{resultMsg}</div> : null}
+
+            <div className="mt-3 flex items-center gap-2 text-sm text-black">
+              <input
+                id="overwriteExisting"
+                type="checkbox"
+                checked={overwriteExisting}
+                onChange={(e) => setOverwriteExisting(e.target.checked)}
+              />
+              <label htmlFor="overwriteExisting" className="select-none">
+                Overwrite existing employees (match by Security Licensed Number or Email)
+              </label>
+            </div>
           </div>
 
           <div className="rounded-2xl border p-4">

@@ -64,6 +64,10 @@ export default function MainModulesLayout({ children }: LayoutProps) {
     Array<{ id: string; created_at: string; actor_email: string | null; action: string; page: string | null }>
   >([]);
   const [expiringCount, setExpiringCount] = useState(0);
+  function badgeText(n: number) {
+    if (!Number.isFinite(n) || n <= 0) return "";
+    return n > 9 ? "9+" : String(n);
+  }
   const [expiringRows, setExpiringRows] = useState<
     Array<{
       applicant_id: string;
@@ -158,7 +162,7 @@ export default function MainModulesLayout({ children }: LayoutProps) {
     if (!api?.notifications?.getExpiringSummary) return;
     try {
       const res = await api.notifications.getExpiringSummary({ limit: 50 });
-      setExpiringCount(Number(res?.count ?? 0));
+      setExpiringCount(Number((res as any)?.pendingCount ?? res?.count ?? 0));
       setExpiringRows((res?.rows ?? []) as any);
     } catch {
       // ignore
@@ -490,13 +494,18 @@ export default function MainModulesLayout({ children }: LayoutProps) {
                       setExpiringOpen(false);
                       refreshActivity();
                     }}
-                    className="h-10 px-3 rounded-xl bg-[#FFDA03] text-black flex items-center gap-2"
+                    className="relative h-10 w-10 rounded-xl bg-[#FFDA03] text-black flex items-center justify-center"
                     aria-label="Activity"
                   >
                     <Activity className="w-5 h-5" />
-                    <span className="text-[11px] font-bold bg-red-600 text-white px-2 py-0.5 rounded-full leading-none">
-                      {activityCount}
-                    </span>
+						{activityCount > 0 ? (
+							<span
+								className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-red-600 text-white text-[10px] font-bold leading-[18px] text-center shadow"
+								aria-label={`Activity count ${activityCount}`}
+							>
+								{badgeText(activityCount)}
+							</span>
+						) : null}
                   </button>
 
                   {activityOpen ? (
@@ -562,13 +571,18 @@ export default function MainModulesLayout({ children }: LayoutProps) {
                       setActivityOpen(false);
                       refreshExpiring();
                     }}
-                    className="h-10 px-3 rounded-xl bg-[#FFDA03] text-black flex items-center gap-2"
+                    className="relative h-10 w-10 rounded-xl bg-[#FFDA03] text-black flex items-center justify-center"
                     aria-label="Expiring Licenses"
                   >
                     <CreditCard className="w-5 h-5" />
-                    <span className="text-[11px] font-bold bg-red-600 text-white px-2 py-0.5 rounded-full leading-none">
-                      {expiringCount}
-                    </span>
+						{expiringCount > 0 ? (
+							<span
+								className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-red-600 text-white text-[10px] font-bold leading-[18px] text-center shadow"
+								aria-label={`Expiring licenses count ${expiringCount}`}
+							>
+								{badgeText(expiringCount)}
+							</span>
+						) : null}
                   </button>
 
                   {expiringOpen ? (

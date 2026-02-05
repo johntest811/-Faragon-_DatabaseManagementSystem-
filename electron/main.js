@@ -835,6 +835,9 @@ ipcMain.handle('settings:saveNotificationConfig', async (_event, payload) => {
     },
   });
 
+  // Allow the auto-scheduler to re-run today using the new config.
+  lastAutoRunKey = null;
+
   return { success: true };
 });
 
@@ -855,8 +858,8 @@ ipcMain.handle('notifications:getExpiringSummary', async (_event, payload) => {
   const all = await fetchExpiringRows(admin, preferences ?? {}, localPrefs);
 
   const rows = all.slice(0, limit);
-  const applicantIds = Array.from(new Set(rows.map((r) => r.applicant_id).filter(Boolean)));
-  const keys = new Set(rows.map((r) => `${r.applicant_id}:${r.license_type}:${String(r.expires_on)}`));
+  const applicantIds = Array.from(new Set(all.map((r) => r.applicant_id).filter(Boolean)));
+  const keys = new Set(all.map((r) => `${r.applicant_id}:${r.license_type}:${String(r.expires_on)}`));
 
   const sentStats = new Map();
   if (applicantIds.length) {
@@ -889,7 +892,17 @@ ipcMain.handle('notifications:getExpiringSummary', async (_event, payload) => {
     return { ...r, sent_count: st.sent_count, last_sent_at: st.last_sent_at };
   });
 
-  return { count: all.length, rows: enriched };
+  let pendingCount = 0;
+  let sentCount = 0;
+  for (const r of all) {
+    const k = `${r.applicant_id}:${r.license_type}:${String(r.expires_on)}`;
+    const st = sentStats.get(k);
+    if (st?.sent_count) sentCount += 1;
+    else pendingCount += 1;
+  }
+
+  // `count` is used for the red badge in the UI: only show items that have NOT been sent yet.
+  return { count: pendingCount, total: all.length, pendingCount, sentCount, rows: enriched };
 });
 
 ipcMain.handle('notifications:resendLicensureNotice', async (_event, payload) => {
@@ -1225,19 +1238,35 @@ async function startApp() {
 }
 
 let notificationTimer = null;
-let lastAutoRunYmd = null;
+let lastAutoRunKey = null;
+
+function computeAutoRunKey(todayKey, email, preferences) {
+  const sendTime = safeText(preferences?.send_time_local).slice(0, 5) || '08:00';
+  const daysBefore = clampInt(preferences?.days_before_expiry, { min: 1, max: 365, fallback: 30 });
+  const flags = [
+    preferences?.include_driver_license ? 'D1' : 'D0',
+    preferences?.include_security_license ? 'S1' : 'S0',
+    preferences?.include_insurance ? 'I1' : 'I0',
+    preferences?.is_enabled ? 'E1' : 'E0',
+    email?.is_active === false ? 'A0' : 'A1',
+  ].join('');
+
+  return [todayKey, sendTime, String(daysBefore), flags, safeText(email?.gmail_user)].join('|');
+}
 
 async function maybeAutoSendNotifications() {
   try {
     const admin = getAdminSupabase();
     const { email, preferences } = await loadNotificationConfig(admin);
     if (!preferences?.is_enabled) return;
-    if (!email?.is_active) return;
+    if (email && !email.is_active) return;
 
     const now = new Date();
     const todayKey = ymd(now);
     if (!todayKey) return;
-    if (lastAutoRunYmd === todayKey) return;
+
+    const runKey = computeAutoRunKey(todayKey, email, preferences);
+    if (lastAutoRunKey === runKey) return;
 
     const sendTime = safeText(preferences.send_time_local).slice(0, 5) || '08:00';
     const [hhRaw, mmRaw] = sendTime.split(':');
@@ -1248,7 +1277,7 @@ async function maybeAutoSendNotifications() {
 
     const result = await runNotificationSend(admin);
     if (result?.ok) {
-      lastAutoRunYmd = todayKey;
+      lastAutoRunKey = runKey;
       console.log('[notifications] auto-run:', result?.summary ?? {});
     }
   } catch (e) {

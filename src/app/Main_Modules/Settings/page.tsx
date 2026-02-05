@@ -432,6 +432,57 @@ export default function SettingsPage() {
 		[enabled, daysBeforeNum]
 	);
 
+	function applyLoadedConfig(cfg: unknown) {
+		setEnvHasGmailUser(Boolean((cfg as any)?.env?.hasGmailUser));
+		setEnvHasGmailPass(Boolean((cfg as any)?.env?.hasGmailPass));
+		setIncludeExpired(Boolean((cfg as any)?.localPrefs?.includeExpired));
+		setExpiredWithinDays(Number((cfg as any)?.localPrefs?.expiredWithinDays ?? 7));
+
+		const email = (((cfg as any)?.email as EmailSettingsRow) || null) as EmailSettingsRow | null;
+		if (email) {
+			setGmailUser(email.gmail_user ?? safeText((cfg as any)?.env?.gmailUser) ?? "");
+			setIsActive(Boolean(email.is_active));
+			const tpl = parseTemplateNotes(email.notes);
+			setEmailSubject(tpl.subject);
+			setEmailBodyHtml(tpl.bodyHtml);
+			setDbHasStoredPassword(Boolean(email.gmail_app_password));
+			setDbStoredPasswordCache(email.gmail_app_password ?? "");
+			setGmailAppPassword("");
+			setStoreAppPassword(false);
+			setLoadedStoredPassword(false);
+			setTestToEmail(email.gmail_user ?? safeText((cfg as any)?.env?.gmailUser) ?? "");
+		} else {
+			setDbHasStoredPassword(false);
+			setDbStoredPasswordCache("");
+			setGmailUser(safeText((cfg as any)?.env?.gmailUser) || "");
+			setEmailSubject("");
+			setEmailBodyHtml("");
+			setTestToEmail(safeText((cfg as any)?.env?.gmailUser) || "");
+		}
+
+		const pref = (((cfg as any)?.preferences as PreferencesRow) || null) as PreferencesRow | null;
+		if (pref) {
+			setEnabled(Boolean(pref.is_enabled));
+			setDaysBeforeInput(String(pref.days_before_expiry ?? 30));
+			setIncludeDriver(Boolean(pref.include_driver_license));
+			setIncludeSecurity(Boolean(pref.include_security_license));
+			setIncludeInsurance(Boolean(pref.include_insurance));
+			setSendTimeLocal(String(pref.send_time_local ?? "08:00").slice(0, 5));
+			setTimezone(pref.timezone ?? "Asia/Manila");
+		}
+	}
+
+	async function refreshLogs() {
+		if (!electronAPI?.notifications?.getLog) return;
+		setLogsLoading(true);
+		try {
+			const res = await electronAPI.notifications.getLog({ status: logStatus, limit: 25 });
+			setLogs(res?.rows ?? []);
+		} finally {
+			setLogsLoading(false);
+		}
+	}
+
 	useEffect(() => {
 		let cancelled = false;
 		async function loadLogs() {
@@ -466,42 +517,7 @@ export default function SettingsPage() {
 				if (electronAPI?.settings?.loadNotificationConfig) {
 					const cfg = await electronAPI.settings.loadNotificationConfig();
 					if (cancelled) return;
-					setEnvHasGmailUser(Boolean(cfg?.env?.hasGmailUser));
-					setEnvHasGmailPass(Boolean(cfg?.env?.hasGmailPass));
-					setIncludeExpired(Boolean(cfg?.localPrefs?.includeExpired));
-					setExpiredWithinDays(Number(cfg?.localPrefs?.expiredWithinDays ?? 7));
-					const email = (cfg.email as EmailSettingsRow | null) ?? null;
-					if (email) {
-						setGmailUser(email.gmail_user ?? safeText(cfg?.env?.gmailUser) ?? "");
-						setIsActive(Boolean(email.is_active));
-						const tpl = parseTemplateNotes(email.notes);
-						setEmailSubject(tpl.subject);
-						setEmailBodyHtml(tpl.bodyHtml);
-						setDbHasStoredPassword(Boolean(email.gmail_app_password));
-						setDbStoredPasswordCache(email.gmail_app_password ?? "");
-						setGmailAppPassword("");
-						setStoreAppPassword(false);
-						setLoadedStoredPassword(false);
-						setTestToEmail(email.gmail_user ?? safeText(cfg?.env?.gmailUser) ?? "");
-					} else {
-						setDbHasStoredPassword(false);
-						setDbStoredPasswordCache("");
-						setGmailUser(safeText(cfg?.env?.gmailUser) || "");
-						setEmailSubject("");
-						setEmailBodyHtml("");
-						setTestToEmail(safeText(cfg?.env?.gmailUser) || "");
-					}
-
-					const pref = (cfg.preferences as PreferencesRow | null) ?? null;
-					if (pref) {
-						setEnabled(Boolean(pref.is_enabled));
-						setDaysBeforeInput(String(pref.days_before_expiry ?? 30));
-						setIncludeDriver(Boolean(pref.include_driver_license));
-						setIncludeSecurity(Boolean(pref.include_security_license));
-						setIncludeInsurance(Boolean(pref.include_insurance));
-						setSendTimeLocal(String(pref.send_time_local ?? "08:00").slice(0, 5));
-						setTimezone(pref.timezone ?? "Asia/Manila");
-					}
+					applyLoadedConfig(cfg);
 				} else {
 					// Web fallback (anon key) – may be blocked by RLS depending on your policies.
 					const [emailRes, prefRes] = await Promise.all([
@@ -778,6 +794,22 @@ export default function SettingsPage() {
 			if (storeAppPassword) {
 				setDbHasStoredPassword(Boolean(safeText(gmailAppPassword)));
 			}
+
+			// Reload what was actually saved (ensures the UI reflects DB immediately)
+			if (electronAPI?.settings?.loadNotificationConfig) {
+				try {
+					const cfg = await electronAPI.settings.loadNotificationConfig();
+					applyLoadedConfig(cfg);
+				} catch {
+					// ignore reload errors
+				}
+			}
+
+			// Refresh preview and logs immediately.
+			void loadPreview();
+			void refreshLogs();
+
+			// Do NOT auto-send on Save; sending remains a manual action via "Run now".
 			setSuccess("Saved notification settings.");
 		} catch (e: unknown) {
 			setError(errorMessage(e));

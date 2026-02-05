@@ -11,7 +11,7 @@ export default function SplashScreen({ onFinish }: SplashScreenProps) {
 
   useEffect(() => {
     const bgTimer = setTimeout(() => setBgBlack(true), 2500);
-    const finishTimer = setTimeout(() => onFinish?.(), 10000);
+    const finishTimer = setTimeout(() => onFinish?.(), 5000);
 
     return () => {
       clearTimeout(bgTimer);
