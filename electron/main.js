@@ -1117,6 +1117,101 @@ ipcMain.handle('notifications:runNow', async () => {
   return await runNotificationSend(admin);
 });
 
+ipcMain.handle('notifications:resendAllExpiring', async (_event, payload) => {
+  const admin = getAdminSupabase();
+  const { email, preferences } = await loadNotificationConfig(admin);
+
+  if (!preferences?.is_enabled) throw new Error('Notifications are disabled.');
+  if (email && !email.is_active) throw new Error('Gmail sender is not active.');
+
+  const localPrefs = loadLocalNotificationPrefs();
+  const expiring = await fetchExpiringRows(admin, preferences ?? {}, localPrefs);
+
+  const maxRecipients = clampInt(payload?.maxRecipients, { min: 1, max: 2000, fallback: 0 });
+
+  const { transporter, from } = buildTransport(email);
+
+  const byRecipient = new Map();
+  let skipped = 0;
+
+  for (const item of expiring) {
+    const to = safeText(item.client_email);
+    if (!to) {
+      // Log skipped.
+      await admin.from('licensure_notification_log').insert({
+        applicant_id: item.applicant_id,
+        license_type: item.license_type,
+        expires_on: item.expires_on,
+        recipient_email: null,
+        status: 'SKIPPED',
+        error_message: 'Missing recipient email (client_email).',
+      });
+      skipped += 1;
+      continue;
+    }
+
+    if (maxRecipients && !byRecipient.has(to) && byRecipient.size >= maxRecipients) {
+      continue;
+    }
+
+    const arr = byRecipient.get(to) || [];
+    arr.push(item);
+    byRecipient.set(to, arr);
+  }
+
+  let sent = 0;
+  let failed = 0;
+
+  for (const [to, items] of byRecipient.entries()) {
+    const recipientName = displayNameFromRow(items[0]);
+    const tpl = parseEmailTemplateNotes(email?.notes);
+    const subject = computeEmailSubject(tpl.subject, items.length);
+    const html = renderEmailHtml({
+      subject,
+      recipientName,
+      items,
+      daysBefore: preferences?.days_before_expiry ?? 30,
+      bodyHtml: tpl.bodyHtml,
+      legacyMessage: tpl.legacyMessage,
+    });
+
+    try {
+      await transporter.sendMail({ from, to, subject, html });
+      for (const item of items) {
+        const ins = await admin.from('licensure_notification_log').insert({
+          applicant_id: item.applicant_id,
+          license_type: item.license_type,
+          expires_on: item.expires_on,
+          recipient_email: to,
+          status: 'SENT',
+          error_message: null,
+        });
+        if (ins.error) console.warn('[notifications] log insert failed:', ins.error);
+        sent += 1;
+      }
+    } catch (err) {
+      for (const item of items) {
+        const ins = await admin.from('licensure_notification_log').insert({
+          applicant_id: item.applicant_id,
+          license_type: item.license_type,
+          expires_on: item.expires_on,
+          recipient_email: to,
+          status: 'FAILED',
+          error_message: safeText(err?.message || err),
+        });
+        if (ins.error) console.warn('[notifications] log insert failed:', ins.error);
+        failed += 1;
+      }
+    }
+  }
+
+  return {
+    ok: true,
+    summary: { sent, failed, skipped },
+    message: 'Resend all complete.',
+  };
+});
+
 // Register a custom protocol so Next export can fetch absolute paths like
 // /_next/*, /Main_Modules.txt, etc. This avoids file:// origin issues in production.
 protocol.registerSchemesAsPrivileged([

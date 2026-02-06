@@ -106,6 +106,7 @@ function getElectronAPI() {
 				previewExpiring?: (payload?: unknown) => Promise<{ rows: ExpiringRow[] }>;
 				getLog?: (payload?: unknown) => Promise<{ rows: LogRow[] }>;
 				sendTestEmail?: (payload: unknown) => Promise<unknown>;
+				resendAllExpiring?: (payload?: unknown) => Promise<unknown>;
 				runNow?: () => Promise<unknown>;
 			};
 		}
@@ -935,6 +936,10 @@ export default function SettingsPage() {
 													if (!electronAPI?.settings?.removeGmailSender) {
 														throw new Error("This action is only available in the Electron desktop app.");
 													}
+												const ok = window.confirm(
+													"Remove the Gmail sender settings? This cannot be undone."
+												);
+												if (!ok) return;
 													await electronAPI.settings.removeGmailSender();
 													setGmailUser("");
 													setEmailSubject("");
@@ -1223,15 +1228,19 @@ export default function SettingsPage() {
 								setSuccess("");
 								setRunSummary("");
 								try {
-									if (!electronAPI?.notifications?.runNow) {
-										throw new Error("Run now is only available in the Electron desktop app.");
+									if (!electronAPI?.notifications?.resendAllExpiring) {
+										throw new Error("Resend all is only available in the Electron desktop app.");
 									}
-									const r = (await electronAPI.notifications.runNow()) as RunNowResult;
+									const ok = window.confirm(
+										"This will resend emails for ALL currently expiring licenses. Continue?"
+									);
+									if (!ok) return;
+									const r = (await electronAPI.notifications.resendAllExpiring()) as RunNowResult;
 									const summary = r?.summary
 										? `sent=${r.summary.sent ?? 0}, failed=${r.summary.failed ?? 0}, skipped=${r.summary.skipped ?? 0}`
 										: "";
 									setRunSummary(summary);
-									setSuccess(r?.message || "Notification run finished.");
+									setSuccess(r?.message || "Resend all finished.");
 									// refresh logs after running
 									void (async () => {
 										try {
@@ -1253,7 +1262,7 @@ export default function SettingsPage() {
 							disabled={runSending}
 							className="px-4 py-2 rounded-xl bg-[#8B1C1C] text-white disabled:opacity-50"
 						>
-							{runSending ? "Running…" : "Run now"}
+							{runSending ? "Resending…" : "Resend all"}
 						</button>
 						<button
 							onClick={() => void loadPreview()}

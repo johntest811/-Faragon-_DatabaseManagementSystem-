@@ -21,6 +21,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     previewExpiring: (payload) => ipcRenderer.invoke('notifications:previewExpiring', payload),
     getExpiringSummary: (payload) => ipcRenderer.invoke('notifications:getExpiringSummary', payload),
     resendLicensureNotice: (payload) => ipcRenderer.invoke('notifications:resendLicensureNotice', payload),
+    resendAllExpiring: (payload) => ipcRenderer.invoke('notifications:resendAllExpiring', payload),
     getLog: (payload) => ipcRenderer.invoke('notifications:getLog', payload),
     sendTestEmail: (payload) => ipcRenderer.invoke('notifications:sendTestEmail', payload),
     runNow: () => ipcRenderer.invoke('notifications:runNow'),

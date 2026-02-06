@@ -454,6 +454,9 @@ export default function MainModulesLayout({ children }: LayoutProps) {
 
           <button
             onClick={() => {
+              const ok = window.confirm("Are you sure you want to log out?");
+              if (!ok) return;
+
               try {
                 localStorage.removeItem("adminSession");
               } catch {
