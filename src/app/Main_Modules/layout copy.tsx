@@ -23,9 +23,6 @@ import {
   ClipboardList,
   Activity,
   CreditCard,
-  Package,
-  FileText,
-  ClipboardCheck,
 } from "lucide-react";
 
 type LayoutProps = Readonly<{ children: React.ReactNode }>;
@@ -58,8 +55,6 @@ export default function MainModulesLayout({ children }: LayoutProps) {
   const [collapsed, setCollapsed] = useState(false);
   const [workforceOpen, setWorkforceOpen] = useState(false);
   const [workforceFlyoutOpen, setWorkforceFlyoutOpen] = useState(false);
-  const [logisticsOpen, setLogisticsOpen] = useState(false);
-  const [logisticsFlyoutOpen, setLogisticsFlyoutOpen] = useState(false);
   const [activityOpen, setActivityOpen] = useState(false);
   const [expiringOpen, setExpiringOpen] = useState(false);
   const [activityCount, setActivityCount] = useState(0);
@@ -293,17 +288,6 @@ export default function MainModulesLayout({ children }: LayoutProps) {
     []
   );
 
-  const LOGISTICS_ITEMS = useMemo(
-    () =>
-      [
-        { key: "logistics_client", name: "Client", href: "/Main_Modules/Logistics/Client/", icon: CreditCard },
-        { key: "logistics_inventory", name: "Inventory", href: "/Main_Modules/Logistics/Inventory/", icon: Package },
-        { key: "logistics_reports", name: "Reports", href: "/Main_Modules/Logistics/Reports/", icon: FileText },
-        { key: "logistics_requests", name: "Requests", href: "/Main_Modules/Logistics/Requests/", icon: ClipboardCheck },
-      ] as const,
-    []
-  );
-
   const workforceItems = useMemo(
     () => menu.filter((m) => WORKFORCE_KEYS.has(m.key)),
     [menu, WORKFORCE_KEYS]
@@ -327,23 +311,8 @@ export default function MainModulesLayout({ children }: LayoutProps) {
   }, [collapsed]);
 
   useEffect(() => {
-    if (!collapsed) setLogisticsFlyoutOpen(false);
-  }, [collapsed]);
-
-  useEffect(() => {
     if (!collapsed && workforceActive) setWorkforceOpen(true);
   }, [collapsed, workforceActive]);
-
-  const logisticsAllowed = useMemo(() => allowedKeys.has("logistics"), [allowedKeys]);
-
-  const logisticsActive = useMemo(() => {
-    if (!logisticsAllowed) return false;
-    return pathname.startsWith("/Main_Modules/Logistics/");
-  }, [logisticsAllowed, pathname]);
-
-  useEffect(() => {
-    if (!collapsed && logisticsActive) setLogisticsOpen(true);
-  }, [collapsed, logisticsActive]);
 
   function navLinkClass(active: boolean) {
     return `flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 ${
@@ -450,74 +419,6 @@ export default function MainModulesLayout({ children }: LayoutProps) {
 
             // Skip items that belong to workforce; they are rendered inside the group.
             if (WORKFORCE_KEYS.has(item.key)) return null;
-
-            // Render the Logistics group in place of the single Logistics item.
-            if (item.key === "logistics") {
-              if (!logisticsAllowed) return null;
-
-              return (
-                <div key="logistics" className="relative">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (collapsed) setLogisticsFlyoutOpen((v) => !v);
-                      else setLogisticsOpen((v) => !v);
-                    }}
-                    className={navLinkClass(logisticsActive)}
-                    aria-expanded={collapsed ? logisticsFlyoutOpen : logisticsOpen}
-                  >
-                    <Truck className="w-5 h-5 shrink-0" />
-                    {!collapsed ? (
-                      <span className="text-sm font-medium whitespace-nowrap">Logistics</span>
-                    ) : null}
-                    {!collapsed ? (
-                      <ChevronDown
-                        className={`ml-auto w-4 h-4 transition-transform ${
-                          logisticsOpen ? "rotate-180" : ""
-                        }`}
-                      />
-                    ) : null}
-                  </button>
-
-                  {collapsed && logisticsFlyoutOpen ? (
-                    <div className="mt-1 space-y-1">
-                      {LOGISTICS_ITEMS.map((l) => {
-                        const active = pathname === l.href || pathname.startsWith(l.href);
-                        return (
-                          <Link
-                            key={l.key}
-                            href={l.href}
-                            title={l.name}
-                            aria-label={l.name}
-                            className={`flex items-center justify-center px-4 py-3 rounded-xl transition-all duration-200 ${
-                              active
-                                ? "bg-[#FFDA03] text-black"
-                                : "text-gray-700 hover:bg-yellow-100"
-                            }`}
-                          >
-                            <l.icon className="w-5 h-5 shrink-0" />
-                          </Link>
-                        );
-                      })}
-                    </div>
-                  ) : null}
-
-                  {!collapsed && logisticsOpen ? (
-                    <div className="ml-4 pl-3 border-l border-gray-200 space-y-1">
-                      {LOGISTICS_ITEMS.map((l) => {
-                        const active = pathname === l.href || pathname.startsWith(l.href);
-                        return (
-                          <Link key={l.key} href={l.href} className={navLinkClass(active)}>
-                            <l.icon className="w-5 h-5 shrink-0" />
-                            <span className="text-sm font-medium whitespace-nowrap">{l.name}</span>
-                          </Link>
-                        );
-                      })}
-                    </div>
-                  ) : null}
-                </div>
-              );
-            }
 
             const active =
               menuActivePath === item.href || menuActivePath.startsWith(item.href);

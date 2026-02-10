@@ -51,6 +51,193 @@ function isMissingAuditLogTableMessage(msg) {
   );
 }
 
+function isMissingTableMessage(msg, tableName) {
+  const m = String(msg || '');
+  const t = String(tableName || '').trim();
+  if (!t) return false;
+  const tl = t.toLowerCase();
+  const ml = m.toLowerCase();
+  if (!ml.includes(tl)) return false;
+  return (
+    /does\s+not\s+exist/i.test(m) ||
+    /could\s+not\s+find\s+the\s+table/i.test(m) ||
+    /schema\s+cache/i.test(m) ||
+    /PGRST205/i.test(m)
+  );
+}
+
+async function fetchAllRows(admin, tableName, { pageSize = 1000, maxRows = 200000 } = {}) {
+  const rows = [];
+  let offset = 0;
+
+  while (true) {
+    const res = await admin.from(tableName).select('*').range(offset, offset + pageSize - 1);
+    if (res.error) {
+      const msg = String(res.error?.message || res.error);
+      if (isMissingTableMessage(msg, tableName)) {
+        return { rows: [], missing: true };
+      }
+      throw res.error;
+    }
+    const batch = Array.isArray(res.data) ? res.data : [];
+    if (!batch.length) break;
+    rows.push(...batch);
+    offset += batch.length;
+    if (batch.length < pageSize) break;
+    if (offset >= maxRows) {
+      throw new Error(`Export aborted: ${tableName} exceeded ${maxRows} rows.`);
+    }
+  }
+
+  return { rows, missing: false };
+}
+
+function makeSafeSheetName(name) {
+  // Excel sheet name max 31 chars and cannot contain: : \ / ? * [ ]
+  const cleaned = String(name || 'Sheet')
+    .replace(/[:\\/?*\[\]]/g, ' ')
+    .trim();
+  const clipped = cleaned.slice(0, 31);
+  return clipped || 'Sheet';
+}
+
+function computeColWidths(rows, columns) {
+  const widths = columns.map((c) => ({ wch: Math.max(10, String(c).length) }));
+  const sample = rows.slice(0, 200);
+  for (const r of sample) {
+    for (let i = 0; i < columns.length; i++) {
+      const key = columns[i];
+      const v = r?.[key];
+      const s = v == null ? '' : String(v);
+      widths[i].wch = Math.min(40, Math.max(widths[i].wch, s.length + 2));
+    }
+  }
+  return widths;
+}
+
+function computeColWidthsFromAoa(aoa) {
+  const maxCols = aoa.reduce((m, r) => Math.max(m, Array.isArray(r) ? r.length : 0), 0);
+  const widths = Array.from({ length: maxCols }, () => ({ wch: 10 }));
+  const sample = aoa.slice(0, 200);
+  for (const row of sample) {
+    if (!Array.isArray(row)) continue;
+    for (let i = 0; i < maxCols; i++) {
+      const v = row[i];
+      const s = v == null ? '' : String(v);
+      widths[i].wch = Math.min(55, Math.max(widths[i].wch, s.length + 2));
+    }
+  }
+  return widths;
+}
+
+function applyHeaderStyle(XLSX, ws, { headerBgRgb = '5B3F87', headerFontRgb = 'FFFFFF' } = {}) {
+  if (!ws || !ws['!ref']) return;
+
+  const range = XLSX.utils.decode_range(ws['!ref']);
+  if (range.s.r > range.e.r) return;
+
+  // Freeze the top row.
+  ws['!freeze'] = {
+    xSplit: 0,
+    ySplit: 1,
+    topLeftCell: 'A2',
+    activePane: 'bottomLeft',
+    state: 'frozen',
+  };
+
+  // Make the header taller for wrapped labels.
+  ws['!rows'] = ws['!rows'] || [];
+  ws['!rows'][0] = Object.assign({}, ws['!rows'][0], { hpt: 42 });
+
+  // Style row 1 cells.
+  for (let c = range.s.c; c <= range.e.c; c++) {
+    const addr = XLSX.utils.encode_cell({ r: range.s.r, c });
+    if (!ws[addr]) continue;
+    ws[addr].s = Object.assign({}, ws[addr].s, {
+      fill: { patternType: 'solid', fgColor: { rgb: headerBgRgb } },
+      font: { bold: true, color: { rgb: headerFontRgb } },
+      alignment: { horizontal: 'center', vertical: 'center', wrapText: true },
+    });
+  }
+}
+
+function tryComputeAgeFromBirthDate(birthDate) {
+  const bd = birthDate ? new Date(birthDate) : null;
+  if (!bd || Number.isNaN(bd.getTime())) return null;
+  const now = new Date();
+  let age = now.getFullYear() - bd.getFullYear();
+  const m = now.getMonth() - bd.getMonth();
+  if (m < 0 || (m === 0 && now.getDate() < bd.getDate())) age -= 1;
+  return age >= 0 && age <= 120 ? age : null;
+}
+
+function buildApplicantsExportAoa(applicantRows, licensureByApplicantId) {
+  const headers = [
+    'Timestamp',
+    'Last Name',
+    'First Name',
+    'Middle Name',
+    'Date of Birth',
+    'Age',
+    'Gender',
+    'Educational Attainment',
+    'Date Hired in FSAI',
+    'Security Licensed Number',
+    'LESP Expired Date',
+    'POSITION',
+    'SSS Number',
+    'Pag-Ibig Fund Number',
+    'Philhealth Number',
+    'TIN',
+    'DETACHMENT',
+    'Your Contact Number',
+    'Your Email Address',
+    'COMPLETE PRESENT ADDRESS (House # Street Barangay City)',
+    'COMPLETE PROVINCE ADDRESS (House # Street Barangay City)',
+    'Contact Person Incase of Emergency',
+    'Contact Number',
+    'STATUS',
+  ];
+
+  const aoa = [headers];
+  for (const r of applicantRows) {
+    const lic = licensureByApplicantId?.get?.(r?.applicant_id) || null;
+    const birth = r?.birth_date ?? null;
+    const age = r?.age ?? tryComputeAgeFromBirthDate(birth);
+    const securityNum = r?.security_licensed_num ?? lic?.security_license_number ?? null;
+    const securityExp = lic?.security_expiration ?? null;
+
+    aoa.push([
+      r?.created_at ?? null,
+      r?.last_name ?? null,
+      r?.first_name ?? null,
+      r?.middle_name ?? null,
+      birth,
+      age,
+      r?.gender ?? null,
+      r?.education_attainment ?? null,
+      r?.date_hired_fsai ?? null,
+      securityNum,
+      securityExp,
+      r?.client_position ?? null,
+      r?.sss_number ?? null,
+      r?.pagibig_number ?? null,
+      r?.philhealth_number ?? null,
+      r?.tin_number ?? null,
+      r?.detachment ?? null,
+      r?.client_contact_num ?? null,
+      r?.client_email ?? null,
+      r?.present_address ?? null,
+      r?.province_address ?? null,
+      r?.emergency_contact_person ?? null,
+      r?.emergency_contact_num ?? null,
+      r?.status ?? null,
+    ]);
+  }
+
+  return aoa;
+}
+
 async function insertAuditEvent(admin, payload) {
   try {
     const actorUserId = payload?.actor_user_id ? String(payload.actor_user_id) : null;
@@ -261,6 +448,127 @@ function parseEmailTemplateNotes(notes) {
 
   return { subject: null, bodyHtml: null, legacyMessage: raw };
 }
+
+ipcMain.handle('admin:exportDatabaseExcel', async () => {
+  const admin = getAdminSupabase();
+  const XLSX = require('xlsx');
+
+  const tables = [
+    // Core app data
+    'admins',
+    'applicants',
+    'licensure',
+    'certificates',
+    'biodata',
+    'employment_history',
+    'employment_record',
+
+    // Notifications/audit
+    'notification_email_settings',
+    'notification_preferences',
+    'licensure_notification_log',
+    'audit_log',
+
+    // RBAC tables (if installed)
+    'app_roles',
+    'modules',
+    'role_module_access',
+    'profiles',
+  ];
+
+  const defaultName = `database-export-${new Date().toISOString().replace(/[:]/g, '-').slice(0, 19)}.xlsx`;
+  const save = await dialog.showSaveDialog({
+    title: 'Export database (Excel)',
+    defaultPath: path.join(app.getPath('downloads'), defaultName),
+    filters: [{ name: 'Excel Workbook', extensions: ['xlsx'] }],
+  });
+  if (save.canceled || !save.filePath) {
+    return { cancelled: true };
+  }
+
+  const wb = XLSX.utils.book_new();
+  const skipped = [];
+  const exported = [];
+
+  // Cache for joined exports.
+  let licensureByApplicantId = null;
+
+  // Cover sheet
+  const cover = XLSX.utils.aoa_to_sheet([
+    ['Database Export'],
+    ['Generated at', new Date().toLocaleString()],
+    ['Tables included', String(tables.length)],
+    [''],
+    ['Notes'],
+    ['- Each sheet corresponds to a table'],
+    ['- Some tables may be skipped if not installed'],
+  ]);
+  XLSX.utils.book_append_sheet(wb, cover, 'README');
+
+  for (const t of tables) {
+    try {
+      const { rows, missing } = await fetchAllRows(admin, t);
+      if (missing) {
+        skipped.push({ table: t, reason: 'missing' });
+        continue;
+      }
+
+      let sheet;
+      if (!rows.length) {
+        sheet = XLSX.utils.aoa_to_sheet([['No rows']]);
+      } else {
+        if (t === 'applicants') {
+          if (!licensureByApplicantId) {
+            try {
+              const licRes = await fetchAllRows(admin, 'licensure');
+              const map = new Map();
+              for (const lr of licRes.rows || []) {
+                if (!lr?.applicant_id) continue;
+                map.set(lr.applicant_id, lr);
+              }
+              licensureByApplicantId = map;
+            } catch {
+              licensureByApplicantId = new Map();
+            }
+          }
+          const aoa = buildApplicantsExportAoa(rows, licensureByApplicantId);
+          sheet = XLSX.utils.aoa_to_sheet(aoa);
+          sheet['!cols'] = computeColWidthsFromAoa(aoa);
+        } else {
+          const columnSet = new Set();
+          for (const r of rows.slice(0, 500)) {
+            for (const k of Object.keys(r || {})) columnSet.add(k);
+          }
+          const columns = Array.from(columnSet);
+          sheet = XLSX.utils.json_to_sheet(rows, { header: columns });
+          sheet['!cols'] = computeColWidths(rows, columns);
+        }
+
+        if (sheet['!ref']) {
+          sheet['!autofilter'] = { ref: sheet['!ref'] };
+        }
+
+        // Apply screenshot-like header formatting (purple, bold white, wrapped) and freeze.
+        applyHeaderStyle(XLSX, sheet, { headerBgRgb: '5B3F87', headerFontRgb: 'FFFFFF' });
+      }
+
+      const sheetName = makeSafeSheetName(t);
+      XLSX.utils.book_append_sheet(wb, sheet, sheetName);
+      exported.push(t);
+    } catch (e) {
+      skipped.push({ table: t, reason: String(e?.message || e) });
+    }
+  }
+
+  XLSX.writeFile(wb, save.filePath, { compression: true, cellStyles: true });
+  return {
+    cancelled: false,
+    ok: true,
+    filePath: save.filePath,
+    exportedTables: exported,
+    skippedTables: skipped,
+  };
+});
 
 function sanitizeEmailBodyHtml(inputHtml) {
   let html = String(inputHtml ?? '');

@@ -22,6 +22,7 @@ import EmployeeEditorModal from "../../../Components/EmployeeEditorModal";
 type Applicant = {
   applicant_id: string;
   created_at: string;
+  custom_id: string | null;
   last_name: string | null;
   first_name: string | null;
   middle_name: string | null;
@@ -213,7 +214,7 @@ function EmployeeDetailsInner() {
         const { data: a, error: aErr } = await supabase
           .from("applicants")
           .select(
-            "applicant_id, created_at, last_name, first_name, middle_name, extn_name, birth_date, age, gender, education_attainment, date_hired_fsai, client_position, detachment, security_licensed_num, sss_number, pagibig_number, philhealth_number, tin_number, client_contact_num, client_email, present_address, province_address, emergency_contact_person, emergency_contact_num, status, profile_image_path, sss_certain_path, tin_id_path, pag_ibig_id_path, philhealth_id_path, security_license_path"
+            "applicant_id, created_at, custom_id, last_name, first_name, middle_name, extn_name, birth_date, age, gender, education_attainment, date_hired_fsai, client_position, detachment, security_licensed_num, sss_number, pagibig_number, philhealth_number, tin_number, client_contact_num, client_email, present_address, province_address, emergency_contact_person, emergency_contact_num, status, profile_image_path, sss_certain_path, tin_id_path, pag_ibig_id_path, philhealth_id_path, security_license_path"
           )
           .eq("applicant_id", id)
           .maybeSingle();
@@ -242,6 +243,7 @@ function EmployeeDetailsInner() {
             .eq("applicant_id", id)
             .maybeSingle(),
         ]);
+
 
         const bRes = await supabase
           .from("biodata")
@@ -456,6 +458,7 @@ function EmployeeDetailsInner() {
           </div>
 
           <div className="mt-5 grid grid-cols-1 md:grid-cols-2 gap-5">
+            <InfoRow icon={ShieldCheck} label="Custom ID" value={applicant.custom_id ?? "—"} />
             <InfoRow icon={User} label="Gender" value={applicant.gender ?? "—"} />
             <InfoRow icon={Phone} label="Phone Number" value={applicant.client_contact_num ?? "—"} />
             <InfoRow icon={CalendarDays} label="Birth Date" value={formatDate(applicant.birth_date)} />

@@ -17,6 +17,7 @@ export type EmployeeEditorModalProps = {
 };
 
 type ApplicantDraft = {
+  custom_id: string;
   first_name: string;
   middle_name: string;
   last_name: string;
@@ -89,6 +90,7 @@ type EmploymentItem = {
 };
 
 type ApplicantRow = {
+  custom_id: string | null;
   first_name: string | null;
   middle_name: string | null;
   last_name: string | null;
@@ -170,6 +172,7 @@ const BUCKETS = {
 
 function emptyApplicantDraft(): ApplicantDraft {
   return {
+    custom_id: "",
     first_name: "",
     middle_name: "",
     last_name: "",
@@ -258,6 +261,16 @@ function normalizeStatus(value: string | null | undefined) {
   return "ACTIVE";
 }
 
+function generateCustomId() {
+  // Compact, human-friendly: e.g. EMP-7K3Q9D2H
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let out = "";
+  for (let i = 0; i < 8; i++) {
+    out += alphabet[Math.floor(Math.random() * alphabet.length)];
+  }
+  return `EMP-${out}`;
+}
+
 function generateUuidV4(): string {
   try {
     type CryptoLike = {
@@ -338,6 +351,7 @@ export default function EmployeeEditorModal({
   const [lic, setLic] = useState<LicensureDraft>(emptyLicensureDraft);
   const [bio, setBio] = useState<BiodataDraft>(emptyBiodataDraft);
   const [jobs, setJobs] = useState<EmploymentItem[]>([]);
+
 
   const effectiveId = mode === "edit" ? applicantId ?? null : draftApplicantId;
 
@@ -428,7 +442,7 @@ export default function EmployeeEditorModal({
         const aRes = await supabase
           .from("applicants")
           .select(
-            "applicant_id, first_name, middle_name, last_name, extn_name, gender, birth_date, age, client_contact_num, client_email, present_address, province_address, emergency_contact_person, emergency_contact_num, education_attainment, date_hired_fsai, client_position, detachment, status, security_licensed_num, sss_number, pagibig_number, philhealth_number, tin_number, profile_image_path, sss_certain_path, tin_id_path, pag_ibig_id_path, philhealth_id_path, security_license_path"
+            "applicant_id, custom_id, first_name, middle_name, last_name, extn_name, gender, birth_date, age, client_contact_num, client_email, present_address, province_address, emergency_contact_person, emergency_contact_num, education_attainment, date_hired_fsai, client_position, detachment, status, security_licensed_num, sss_number, pagibig_number, philhealth_number, tin_number, profile_image_path, sss_certain_path, tin_id_path, pag_ibig_id_path, philhealth_id_path, security_license_path"
           )
           .eq("applicant_id", idToLoad)
           .maybeSingle();
@@ -499,6 +513,7 @@ export default function EmployeeEditorModal({
 
         const a = aRes.data as unknown as Partial<ApplicantRow> | null;
         setApp({
+          custom_id: a?.custom_id ?? "",
           first_name: a?.first_name ?? "",
           middle_name: a?.middle_name ?? "",
           last_name: a?.last_name ?? "",
@@ -621,6 +636,7 @@ export default function EmployeeEditorModal({
 
         const aPayload: Record<string, string | number | null> = {
           applicant_id: createId,
+          custom_id: toNullableText(app.custom_id),
           first_name: toNullableText(app.first_name),
           middle_name: toNullableText(app.middle_name),
           last_name: toNullableText(app.last_name),
@@ -731,6 +747,7 @@ export default function EmployeeEditorModal({
       const up = await supabase
         .from("applicants")
         .update({
+          custom_id: toNullableText(app.custom_id),
           first_name: toNullableText(app.first_name),
           middle_name: toNullableText(app.middle_name),
           last_name: toNullableText(app.last_name),
@@ -946,6 +963,33 @@ export default function EmployeeEditorModal({
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <label className="text-sm text-black md:col-span-2">
+                  <div className="flex items-center justify-between">
+                    <div className="text-gray-600 mb-1">Custom ID</div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setApp((d) => ({ ...d, custom_id: generateCustomId() }))}
+                        className="text-xs text-blue-600 hover:underline"
+                      >
+                        Generate
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setApp((d) => ({ ...d, custom_id: "" }))}
+                        className="text-xs text-gray-600 hover:underline"
+                      >
+                        Clear
+                      </button>
+                    </div>
+                  </div>
+                  <input
+                    value={app.custom_id}
+                    onChange={(e) => setApp((d) => ({ ...d, custom_id: e.target.value }))}
+                    placeholder="EMP-XXXXXXXX"
+                    className="w-full border rounded-xl px-3 py-2"
+                  />
+                </label>
                 <label className="text-sm text-black">
                   <div className="text-gray-600 mb-1">First Name</div>
                   <input value={app.first_name} onChange={(e) => setApp((d) => ({ ...d, first_name: e.target.value }))}

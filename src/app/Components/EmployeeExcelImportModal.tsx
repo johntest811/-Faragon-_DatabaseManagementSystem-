@@ -13,6 +13,7 @@ export type EmployeeExcelImportModalProps = {
 type RowObject = Record<string, unknown>;
 
 type ApplicantInsert = {
+  custom_id?: string | null;
   first_name?: string | null;
   middle_name?: string | null;
   last_name?: string | null;
@@ -163,12 +164,37 @@ function toNullableInt(v: unknown): number | null {
 }
 
 function pick(row: RowObject, keys: string[]): unknown {
+  const rawKeys = Object.keys(row);
+  const normalizedToRaw = new Map<string, string>();
+  for (const rawKey of rawKeys) {
+    const nk = normKey(rawKey);
+    if (nk && !normalizedToRaw.has(nk)) normalizedToRaw.set(nk, rawKey);
+  }
+
+  // First pass: exact normalized header match.
   for (const k of keys) {
     const nk = normKey(k);
-    for (const rawKey of Object.keys(row)) {
-      if (normKey(rawKey) === nk) return row[rawKey];
-    }
+    const raw = normalizedToRaw.get(nk);
+    if (raw != null) return row[raw];
   }
+
+  // Second pass: loose match for near-misses (e.g. "securitylicense#" vs "securitylicensenumber").
+  // Only accept if it matches exactly one header to avoid accidental mapping.
+  const candidates = keys
+    .map((k) => normKey(k))
+    .filter((k) => k && k.length >= 4);
+  if (!candidates.length) return undefined;
+
+  for (const cand of candidates) {
+    const matches: string[] = [];
+    for (const [nk, raw] of normalizedToRaw.entries()) {
+      if (nk === cand) continue;
+      if (nk.includes(cand) || cand.includes(nk)) matches.push(raw);
+      if (matches.length > 1) break;
+    }
+    if (matches.length === 1) return row[matches[0]];
+  }
+
   return undefined;
 }
 
@@ -184,8 +210,11 @@ function rowToApplicant(row: RowObject): { payload: ApplicantInsert | null; erro
 
   // Keep imports tolerant: if required identity columns are missing, fill with N/A
   // so the record can still be inserted.
-  const firstName = toText(pick(row, ["first_name", "first name", "firstname"])).trim() || "N/A";
-  const lastName = toText(pick(row, ["last_name", "last name", "lastname"])).trim() || "N/A";
+  const firstName =
+    toText(pick(row, ["first_name", "first name", "firstname", "given name", "givenname"])).trim() || "N/A";
+  const lastName =
+    toText(pick(row, ["last_name", "last name", "lastname", "surname", "family name", "familyname"])).trim() ||
+    "N/A";
 
   // Disambiguate "Contact Number": if the sheet has "Your Contact Number",
   // assume plain "Contact Number" belongs to the emergency contact section.
@@ -196,6 +225,21 @@ function rowToApplicant(row: RowObject): { payload: ApplicantInsert | null; erro
     hasHeader(row, "Your Contact No.");
 
   const payload: ApplicantInsert = {
+    custom_id: toNullableText(
+      pick(row, [
+        "custom id",
+        "custom_id",
+        "employee number",
+        "employee_number",
+        "employee id",
+        "employee_id",
+        "personnel id",
+        "personnel_id",
+        "id number",
+        "id no",
+        "id no.",
+      ])
+    ),
     first_name: firstName,
     middle_name: toNullableText(pick(row, ["middle_name", "middle name", "middlename"])),
     last_name: lastName,
@@ -209,13 +253,29 @@ function rowToApplicant(row: RowObject): { payload: ApplicantInsert | null; erro
       pick(row, [
         "client_contact_num",
         "your contact number",
+        "your contact no",
+        "your contact no.",
         "contact",
         "phone",
+        "phone number",
+        "mobile",
+        "mobile number",
+        "contact no",
+        "contact no.",
         // Keep "contact number" last to reduce ambiguity with emergency contact.
         ...(hasYourContactHeader ? [] : ["contact number"]),
       ])
     ),
-    client_email: toNullableText(pick(row, ["client_email", "your email address", "email address", "email"])),
+    client_email: toNullableText(
+      pick(row, [
+        "client_email",
+        "your email address",
+        "email address",
+        "email",
+        "e-mail",
+        "email add",
+      ])
+    ),
 
     present_address: toNullableText(
       pick(row, [
@@ -254,15 +314,49 @@ function rowToApplicant(row: RowObject): { payload: ApplicantInsert | null; erro
       ])
     ),
 
-    education_attainment: toNullableText(pick(row, ["education_attainment", "education", "educational attainment"])),
-    date_hired_fsai: toDateYmd(pick(row, ["date_hired_fsai", "date hired", "date hired fsai", "date hired in fsai"])),
+    education_attainment: toNullableText(
+      pick(row, [
+        "education_attainment",
+        "education",
+        "educational attainment",
+        "education level",
+        "highest education",
+      ])
+    ),
+    date_hired_fsai: toDateYmd(
+      pick(row, [
+        "date_hired_fsai",
+        "date hired",
+        "date hired fsai",
+        "date hired in fsai",
+        "hire date",
+        "join date",
+        "start date",
+      ])
+    ),
 
-    client_position: toNullableText(pick(row, ["client_position", "position"])),
-    detachment: toNullableText(pick(row, ["detachment"])),
+    client_position: toNullableText(
+      pick(row, ["client_position", "position", "job title", "designation", "role"])
+    ),
+    detachment: toNullableText(
+      pick(row, ["detachment", "deployment", "assignment", "post", "site", "location"])
+    ),
     status: normalizeStatus(pick(row, ["status"])),
 
     security_licensed_num: toNullableText(
-      pick(row, ["security_licensed_num", "security licensed num", "security licensed number", "security licensed number "])
+      pick(row, [
+        "security_licensed_num",
+        "security licensed num",
+        "security licensed number",
+        "security licensed number ",
+        "security license no",
+        "security license no.",
+        "security license #",
+        "security license number",
+        "security license",
+        "lesp no",
+        "lesp number",
+      ])
     ),
     sss_number: toNullableText(pick(row, ["sss_number", "sss number", "sss no", "sss"])),
     pagibig_number: toNullableText(pick(row, ["pagibig_number", "pag ibig fund number", "pag ibig", "pagibig"])),
@@ -279,8 +373,14 @@ function rowToLicensure(row: RowObject) {
       "security licensed number",
       "security licensed num",
       "security license number",
+      "security license no",
+      "security license no.",
+      "security license #",
+      "security license",
       "security_licensed_num",
       "security_licensed_number",
+      "lesp no",
+      "lesp number",
     ])
   );
 
@@ -290,6 +390,12 @@ function rowToLicensure(row: RowObject) {
       "lesp expiry date",
       "lesp expiration",
       "lesp expiration date",
+      "lesp expiry",
+      "lesp expiration dt",
+      "license expiration",
+      "license expiry",
+      "expiry date",
+      "expiration date",
       "security expiration",
       "security expiry date",
       "security expired date",
@@ -365,7 +471,7 @@ export default function EmployeeExcelImportModal({ open, onClose, onImported }: 
       total: rows.length,
       ok: converted.filter((x) => x.ok).length,
       bad: converted.filter((x) => !x.ok).length,
-      head: converted.slice(0, 10),
+      head: converted.slice(0, 50),
     };
   }, [rows]);
 
@@ -640,28 +746,30 @@ export default function EmployeeExcelImportModal({ open, onClose, onImported }: 
             </div>
 
             <div className="mt-3 overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="text-left text-gray-600">
-                    <th className="py-2 pr-3">Row</th>
-                    <th className="py-2 pr-3">Name</th>
-                    <th className="py-2 pr-3">Status</th>
-                    <th className="py-2 pr-3">OK</th>
-                    <th className="py-2 pr-3">Error</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {preview.head.map((r) => (
-                    <tr key={r.idx} className="border-t">
-                      <td className="py-2 pr-3">{r.idx}</td>
-                      <td className="py-2 pr-3">{r.name}</td>
-                      <td className="py-2 pr-3">{r.status}</td>
-                      <td className="py-2 pr-3">{r.ok ? "Yes" : "No"}</td>
-                      <td className="py-2 pr-3 text-red-600">{r.error}</td>
+              <div className="max-h-[260px] overflow-y-auto rounded-xl border">
+                <table className="w-full text-xs">
+                  <thead className="sticky top-0 bg-white">
+                    <tr className="text-left text-gray-600 border-b">
+                      <th className="py-2 px-3">Row</th>
+                      <th className="py-2 px-3">Name</th>
+                      <th className="py-2 px-3">Status</th>
+                      <th className="py-2 px-3">OK</th>
+                      <th className="py-2 px-3">Error</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {preview.head.map((r) => (
+                      <tr key={r.idx} className="border-b last:border-b-0">
+                        <td className="py-1.5 px-3 whitespace-nowrap">{r.idx}</td>
+                        <td className="py-1.5 px-3">{r.name}</td>
+                        <td className="py-1.5 px-3 whitespace-nowrap">{r.status}</td>
+                        <td className="py-1.5 px-3 whitespace-nowrap">{r.ok ? "Yes" : "No"}</td>
+                        <td className="py-1.5 px-3 text-red-600">{r.error}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
 
             <div className="mt-3 text-xs text-gray-500">

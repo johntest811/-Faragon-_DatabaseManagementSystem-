@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../Client/SupabaseClients";
 import { Eye, RotateCcw } from "lucide-react";
+import { Pencil, ChevronDown } from "lucide-react";
 
 type Applicant = {
   applicant_id: string;
@@ -49,6 +50,7 @@ export default function ArchivePage() {
   const [error, setError] = useState<string>("");
   const [items, setItems] = useState<Applicant[]>([]);
   const [search, setSearch] = useState("");
+const [sortBy, setSortBy] = useState<"name" | "created_at">("name");
 
   useEffect(() => {
     const run = async () => {
@@ -133,10 +135,18 @@ export default function ArchivePage() {
             className="bg-white border rounded-full px-4 py-2 shadow-sm w-full md:w-[360px]"
           />
         </div>
-        <div className="flex items-center gap-2">
-          <Link href="/Main_Modules/Employees/" className="px-4 py-2 rounded-xl bg-white border">
-            Back to Employees
-          </Link>
+
+        <div className="flex items-center gap-3 justify-between md:justify-end">
+          <div className="flex items-center gap-2">
+            <div className="text-xs text-gray-500">Sort By:</div>
+            <button
+              onClick={() => setSortBy((v) => (v === "name" ? "created_at" : "name"))}
+              className="px-4 py-2 rounded-full bg-[#FFDA03] text-black font-medium flex items-center gap-2"
+            >
+              {sortBy === "name" ? "Name" : "Newest"}
+              <ChevronDown className="w-4 h-4" />
+            </button>
+          </div>
         </div>
       </div>
 

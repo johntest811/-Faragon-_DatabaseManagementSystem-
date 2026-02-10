@@ -3,6 +3,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/app/Client/SupabaseClients";
+import { useAuthRole } from "@/app/Client/useRbac";
 
 type EmailSettingsRow = {
 	id: string;
@@ -89,6 +90,15 @@ function getElectronAPI() {
 	const w = globalThis as unknown as { window?: unknown };
 	const anyWin = (w as unknown as { electronAPI?: unknown }).electronAPI as
 		| {
+			admin?: {
+				exportDatabaseExcel?: () => Promise<{
+					cancelled: boolean;
+					ok?: boolean;
+					filePath?: string;
+					exportedTables?: string[];
+					skippedTables?: Array<{ table: string; reason: string }>;
+				}>;
+			};
 			settings?: {
 				loadNotificationConfig?: () => Promise<{
 					email: EmailSettingsRow | null;
@@ -380,9 +390,12 @@ export default function SettingsPage() {
 	const router = useRouter();
 	const electronAPI = useMemo(() => getElectronAPI(), []);
 	const isDesktop = Boolean(electronAPI?.settings?.loadNotificationConfig);
+	const { role: sessionRole } = useAuthRole();
+	const canAdminExport = sessionRole === "admin" || sessionRole === "superadmin";
 
 	const [loading, setLoading] = useState(true);
 	const [saving, setSaving] = useState(false);
+	const [exporting, setExporting] = useState(false);
 	const [error, setError] = useState<string>("");
 	const [success, setSuccess] = useState<string>("");
 
@@ -826,12 +839,48 @@ export default function SettingsPage() {
 					<div className="text-lg font-semibold text-black">Settings</div>
 					<div className="text-sm text-gray-500">Email notifications for expiring licensures</div>
 				</div>
-				<button
-					onClick={() => router.push("/Main_Modules/Dashboard/")}
-					className="px-4 py-2 rounded-xl bg-white border"
-				>
-					Back
-				</button>
+				<div className="flex items-center gap-2">
+					{canAdminExport ? (
+						<button
+							onClick={async () => {
+								setExporting(true);
+								setError("");
+								setSuccess("");
+								try {
+									if (!electronAPI?.admin?.exportDatabaseExcel) {
+										throw new Error("Export is only available in the Electron desktop app.");
+									}
+									const res = await electronAPI.admin.exportDatabaseExcel();
+									if (res?.cancelled) {
+										setSuccess("Export cancelled.");
+										return;
+									}
+									if (!res?.ok || !res?.filePath) {
+										throw new Error("Export failed.");
+									}
+									const skipped = Array.isArray(res.skippedTables) ? res.skippedTables.length : 0;
+									setSuccess(
+										`Exported to: ${res.filePath}${skipped ? ` (skipped ${skipped} missing tables)` : ""}`
+									);
+								} catch (e: unknown) {
+									setError(errorMessage(e));
+								} finally {
+									setExporting(false);
+								}
+						}}
+							disabled={exporting || !isDesktop}
+							className="px-4 py-2 rounded-xl bg-[#FFDA03] text-black font-medium disabled:opacity-50"
+						>
+							{exporting ? "Exporting…" : "Export database"}
+						</button>
+					) : null}
+					<button
+						onClick={() => router.push("/Main_Modules/Dashboard/")}
+						className="px-4 py-2 rounded-xl bg-white border"
+					>
+						Back
+					</button>
+				</div>
 			</div>
 
 			<div className="flex flex-wrap items-center gap-3 mb-4">

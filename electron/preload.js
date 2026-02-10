@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   admin: {
     createUser: (payload) => ipcRenderer.invoke('admin:createUser', payload),
     deleteUserPermanently: (payload) => ipcRenderer.invoke('admin:deleteUserPermanently', payload),
+    exportDatabaseExcel: () => ipcRenderer.invoke('admin:exportDatabaseExcel'),
   },
 
   settings: {
