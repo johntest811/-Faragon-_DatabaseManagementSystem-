@@ -3,7 +3,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../Client/SupabaseClients";
-import { Pencil, Eye, SlidersHorizontal, ChevronDown, Trash2, Upload } from "lucide-react";
+import { Pencil, Eye, SlidersHorizontal, ChevronDown, Trash2, Upload, LayoutGrid, Table } from "lucide-react";
 import { useAuthRole } from "../../Client/useRbac";
 import EmployeeEditorModal from "../../Components/EmployeeEditorModal";
 import EmployeeExcelImportModal from "../../Components/EmployeeExcelImportModal";
@@ -16,6 +16,7 @@ type Applicant = {
 	last_name: string | null;
 	extn_name: string | null;
 	client_position: string | null;
+	date_hired_fsai: string | null;
 	detachment: string | null;
 	status: string | null;
 	gender: string | null;
@@ -63,6 +64,14 @@ export default function EmployeesPage() {
 	const [employees, setEmployees] = useState<Applicant[]>([]);
 	const [search, setSearch] = useState("");
 	const [sortBy, setSortBy] = useState<"name" | "created_at">("name");
+	const [viewMode, setViewMode] = useState<"grid" | "table">(() => {
+  if (typeof window !== "undefined") {
+    return (localStorage.getItem("employees:viewMode") as "grid" | "table") || "grid";
+  }
+  return "grid";
+});
+
+
 
 	const [filtersOpen, setFiltersOpen] = useState(false);
 	const [statusFilter, setStatusFilter] = useState<"ALL" | "ACTIVE" | "INACTIVE" | "REASSIGN" | "RETIRED">("ALL");
@@ -70,6 +79,9 @@ export default function EmployeesPage() {
 	const [detachmentFilter, setDetachmentFilter] = useState<string>("ALL");
 	const [positionFilter, setPositionFilter] = useState<string>("ALL");
 	const [hasPhotoFilter, setHasPhotoFilter] = useState<"ALL" | "YES" | "NO">("ALL");
+	const [hiredMonthFilter, setHiredMonthFilter] = useState("ALL"); // YYYY-MM
+    const [yearsServiceFilter, setYearsServiceFilter] = useState<"ALL" | "<1" | "1-5" | ">5">("ALL");
+
 
 	const [editorOpen, setEditorOpen] = useState(false);
 	const [editorMode, setEditorMode] = useState<"create" | "edit">("edit");
@@ -89,7 +101,7 @@ export default function EmployeesPage() {
 			const { data, error: fetchError } = await supabase
 				.from("applicants")
 				.select(
-					"applicant_id, created_at, first_name, middle_name, last_name, extn_name, client_position, detachment, status, gender, birth_date, age, client_contact_num, client_email, profile_image_path, is_archived, is_trashed"
+					"applicant_id, created_at, date_hired_fsai, first_name, middle_name, last_name, extn_name, client_position, detachment, status, gender, birth_date, age, client_contact_num, client_email, profile_image_path, is_archived, is_trashed"
 				)
 				.eq("is_archived", false)
 				.eq("is_trashed", false)
@@ -107,6 +119,13 @@ export default function EmployeesPage() {
 			setLoading(false);
 		}
 	}
+
+	useEffect(() => {
+  if (typeof window !== "undefined") {
+    localStorage.setItem("employees:viewMode", viewMode);
+  }
+}, [viewMode]);
+
 
 	useEffect(() => {
 		fetchEmployees();
@@ -159,6 +178,33 @@ export default function EmployeesPage() {
 			});
 		}
 
+if (hiredMonthFilter !== "ALL") {
+  list = list.filter((e) => {
+    if (!e.date_hired_fsai) return false;
+    const hired = new Date(e.date_hired_fsai);
+    const month = String(hired.getMonth() + 1).padStart(2, "0"); // 01–12
+    return month === hiredMonthFilter;
+  });
+}
+
+
+
+        if (yearsServiceFilter !== "ALL") {
+             list = list.filter((e) => {
+        if (!e.date_hired_fsai) return false;
+               const hired = new Date(e.date_hired_fsai);
+               const now = new Date();
+               const years =
+           (now.getTime() - hired.getTime()) / (1000 * 60 * 60 * 24 * 365.25);
+
+				if (yearsServiceFilter === "<1") return years < 1;
+				if (yearsServiceFilter === "1-5") return years >= 1 && years <= 5;
+				if (yearsServiceFilter === ">5") return years > 5;
+				return true;
+			});
+        }
+
+
 		if (q) {
 			list = list.filter((e) => {
 				const haystack = [
@@ -189,7 +235,18 @@ export default function EmployeesPage() {
 		});
 
 		return sorted;
-	}, [employees, search, sortBy, statusFilter, genderFilter, detachmentFilter, positionFilter, hasPhotoFilter]);
+	}, [
+  employees,
+  search,
+  sortBy,
+  statusFilter,
+  genderFilter,
+  detachmentFilter,
+  positionFilter,
+  hasPhotoFilter,
+  hiredMonthFilter,
+  yearsServiceFilter,
+]);
 
 	const filterOptions = useMemo(() => {
 		const det = new Set<string>();
@@ -213,6 +270,9 @@ export default function EmployeesPage() {
 		setDetachmentFilter("ALL");
 		setPositionFilter("ALL");
 		setHasPhotoFilter("ALL");
+		setHasPhotoFilter("ALL");
+        setHiredMonthFilter("ALL");
+        setYearsServiceFilter("ALL");
 	}
 
 	function openCreate() {
@@ -327,16 +387,26 @@ export default function EmployeesPage() {
 					</button>
 				</div>
 				<div className="flex items-center gap-3 justify-between md:justify-end">
-					<div className="flex items-center gap-2">
-						<div className="text-xs text-gray-500">Sort By:</div>
+					<div className="flex items-center gap-2 ml-2">
 						<button
-							onClick={() => setSortBy((v) => (v === "name" ? "created_at" : "name"))}
-							className="px-4 py-2 rounded-full bg-[#FFDA03] text-black font-medium flex items-center gap-2"
-						>
-							{sortBy === "name" ? "Name" : "Newest"}
-							<ChevronDown className="w-4 h-4" />
+                        onClick={() => setViewMode("grid")}
+                        className={`h-10 w-10 rounded-xl border flex items-center justify-center ${
+                         viewMode === "grid" ? "bg-[#FFDA03]" : "bg-white"
+                              }`}
+                             >
+                       <LayoutGrid className="w-5 h-5 text-black" />
+                    </button>
+
+                     <button
+                        onClick={() => setViewMode("table")}
+                        className={`h-10 w-10 rounded-xl border flex items-center justify-center ${
+                        viewMode === "table" ? "bg-[#FFDA03]" : "bg-white"
+                           }`}
+                           >
+                     <Table className="w-5 h-5 text-black" />
 						</button>
 					</div>
+
 					{sessionRole !== "employee" ? (
 						<div className="flex items-center gap-2">
 							<button
@@ -357,10 +427,14 @@ export default function EmployeesPage() {
 			{error ? <div className="text-red-600 text-sm">{error}</div> : null}
 
 			{loading ? (
-				<div className="bg-white rounded-2xl border shadow-sm p-8 text-center text-gray-500">Loading employees...</div>
+  <div className="bg-white rounded-2xl border shadow-sm p-8 text-center text-gray-500">
+    Loading employees...
+  </div>
 			) : filtered.length === 0 ? (
-				<div className="bg-white rounded-2xl border shadow-sm p-8 text-center text-gray-500">No employees found.</div>
-			) : (
+  <div className="bg-white rounded-2xl border shadow-sm p-8 text-center text-gray-500">
+    No employees found.
+  </div>
+) : viewMode === "grid" ? (
 				<div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
 					{filtered.map((e) => {
 						const name = getFullName(e);
@@ -368,9 +442,9 @@ export default function EmployeesPage() {
 						const status = (e.status ?? "").trim().toUpperCase();
 						const isActive = status === "ACTIVE";
 						const canClick = sessionRole !== "employee";
-						const detailsHref = `/Main_Modules/Employees/details/?id=${encodeURIComponent(e.applicant_id)}&from=${encodeURIComponent(
-							"/Main_Modules/Employees/"
-						)}`;
+      const detailsHref = `/Main_Modules/Employees/details/?id=${encodeURIComponent(
+        e.applicant_id
+      )}&from=${encodeURIComponent("/Main_Modules/Employees/")}`;
 
 						return (
 							<div
@@ -404,10 +478,12 @@ export default function EmployeesPage() {
 										<div className="text-sm font-bold text-gray-900 truncate">{name}</div>
 										<div className="text-xs text-gray-500 truncate">{shortCode(e.applicant_id)}</div>
 										<div className="mt-1 text-xs text-gray-500 truncate">
-											<span className="text-gray-500">Job Title:</span> {e.client_position ?? "—"}
+                <span className="text-gray-500">Job Title:</span>{" "}
+                {e.client_position ?? "—"}
 										</div>
 										<div className="text-xs text-gray-500 truncate">
-											<span className="text-gray-500">Detachment:</span> {e.detachment ?? "—"}
+                <span className="text-gray-500">Detachment:</span>{" "}
+                {e.detachment ?? "—"}
 										</div>
 									</div>
 								</div>
@@ -477,7 +553,73 @@ export default function EmployeesPage() {
 					);
 					})}
 				</div>
-			)}
+) : (
+  <div className="overflow-x-auto bg-white border rounded-2xl shadow-sm">
+    <table className="min-w-full text-sm">
+      <thead className="bg-gray-100">
+        <tr>
+          <th className="px-4 py-3 text-left"> </th>
+          <th className="px-4 py-3 text-left">Name</th>
+          <th className="px-4 py-3 text-left">Position</th>
+          <th className="px-4 py-3 text-left">Gender</th>
+          <th className="px-4 py-3 text-left">Birth Date</th>
+          <th className="px-4 py-3 text-left">Age</th>
+          <th className="px-4 py-3 text-left">Hired Date</th>
+          <th className="px-4 py-3 text-left">Detachment</th>
+          <th className="px-4 py-3 text-left">Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        {filtered.map((e) => {
+          const profileUrl = getProfileUrl(e.profile_image_path);
+          const detailsHref = `/Main_Modules/Employees/details/?id=${encodeURIComponent(
+            e.applicant_id
+          )}&from=${encodeURIComponent("/Main_Modules/Employees/")}`;
+
+          return (
+            <tr
+              key={e.applicant_id}
+              onClick={() => router.push(detailsHref)}
+              className="border-t hover:bg-gray-50 cursor-pointer"
+            >
+              <td className="px-4 py-3">
+                <div className="h-10 w-10 rounded-full bg-gray-100 overflow-hidden">
+                  {profileUrl && (
+                    <img src={profileUrl} alt="" className="h-full w-full object-cover" />
+                  )}
+                </div>
+              </td>
+
+              <td className="px-4 py-3 font-semibold">{getFullName(e)}</td>
+              <td className="px-4 py-3">{e.client_position ?? "—"}</td>
+              <td className="px-4 py-3">{e.gender ?? "—"}</td>
+              <td className="px-4 py-3">{e.birth_date ?? "—"}</td>
+              <td className="px-4 py-3">{e.age ?? "—"}</td>
+              <td className="px-4 py-3">
+                {e.date_hired_fsai
+                  ? new Date(e.date_hired_fsai).toLocaleDateString()
+                  : "—"}
+              </td>
+              <td className="px-4 py-3">{e.detachment ?? "—"}</td>
+              <td className="px-4 py-3">
+                <span
+                  className={`px-3 py-1 rounded-full text-xs font-bold ${
+                    normalizeStatus(e.status) === "ACTIVE"
+                      ? "bg-emerald-500 text-white"
+                      : "bg-red-500 text-white"
+                  }`}
+                >
+                  {normalizeStatus(e.status)}
+                </span>
+              </td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  </div>
+)}
+
 
 			{trashOpen ? (
 				<div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
@@ -553,6 +695,45 @@ export default function EmployeesPage() {
 										<option value="RETIRED">RETIRED</option>
 									</select>
 								</label>
+
+
+								<label className="text-sm text-black">
+                                  <div className="text-gray-600 mb-1">Hired Month</div>
+                                    <select
+  value={hiredMonthFilter}
+  onChange={(e) => setHiredMonthFilter(e.target.value)}
+  className="w-full border rounded-xl px-3 py-2 bg-white"
+>
+  <option value="ALL">All</option>
+  <option value="01">January</option>
+  <option value="02">February</option>
+  <option value="03">March</option>
+  <option value="04">April</option>
+  <option value="05">May</option>
+  <option value="06">June</option>
+  <option value="07">July</option>
+  <option value="08">August</option>
+  <option value="09">September</option>
+  <option value="10">October</option>
+  <option value="11">November</option>
+  <option value="12">December</option>
+</select>
+
+                                 </label>
+
+                                <label className="text-sm text-black">
+                                  <div className="text-gray-600 mb-1">Years of Service</div>
+                                    <select
+                                        value={yearsServiceFilter}
+                                        onChange={(e) => setYearsServiceFilter(e.target.value as any)}
+                                        className="w-full border rounded-xl px-3 py-2 bg-white"
+                                   >
+                                        <option value="ALL">All</option>
+                                        <option value="<1">&lt; 1 year</option>
+                                        <option value="1-5">1 – 5 years</option>
+                                        <option value=">5">&gt; 5 years</option>
+                                        </select>
+                                 </label>
 
 								<label className="text-sm text-black">
 									<div className="text-gray-600 mb-1">Has Photo</div>
