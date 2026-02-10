@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import ClientRoot from "./Components/ClientRoot";
-import SplashScreen from "./Components/SplashScreen";
+
 
 
 const geistSans = Geist({
@@ -30,6 +30,7 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
+        
         <ClientRoot>{children}</ClientRoot>
       </body>
     </html>
