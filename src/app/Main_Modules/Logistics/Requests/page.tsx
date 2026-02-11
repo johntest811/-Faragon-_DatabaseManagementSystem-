@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { Eye, Search } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Eye, Search, LayoutGrid, Table } from "lucide-react";
 
 type RequestRow = {
   date: string;
@@ -74,6 +74,49 @@ function StatusBadge({ status }: { status: string }) {
 export default function LogisticsRequestsPage() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("All");
+  const [sortBy, setSortBy] = useState<"name" | "newest" | "expiring">("newest");
+  const [viewMode, setViewMode] = useState<"table" | "grid">("table");
+
+  useEffect(() => {
+    try {
+      const saved = window.localStorage.getItem("logistics:requests:viewMode");
+      if (saved === "table" || saved === "grid") setViewMode(saved);
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem("logistics:requests:viewMode", viewMode);
+    } catch {
+      // ignore
+    }
+  }, [viewMode]);
+
+  function parseRequestDateMs(value: string) {
+    const [datePart, timePart] = value.split(" - ").map((s) => s.trim());
+    if (!datePart) return 0;
+
+    const [mStr, dStr, yStr] = datePart.split("/");
+    const m = Number(mStr);
+    const d = Number(dStr);
+    const y = Number(yStr);
+
+    let hh = 0;
+    let mm = 0;
+    let ss = 0;
+    if (timePart) {
+      const [hhStr, mmStr, ssStr] = timePart.split(":");
+      hh = Number(hhStr);
+      mm = Number(mmStr);
+      ss = Number(ssStr);
+    }
+
+    const dt = new Date(y, m - 1, d, hh, mm, ss);
+    const ms = dt.getTime();
+    return Number.isFinite(ms) ? ms : 0;
+  }
 
   const filtered = mockRequests.filter((row) => {
     const matchesSearch =
@@ -85,6 +128,22 @@ export default function LogisticsRequestsPage() {
       statusFilter === "All" || row.status === statusFilter;
 
     return matchesSearch && matchesStatus;
+  });
+
+  const sorted = [...filtered].sort((a, b) => {
+    if (sortBy === "name") {
+      return a.name.localeCompare(b.name);
+    }
+    if (sortBy === "newest") {
+      return parseRequestDateMs(b.date) - parseRequestDateMs(a.date);
+    }
+
+    // "Expiring Licenses" doesn't exist for requests; treat status urgency as a proxy.
+    const rank = (s: string) =>
+      s === "Pending" ? 0 : s === "In Progress" ? 1 : s === "Reserved" ? 2 : 3;
+    const d = rank(a.status) - rank(b.status);
+    if (d !== 0) return d;
+    return parseRequestDateMs(b.date) - parseRequestDateMs(a.date);
   });
 
   return (
@@ -111,6 +170,42 @@ export default function LogisticsRequestsPage() {
           />
         </div>
 
+        <div className="flex items-center gap-2">
+          <div className="text-xs text-gray-500">Sort By:</div>
+          <select
+            value={sortBy}
+            onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
+            className="px-4 py-2 rounded-full bg-black text-white font-medium border border-black"
+          >
+            <option value="name">Name</option>
+            <option value="newest">Newest Date</option>
+            <option value="expiring">Expiring Licenses</option>
+          </select>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setViewMode("grid")}
+            className={`h-10 w-10 rounded-xl border flex items-center justify-center ${
+              viewMode === "grid" ? "bg-[#FFDA03]" : "bg-white"
+            }`}
+            aria-label="Grid view"
+            type="button"
+          >
+            <LayoutGrid className="w-5 h-5 text-black" />
+          </button>
+          <button
+            onClick={() => setViewMode("table")}
+            className={`h-10 w-10 rounded-xl border flex items-center justify-center ${
+              viewMode === "table" ? "bg-[#FFDA03]" : "bg-white"
+            }`}
+            aria-label="Table view"
+            type="button"
+          >
+            <Table className="w-5 h-5 text-black" />
+          </button>
+        </div>
+
         <select
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value)}
@@ -124,58 +219,88 @@ export default function LogisticsRequestsPage() {
         </select>
       </div>
 
-      {/* Table */}
-      <div className="relative overflow-x-auto rounded-2xl border">
-        <table className="w-full text-sm text-black">
-          <thead className="bg-gray-50 border-b text-black">
-            <tr>
-              <th className="px-4 py-3 text-left">Timestamp & Date</th>
-              <th className="px-4 py-3 text-left">Equipment</th>
-              <th className="px-4 py-3 text-left">Type</th>
-              <th className="px-4 py-3 text-left">Name</th>
-              <th className="px-4 py-3 text-left">Job ID</th>
-              <th className="px-4 py-3 text-left">Detachment</th>
-              <th className="px-4 py-3 text-left">Status</th>
-              <th className="px-4 py-3 text-center">View</th>
-              <th className="px-4 py-3 text-center">Action</th>
-            </tr>
-          </thead>
+      {viewMode === "grid" ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+          {sorted.map((row, i) => (
+            <div key={i} className="bg-white rounded-2xl shadow-sm border p-5 hover:shadow-md transition">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-sm font-semibold text-black truncate">{row.equipment}</div>
+                  <div className="text-xs text-gray-500 truncate">{row.type} • {row.detachment}</div>
+                  <div className="mt-2 text-xs text-gray-500">{row.date}</div>
+                </div>
+                <StatusBadge status={row.status} />
+              </div>
 
-          <tbody>
-            {filtered.map((row, i) => (
-              <tr key={i} className="border-b hover:bg-gray-50">
-                <td className="px-4 py-3">{row.date}</td>
-                <td className="px-4 py-3 font-medium">{row.equipment}</td>
-                <td className="px-4 py-3">{row.type}</td>
-                <td className="px-4 py-3">{row.name}</td>
-                <td className="px-4 py-3">{row.jobId}</td>
-                <td className="px-4 py-3">{row.detachment}</td>
-                <td className="px-4 py-3">
-                  <StatusBadge status={row.status} />
-                </td>
-                <td className="px-4 py-3 text-center">
-                  <button className="p-2 rounded-lg hover:bg-gray-100">
-                    <Eye className="w-5 h-5 text-gray-600" />
-                  </button>
-                </td>
-                <td className="px-4 py-3 text-center">
-                  <button className="px-4 py-1.5 text-xs rounded-lg bg-black text-white hover:bg-gray-800">
-                    Manage
-                  </button>
-                </td>
-              </tr>
-            ))}
+              <div className="mt-4 text-sm text-black">
+                <div className="font-medium">{row.name}</div>
+                <div className="text-xs text-gray-500">Job ID: {row.jobId}</div>
+              </div>
 
-            {filtered.length === 0 && (
-              <tr>
-                <td colSpan={9} className="py-8 text-center text-gray-400">
-                  No matching requests found
-                </td>
+              <div className="mt-4 flex items-center justify-end gap-2">
+                <button className="h-9 w-9 rounded-xl border bg-white flex items-center justify-center" title="View">
+                  <Eye className="w-5 h-5 text-gray-700" />
+                </button>
+                <button className="px-4 py-2 text-xs rounded-xl bg-black text-white hover:bg-gray-800">Manage</button>
+              </div>
+            </div>
+          ))}
+
+          {sorted.length === 0 && (
+            <div className="col-span-full py-10 text-center text-gray-400">No matching requests found</div>
+          )}
+        </div>
+      ) : (
+        <div className="relative overflow-x-auto">
+          <table className="w-full text-sm text-black border-separate border-spacing-y-2">
+            <thead className="sticky top-0 z-10">
+              <tr className="bg-[#FFDA03]">
+                <th className="px-4 py-3 text-left font-semibold text-black first:rounded-l-xl">Timestamp & Date</th>
+                <th className="px-4 py-3 text-left font-semibold text-black">Equipment</th>
+                <th className="px-4 py-3 text-left font-semibold text-black">Type</th>
+                <th className="px-4 py-3 text-left font-semibold text-black">Name</th>
+                <th className="px-4 py-3 text-left font-semibold text-black">Job ID</th>
+                <th className="px-4 py-3 text-left font-semibold text-black">Detachment</th>
+                <th className="px-4 py-3 text-left font-semibold text-black">Status</th>
+                <th className="px-4 py-3 text-center font-semibold text-black">View</th>
+                <th className="px-4 py-3 text-center font-semibold text-black last:rounded-r-xl">Action</th>
               </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+
+            <tbody>
+              {sorted.map((row, i) => (
+                <tr key={i} className="bg-white shadow-sm hover:shadow-md transition">
+                  <td className="px-4 py-3 rounded-l-xl">{row.date}</td>
+                  <td className="px-4 py-3 font-medium">{row.equipment}</td>
+                  <td className="px-4 py-3">{row.type}</td>
+                  <td className="px-4 py-3">{row.name}</td>
+                  <td className="px-4 py-3">{row.jobId}</td>
+                  <td className="px-4 py-3">{row.detachment}</td>
+                  <td className="px-4 py-3">
+                    <StatusBadge status={row.status} />
+                  </td>
+                  <td className="px-4 py-3 text-center">
+                    <button className="h-9 w-9 rounded-xl border bg-white inline-flex items-center justify-center hover:bg-gray-50">
+                      <Eye className="w-5 h-5 text-gray-700" />
+                    </button>
+                  </td>
+                  <td className="px-4 py-3 text-center rounded-r-xl">
+                    <button className="px-4 py-2 text-xs rounded-xl bg-black text-white hover:bg-gray-800">Manage</button>
+                  </td>
+                </tr>
+              ))}
+
+              {sorted.length === 0 && (
+                <tr>
+                  <td colSpan={9} className="py-10 text-center text-gray-400">
+                    No matching requests found
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

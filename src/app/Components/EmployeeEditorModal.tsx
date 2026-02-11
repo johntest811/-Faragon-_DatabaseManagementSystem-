@@ -1015,8 +1015,15 @@ export default function EmployeeEditorModal({
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                 <label className="text-sm text-black">
                   <div className="text-gray-600 mb-1">Gender</div>
-                  <input value={app.gender} onChange={(e) => setApp((d) => ({ ...d, gender: e.target.value }))}
-                    className="w-full border rounded-xl px-3 py-2" />
+                  <select
+                    value={(app.gender || "").trim().toUpperCase()}
+                    onChange={(e) => setApp((d) => ({ ...d, gender: e.target.value }))}
+                    className="w-full border rounded-xl px-3 py-2 bg-white"
+                  >
+                    <option value="">—</option>
+                    <option value="MALE">Male</option>
+                    <option value="FEMALE">Female</option>
+                  </select>
                 </label>
                 <label className="text-sm text-black">
                   <div className="text-gray-600 mb-1">Birth Date</div>

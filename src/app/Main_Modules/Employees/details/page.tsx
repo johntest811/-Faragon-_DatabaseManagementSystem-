@@ -118,6 +118,59 @@ function formatDate(value: string | null) {
   return d.toLocaleDateString();
 }
 
+function startOfDay(d: Date) {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
+}
+
+function addYearsClamped(base: Date, years: number) {
+  const y = base.getFullYear() + years;
+  const m = base.getMonth();
+  const day = base.getDate();
+  const lastDay = new Date(y, m + 1, 0).getDate();
+  return new Date(y, m, Math.min(day, lastDay), 0, 0, 0, 0);
+}
+
+function addMonthsClamped(base: Date, months: number) {
+  const y = base.getFullYear();
+  const m = base.getMonth() + months;
+  const day = base.getDate();
+  const first = new Date(y, m, 1, 0, 0, 0, 0);
+  const lastDay = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate();
+  return new Date(first.getFullYear(), first.getMonth(), Math.min(day, lastDay), 0, 0, 0, 0);
+}
+
+function diffYearsMonthsDays(from: Date, to: Date) {
+  const start = startOfDay(from);
+  const end = startOfDay(to);
+  if (end.getTime() < start.getTime()) return { years: 0, months: 0, days: 0 };
+
+  let years = end.getFullYear() - start.getFullYear();
+  let cursor = addYearsClamped(start, years);
+  if (cursor.getTime() > end.getTime()) {
+    years -= 1;
+    cursor = addYearsClamped(start, years);
+  }
+
+  let months = (end.getFullYear() - cursor.getFullYear()) * 12 + (end.getMonth() - cursor.getMonth());
+  let cursor2 = addMonthsClamped(cursor, months);
+  if (cursor2.getTime() > end.getTime()) {
+    months -= 1;
+    cursor2 = addMonthsClamped(cursor, months);
+  }
+
+  const msPerDay = 24 * 60 * 60 * 1000;
+  const days = Math.max(0, Math.round((end.getTime() - cursor2.getTime()) / msPerDay));
+  return { years: Math.max(0, years), months: Math.max(0, months), days };
+}
+
+function formatServiceLength(fromIso: string | null, now: Date) {
+  if (!fromIso) return "—";
+  const d = new Date(fromIso);
+  if (Number.isNaN(d.getTime())) return "—";
+  const diff = diffYearsMonthsDays(d, now);
+  return `${diff.years} year(s), ${diff.months} month(s), ${diff.days} day(s)`;
+}
+
 function publicUrl(bucket: string, path: string | null) {
   if (!path) return null;
   const { data } = supabase.storage.from(bucket).getPublicUrl(path);
@@ -193,6 +246,17 @@ function EmployeeDetailsInner() {
   const [employment, setEmployment] = useState<EmploymentItem[]>([]);
   const [lic, setLic] = useState<Licensure | null>(null);
   const [bio, setBio] = useState<Biodata | null>(null);
+
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const t = setInterval(() => setNow(new Date()), 60 * 60 * 1000);
+    return () => clearInterval(t);
+  }, []);
+
+  const serviceLength = useMemo(
+    () => formatServiceLength(applicant?.date_hired_fsai ?? null, now),
+    [applicant?.date_hired_fsai, now]
+  );
 
   useEffect(() => {
     const run = async () => {
@@ -437,6 +501,11 @@ function EmployeeDetailsInner() {
                 <div className="px-4 py-3 font-semibold text-gray-900 text-right">
                   {formatDate(applicant.date_hired_fsai)}
                 </div>
+              </div>
+              <div className="h-px bg-gray-100" />
+              <div className="grid grid-cols-2 text-sm">
+                <div className="px-4 py-3 text-gray-500">Service Length</div>
+                <div className="px-4 py-3 font-semibold text-gray-900 text-right">{serviceLength}</div>
               </div>
             </div>
           </div>

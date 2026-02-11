@@ -63,6 +63,7 @@ const DATA: ClientRow[] = [
 export default function ClientsPage() {
   const router = useRouter();
   const [search, setSearch] = useState("");
+  const [sortBy, setSortBy] = useState<"name" | "newest" | "expiring">("name");
   const [sortKey, setSortKey] = useState<keyof ClientRow>("clientName");
   const [sortAsc, setSortAsc] = useState(true);
   const [page, setPage] = useState(1);
@@ -82,10 +83,53 @@ export default function ClientsPage() {
       .includes(search.toLowerCase())
   );
 
+  function parseMdY(value: string) {
+    const [mRaw, dRaw, yRaw] = String(value || "").split("/");
+    const m = Number(mRaw);
+    const d = Number(dRaw);
+    const y = Number(yRaw);
+    if (!m || !d || !y) return null;
+    return new Date(y, m - 1, d, 0, 0, 0, 0).getTime();
+  }
+
+  function applySortPreset(next: typeof sortBy) {
+    if (next === "name") {
+      setSortKey("clientName");
+      setSortAsc(true);
+      return;
+    }
+    if (next === "newest") {
+      setSortKey("start");
+      setSortAsc(false);
+      return;
+    }
+    if (next === "expiring") {
+      setSortKey("end");
+      setSortAsc(true);
+    }
+  }
+
   const sorted = [...filtered].sort((a, b) => {
-    const aVal = a[sortKey].toString().toLowerCase();
-    const bVal = b[sortKey].toString().toLowerCase();
-    return sortAsc ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
+    const numericKeys: (keyof ClientRow)[] = ["cluster", "manpower", "guards"];
+    const dateKeys: (keyof ClientRow)[] = ["start", "end"];
+
+    const av = a[sortKey];
+    const bv = b[sortKey];
+
+    let cmp = 0;
+    if (numericKeys.includes(sortKey)) {
+      cmp = Number(av) - Number(bv);
+    } else if (dateKeys.includes(sortKey)) {
+      const at = parseMdY(String(av)) ?? 0;
+      const bt = parseMdY(String(bv)) ?? 0;
+      cmp = at - bt;
+    } else {
+      const as = String(av ?? "").toLowerCase();
+      const bs = String(bv ?? "").toLowerCase();
+      cmp = as.localeCompare(bs);
+    }
+
+    return sortAsc ? cmp : -cmp;
   });
 
   const totalPages = Math.ceil(sorted.length / pageSize);
@@ -101,27 +145,47 @@ export default function ClientsPage() {
 
   return (
     <section className="bg-white rounded-3xl border p-6 space-y-5">
-      {/* Search */}
-      <div className="flex items-center gap-3 border rounded-2xl px-4 py-3 max-w-xl w-full">
-        <div className="h-10 w-10 rounded-xl bg-[#FFDA03] flex items-center justify-center">
-          <Search className="w-5 h-5 text-black" />
+      {/* Search + Sort */}
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+        <div className="flex items-center gap-3 border rounded-2xl px-4 py-3 max-w-xl w-full">
+          <div className="h-10 w-10 rounded-xl bg-[#FFDA03] flex items-center justify-center">
+            <Search className="w-5 h-5 text-black" />
+          </div>
+          <input
+            placeholder="Search by contract, client, area, etc..."
+            className="flex-1 outline-none text-sm text-black placeholder:text-gray-400"
+            value={search}
+            onChange={(e) => {
+              setSearch(e.target.value);
+              setPage(1);
+            }}
+          />
         </div>
-        <input
-          placeholder="Search by contract, client, area, etc..."
-          className="flex-1 outline-none text-sm text-black placeholder:text-gray-400"
-          value={search}
-          onChange={(e) => {
-            setSearch(e.target.value);
-            setPage(1);
-          }}
-        />
+
+        <div className="flex items-center gap-2 justify-end">
+          <div className="text-xs text-gray-500">Sort By:</div>
+          <select
+            value={sortBy}
+            onChange={(e) => {
+              const next = e.target.value as typeof sortBy;
+              setSortBy(next);
+              applySortPreset(next);
+              setPage(1);
+            }}
+            className="px-4 py-2 rounded-full bg-black text-white font-medium border border-black"
+          >
+            <option value="name">Name</option>
+            <option value="newest">Newest Date</option>
+            <option value="expiring">Expiring Licenses</option>
+          </select>
+        </div>
       </div>
 
       {/* Table */}
-      <div className="relative overflow-x-auto rounded-2xl border">
-        <table className="w-full text-sm text-black">
-          <thead className="bg-gray-100 sticky top-0 z-10">
-            <tr>
+      <div className="relative overflow-x-auto">
+        <table className="w-full text-sm text-black border-separate border-spacing-y-2">
+          <thead className="sticky top-0 z-10">
+            <tr className="bg-[#FFDA03]">
               {[
                 ["contractNo", "Contract No."],
                 ["cluster", "Cluster"],
@@ -137,7 +201,7 @@ export default function ClientsPage() {
                 <th
                   key={key}
                   onClick={() => handleSort(key as keyof ClientRow)}
-                  className="px-4 py-3 text-left font-medium text-black border-b cursor-pointer select-none"
+                  className="px-4 py-3 text-left font-semibold text-black cursor-pointer select-none first:rounded-l-xl last:rounded-r-xl"
                 >
                   <div className="flex items-center gap-1">
                     {label}
@@ -151,9 +215,12 @@ export default function ClientsPage() {
           <tbody>
             {loading
               ? Array.from({ length: pageSize }).map((_, i) => (
-                  <tr key={i} className="animate-pulse">
+                  <tr key={i} className="animate-pulse bg-white shadow-sm">
                     {Array.from({ length: 10 }).map((_, j) => (
-                      <td key={j} className="px-4 py-4 border-b">
+                      <td
+                        key={j}
+                        className={`px-4 py-4 ${j === 0 ? "rounded-l-xl" : ""} ${j === 9 ? "rounded-r-xl" : ""}`}
+                      >
                         <div className="h-4 bg-gray-200 rounded w-full" />
                       </td>
                     ))}
@@ -163,24 +230,24 @@ export default function ClientsPage() {
                   <tr
                     key={row.id}
                     onClick={() => router.push("/Main_Modules/Clients/" + row.id)}
-                    className="hover:bg-yellow-50 cursor-pointer"
+                    className="bg-white shadow-sm hover:shadow-md cursor-pointer transition"
                   >
-                    <td className="px-4 py-3 border-b">{row.contractNo}</td>
-                    <td className="px-4 py-3 border-b">{row.cluster}</td>
-                    <td className="px-4 py-3 border-b font-medium">
+                    <td className="px-4 py-3 rounded-l-xl">{row.contractNo}</td>
+                    <td className="px-4 py-3">{row.cluster}</td>
+                    <td className="px-4 py-3 font-medium">
                       {row.clientName}
                     </td>
-                    <td className="px-4 py-3 border-b">{row.area}</td>
-                    <td className="px-4 py-3 border-b">{row.project}</td>
-                    <td className="px-4 py-3 border-b">{row.start}</td>
-                    <td className="px-4 py-3 border-b">{row.end}</td>
-                    <td className="px-4 py-3 border-b text-center">
+                    <td className="px-4 py-3">{row.area}</td>
+                    <td className="px-4 py-3">{row.project}</td>
+                    <td className="px-4 py-3">{row.start}</td>
+                    <td className="px-4 py-3">{row.end}</td>
+                    <td className="px-4 py-3 text-center">
                       {row.manpower}
                     </td>
-                    <td className="px-4 py-3 border-b text-center">
+                    <td className="px-4 py-3 text-center">
                       {row.guards}
                     </td>
-                    <td className="px-4 py-3 border-b">
+                    <td className="px-4 py-3 rounded-r-xl">
                       <span
                         className={`px-3 py-1 rounded-full text-xs font-medium ${
                           row.status === "Active"

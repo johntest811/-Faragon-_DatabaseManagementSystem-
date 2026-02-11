@@ -1,11 +1,9 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../Client/SupabaseClients";
-import { Eye, RotateCcw } from "lucide-react";
-import { Pencil, ChevronDown } from "lucide-react";
+import { Eye, RotateCcw, ChevronDown, LayoutGrid, Table } from "lucide-react";
 
 type Applicant = {
   applicant_id: string;
@@ -46,13 +44,21 @@ function normalizeStatus(input: string | null) {
 
 export default function ArchivePage() {
   const router = useRouter();
+  const [viewMode, setViewMode] = useState<"grid" | "table">("grid");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>("");
   const [items, setItems] = useState<Applicant[]>([]);
   const [search, setSearch] = useState("");
-const [sortBy, setSortBy] = useState<"name" | "created_at">("name");
+  const [sortBy, setSortBy] = useState<"name" | "created_at">("name");
 
   useEffect(() => {
+    try {
+      const saved = window.localStorage.getItem("archive:viewMode");
+      if (saved === "grid" || saved === "table") setViewMode(saved);
+    } catch {
+      // ignore
+    }
+
     const run = async () => {
       setLoading(true);
       setError("");
@@ -93,19 +99,38 @@ const [sortBy, setSortBy] = useState<"name" | "created_at">("name");
     };
   }, []);
 
+  useEffect(() => {
+    try {
+      window.localStorage.setItem("archive:viewMode", viewMode);
+    } catch {
+      // ignore
+    }
+  }, [viewMode]);
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return items;
-    return items.filter((e) => {
-      const name = getFullName(e).toLowerCase();
-      return (
-        name.includes(q) ||
-        (e.client_position || "").toLowerCase().includes(q) ||
-        (e.detachment || "").toLowerCase().includes(q) ||
-        (e.status || "").toLowerCase().includes(q)
-      );
+    let list = items;
+    if (q) {
+      list = items.filter((e) => {
+        const name = getFullName(e).toLowerCase();
+        return (
+          name.includes(q) ||
+          (e.client_position || "").toLowerCase().includes(q) ||
+          (e.detachment || "").toLowerCase().includes(q) ||
+          (e.status || "").toLowerCase().includes(q)
+        );
+      });
+    }
+
+    const sorted = [...list].sort((a, b) => {
+      if (sortBy === "created_at") {
+        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+      }
+      return getFullName(a).localeCompare(getFullName(b));
     });
-  }, [items, search]);
+
+    return sorted;
+  }, [items, search, sortBy]);
 
   async function restore(employee: Applicant) {
     setError("");
@@ -141,10 +166,33 @@ const [sortBy, setSortBy] = useState<"name" | "created_at">("name");
             <div className="text-xs text-gray-500">Sort By:</div>
             <button
               onClick={() => setSortBy((v) => (v === "name" ? "created_at" : "name"))}
-              className="px-4 py-2 rounded-full bg-[#FFDA03] text-black font-medium flex items-center gap-2"
+              className="px-4 py-2 rounded-full bg-black text-white font-medium flex items-center gap-2"
             >
               {sortBy === "name" ? "Name" : "Newest"}
               <ChevronDown className="w-4 h-4" />
+            </button>
+          </div>
+
+          <div className="flex items-center gap-2 ml-2">
+            <button
+              onClick={() => setViewMode("grid")}
+              className={`h-10 w-10 rounded-xl border flex items-center justify-center ${
+                viewMode === "grid" ? "bg-[#FFDA03]" : "bg-white"
+              }`}
+              aria-label="Grid view"
+              type="button"
+            >
+              <LayoutGrid className="w-5 h-5 text-black" />
+            </button>
+            <button
+              onClick={() => setViewMode("table")}
+              className={`h-10 w-10 rounded-xl border flex items-center justify-center ${
+                viewMode === "table" ? "bg-[#FFDA03]" : "bg-white"
+              }`}
+              aria-label="Table view"
+              type="button"
+            >
+              <Table className="w-5 h-5 text-black" />
             </button>
           </div>
         </div>
@@ -156,6 +204,61 @@ const [sortBy, setSortBy] = useState<"name" | "created_at">("name");
         <div className="bg-white rounded-2xl border shadow-sm p-8 text-center text-gray-500">Loading archive...</div>
       ) : filtered.length === 0 ? (
         <div className="bg-white rounded-2xl border shadow-sm p-8 text-center text-gray-500">No archived employees.</div>
+      ) : viewMode === "table" ? (
+        <div className="relative overflow-x-auto">
+          <table className="w-full text-sm text-black border-separate border-spacing-y-2">
+            <thead className="sticky top-0 z-10">
+              <tr className="bg-[#FFDA03]">
+                <th className="px-4 py-3 text-left font-semibold text-black first:rounded-l-xl">Name</th>
+                <th className="px-4 py-3 text-left font-semibold text-black">Job Title</th>
+                <th className="px-4 py-3 text-left font-semibold text-black">Detachment</th>
+                <th className="px-4 py-3 text-left font-semibold text-black">Archived At</th>
+                <th className="px-4 py-3 text-center font-semibold text-black">View</th>
+                <th className="px-4 py-3 text-center font-semibold text-black last:rounded-r-xl">Restore</th>
+              </tr>
+            </thead>
+
+            <tbody>
+              {filtered.map((e) => {
+                const name = getFullName(e);
+                const detailsHref = `/Main_Modules/Employees/details/?id=${encodeURIComponent(e.applicant_id)}&from=${encodeURIComponent(
+                  "/Main_Modules/Archive/"
+                )}`;
+
+                return (
+                  <tr key={e.applicant_id} className="bg-white shadow-sm hover:shadow-md transition">
+                    <td className="px-4 py-3 rounded-l-xl font-medium">{name}</td>
+                    <td className="px-4 py-3">{e.client_position ?? "—"}</td>
+                    <td className="px-4 py-3">{e.detachment ?? "—"}</td>
+                    <td className="px-4 py-3">
+                      {e.archived_at ? new Date(e.archived_at).toLocaleString() : "—"}
+                    </td>
+                    <td className="px-4 py-3 text-center">
+                      <button
+                        onClick={() => router.push(detailsHref)}
+                        className="h-9 w-9 rounded-xl border bg-white inline-flex items-center justify-center hover:bg-gray-50"
+                        title="View"
+                        type="button"
+                      >
+                        <Eye className="w-4 h-4 text-gray-800" />
+                      </button>
+                    </td>
+                    <td className="px-4 py-3 text-center rounded-r-xl">
+                      <button
+                        onClick={() => restore(e)}
+                        className="px-4 py-2 text-xs rounded-xl bg-black text-white hover:bg-gray-800 inline-flex items-center gap-2"
+                        title="Restore"
+                        type="button"
+                      >
+                        <RotateCcw className="w-4 h-4" /> Restore
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
           {filtered.map((e) => {

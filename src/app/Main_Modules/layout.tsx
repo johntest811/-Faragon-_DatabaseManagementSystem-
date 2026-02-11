@@ -30,6 +30,13 @@ import {
 
 type LayoutProps = Readonly<{ children: React.ReactNode }>;
 
+function emailBadge(email: string | null) {
+  const value = (email ?? "").trim();
+  if (!value) return { label: "No Email", className: "bg-red-100 text-red-700" };
+  if (value.toLowerCase().endsWith("@gmail.com")) return { label: "Gmail", className: "bg-emerald-100 text-emerald-800" };
+  return { label: "Email", className: "bg-blue-100 text-blue-800" };
+}
+
 const ALL_MENU = [
   { key: "dashboard", name: "Dashboard", href: "/Main_Modules/Dashboard/", icon: LayoutGrid },
   { key: "employees", name: "Employees", href: "/Main_Modules/Employees/", icon: Users },
@@ -85,6 +92,7 @@ export default function MainModulesLayout({ children }: LayoutProps) {
       last_sent_at?: string | null;
     }>
   >([]);
+  const [expiringEmailByApplicantId, setExpiringEmailByApplicantId] = useState<Record<string, string | null>>({});
   const { role: sessionRole } = useAuthRole();
   const { modules: myModules } = useMyModules();
   useRealtimeRefresh(["applicants"]);
@@ -169,6 +177,29 @@ export default function MainModulesLayout({ children }: LayoutProps) {
       const res = await api.notifications.getExpiringSummary({ limit: 50 });
       setExpiringCount(Number((res as any)?.pendingCount ?? res?.count ?? 0));
       setExpiringRows((res?.rows ?? []) as any);
+
+      try {
+        const ids = Array.from(new Set((res?.rows ?? []).map((r: any) => String(r.applicant_id || "")).filter(Boolean)));
+        if (!ids.length) {
+          setExpiringEmailByApplicantId({});
+        } else {
+          const { data, error } = await supabase
+            .from("applicants")
+            .select("applicant_id, client_email")
+            .in("applicant_id", ids);
+          if (error) {
+            setExpiringEmailByApplicantId({});
+          } else {
+            const map: Record<string, string | null> = {};
+            for (const row of (data as any[]) || []) {
+              map[String(row.applicant_id)] = (row.client_email ?? null) as string | null;
+            }
+            setExpiringEmailByApplicantId(map);
+          }
+        }
+      } catch {
+        setExpiringEmailByApplicantId({});
+      }
     } catch {
       // ignore
     }
@@ -703,7 +734,31 @@ export default function MainModulesLayout({ children }: LayoutProps) {
                       <div className="max-h-[360px] overflow-auto">
                         {expiringRows.length ? (
                           expiringRows.map((r, idx) => (
-                            <div key={`${r.applicant_id}:${r.license_type}:${idx}`} className="px-4 py-3 border-b last:border-b-0">
+                            <div
+                              key={`${r.applicant_id}:${r.license_type}:${idx}`}
+                              role="button"
+                              tabIndex={0}
+                              onKeyDown={(ev) => {
+                                if (ev.key !== "Enter" && ev.key !== " ") return;
+                                ev.preventDefault();
+                                router.push(
+                                  `/Main_Modules/Employees/details/?id=${encodeURIComponent(
+                                    r.applicant_id
+                                  )}&from=${encodeURIComponent("/Main_Modules/Employees/")}`
+                                );
+                                setExpiringOpen(false);
+                              }}
+                              onClick={() => {
+                                router.push(
+                                  `/Main_Modules/Employees/details/?id=${encodeURIComponent(
+                                    r.applicant_id
+                                  )}&from=${encodeURIComponent("/Main_Modules/Employees/")}`
+                                );
+                                setExpiringOpen(false);
+                              }}
+                              className="px-4 py-3 border-b last:border-b-0 cursor-pointer hover:bg-gray-50"
+                              title="Open employee details"
+                            >
                               <div className="flex items-center justify-between gap-3">
                                 <div className="text-sm font-medium text-black">{r.license_type}</div>
                                 <div className="text-xs text-gray-600 whitespace-nowrap">{r.expires_on}</div>
@@ -716,6 +771,14 @@ export default function MainModulesLayout({ children }: LayoutProps) {
                               <div className="mt-1 flex items-center justify-between gap-3">
                                 <div className="text-[11px] text-gray-500">Days: {r.days_until_expiry}</div>
                                 <div className="flex items-center gap-2">
+                                  {(() => {
+                                    const badge = emailBadge(expiringEmailByApplicantId[String(r.applicant_id)] ?? null);
+                                    return (
+                                      <span className={`text-[11px] px-2 py-0.5 rounded-full border ${badge.className}`}>
+                                        {badge.label}
+                                      </span>
+                                    );
+                                  })()}
                                   <span
                                     className={
                                       (Number(r.sent_count ?? 0) > 0)
@@ -730,7 +793,8 @@ export default function MainModulesLayout({ children }: LayoutProps) {
                                     type="button"
                                     disabled={!api?.notifications?.resendLicensureNotice || resendingKey === `${r.applicant_id}:${r.license_type}:${r.expires_on}`}
                                     className="text-[11px] px-2 py-0.5 rounded-full border bg-white text-gray-800 hover:bg-gray-50 disabled:opacity-50"
-                                    onClick={async () => {
+                                    onClick={async (ev) => {
+                                      ev.stopPropagation();
                                       const k = `${r.applicant_id}:${r.license_type}:${r.expires_on}`;
                                       if (!api?.notifications?.resendLicensureNotice) return;
                                       try {
