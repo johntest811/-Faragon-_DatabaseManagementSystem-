@@ -21,7 +21,6 @@ type ApplicantDraft = {
   first_name: string;
   middle_name: string;
   last_name: string;
-  extn_name: string;
   gender: string;
   birth_date: string;
   age: string;
@@ -94,7 +93,6 @@ type ApplicantRow = {
   first_name: string | null;
   middle_name: string | null;
   last_name: string | null;
-  extn_name: string | null;
   gender: string | null;
   birth_date: string | null;
   age: number | null;
@@ -176,7 +174,6 @@ function emptyApplicantDraft(): ApplicantDraft {
     first_name: "",
     middle_name: "",
     last_name: "",
-    extn_name: "",
     gender: "",
     birth_date: "",
     age: "",
@@ -442,7 +439,7 @@ export default function EmployeeEditorModal({
         const aRes = await supabase
           .from("applicants")
           .select(
-            "applicant_id, custom_id, first_name, middle_name, last_name, extn_name, gender, birth_date, age, client_contact_num, client_email, present_address, province_address, emergency_contact_person, emergency_contact_num, education_attainment, date_hired_fsai, client_position, detachment, status, security_licensed_num, sss_number, pagibig_number, philhealth_number, tin_number, profile_image_path, sss_certain_path, tin_id_path, pag_ibig_id_path, philhealth_id_path, security_license_path"
+            "applicant_id, custom_id, first_name, middle_name, last_name, gender, birth_date, age, client_contact_num, client_email, present_address, province_address, emergency_contact_person, emergency_contact_num, education_attainment, date_hired_fsai, client_position, detachment, status, security_licensed_num, sss_number, pagibig_number, philhealth_number, tin_number, profile_image_path, sss_certain_path, tin_id_path, pag_ibig_id_path, philhealth_id_path, security_license_path"
           )
           .eq("applicant_id", idToLoad)
           .maybeSingle();
@@ -517,7 +514,6 @@ export default function EmployeeEditorModal({
           first_name: a?.first_name ?? "",
           middle_name: a?.middle_name ?? "",
           last_name: a?.last_name ?? "",
-          extn_name: a?.extn_name ?? "",
           gender: a?.gender ?? "",
           birth_date: normalizeDateInput(a?.birth_date ?? null),
           age: a?.age != null ? String(a.age) : "",
@@ -640,7 +636,6 @@ export default function EmployeeEditorModal({
           first_name: toNullableText(app.first_name),
           middle_name: toNullableText(app.middle_name),
           last_name: toNullableText(app.last_name),
-          extn_name: toNullableText(app.extn_name),
           gender: toNullableText(app.gender),
           birth_date: toNullableText(app.birth_date),
           age: toNullableInt(app.age),
@@ -751,7 +746,6 @@ export default function EmployeeEditorModal({
           first_name: toNullableText(app.first_name),
           middle_name: toNullableText(app.middle_name),
           last_name: toNullableText(app.last_name),
-          extn_name: toNullableText(app.extn_name),
           gender: toNullableText(app.gender),
           birth_date: toNullableText(app.birth_date),
           age: toNullableInt(app.age),
@@ -1003,11 +997,6 @@ export default function EmployeeEditorModal({
                 <label className="text-sm text-black">
                   <div className="text-gray-600 mb-1">Last Name</div>
                   <input value={app.last_name} onChange={(e) => setApp((d) => ({ ...d, last_name: e.target.value }))}
-                    className="w-full border rounded-xl px-3 py-2" />
-                </label>
-                <label className="text-sm text-black">
-                  <div className="text-gray-600 mb-1">Extn</div>
-                  <input value={app.extn_name} onChange={(e) => setApp((d) => ({ ...d, extn_name: e.target.value }))}
                     className="w-full border rounded-xl px-3 py-2" />
                 </label>
               </div>

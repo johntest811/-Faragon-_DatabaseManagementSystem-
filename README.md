@@ -100,3 +100,4 @@ npm audit
 - npm install --save-dev cross-env
 - npm install lucide-react
 - npm install -D electron-builder@latest
+- npm install jspdf jspdf-autotable

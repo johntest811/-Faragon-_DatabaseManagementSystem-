@@ -36,7 +36,6 @@ type ExpiringRow = {
 	last_name: string | null;
 	first_name: string | null;
 	middle_name: string | null;
-	extn_name: string | null;
 	client_email: string | null;
 	client_contact_num: string | null;
 	expires_on: string;
@@ -65,7 +64,6 @@ type LicensureJoinRow = {
 		first_name: string | null;
 		middle_name: string | null;
 		last_name: string | null;
-		extn_name: string | null;
 		client_email: string | null;
 		client_contact_num: string | null;
 	} | null;
@@ -76,7 +74,6 @@ type ApplicantMiniRow = {
 	first_name: string | null;
 	middle_name: string | null;
 	last_name: string | null;
-	extn_name: string | null;
 	client_email: string | null;
 	client_contact_num: string | null;
 };
@@ -186,8 +183,8 @@ function errorMessage(e: unknown) {
 	return "Failed to save settings";
 }
 
-function fullName(r: Pick<ExpiringRow, "first_name" | "middle_name" | "last_name" | "extn_name">) {
-	const parts = [r.first_name, r.middle_name, r.last_name, r.extn_name].filter(Boolean);
+function fullName(r: Pick<ExpiringRow, "first_name" | "middle_name" | "last_name">) {
+	const parts = [r.first_name, r.middle_name, r.last_name].filter(Boolean);
 	return parts.length ? parts.join(" ") : "(No name)";
 }
 
@@ -625,7 +622,7 @@ export default function SettingsPage() {
 				const chunk = ids.slice(i, i + chunkSize);
 				const aRes = await supabase
 					.from("applicants")
-					.select("applicant_id, first_name, middle_name, last_name, extn_name, client_email, client_contact_num")
+						.select("applicant_id, first_name, middle_name, last_name, client_email, client_contact_num")
 					.in("applicant_id", chunk);
 				if (aRes.error) throw aRes.error;
 				for (const a of ((aRes.data as unknown) as ApplicantMiniRow[]) ?? []) {
@@ -666,7 +663,6 @@ export default function SettingsPage() {
 					last_name: a?.last_name ?? null,
 					first_name: a?.first_name ?? null,
 					middle_name: a?.middle_name ?? null,
-					extn_name: a?.extn_name ?? null,
 					client_email: a?.client_email ?? null,
 					client_contact_num: a?.client_contact_num ?? null,
 				};

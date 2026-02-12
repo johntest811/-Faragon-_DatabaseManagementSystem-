@@ -3,7 +3,10 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../Client/SupabaseClients";
-import { Pencil, Eye, SlidersHorizontal, Trash2, Upload, LayoutGrid, Table } from "lucide-react";
+import { Pencil, SlidersHorizontal, Trash2, Upload, LayoutGrid, Table, Search, FileDown, FileText } from "lucide-react";
+import * as XLSX from "xlsx";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
 import { useAuthRole } from "../../Client/useRbac";
 import EmployeeEditorModal from "../../Components/EmployeeEditorModal";
 import EmployeeExcelImportModal from "../../Components/EmployeeExcelImportModal";
@@ -14,7 +17,6 @@ type Applicant = {
 	first_name: string | null;
 	middle_name: string | null;
 	last_name: string | null;
-	extn_name: string | null;
 	client_position: string | null;
 	date_hired_fsai: string | null;
 	detachment: string | null;
@@ -41,7 +43,7 @@ const BUCKETS = {
 };
 
 function getFullName(a: Applicant) {
-	const parts = [a.first_name, a.middle_name, a.last_name, a.extn_name].filter(Boolean);
+	const parts = [a.first_name, a.middle_name, a.last_name].filter(Boolean);
 	return parts.length ? parts.join(" ") : "(No name)";
 }
 
@@ -141,7 +143,7 @@ function formatServiceLengthShort(fromIso: string | null, now = new Date()) {
 	const d = new Date(fromIso);
 	if (Number.isNaN(d.getTime())) return "—";
 	const diff = diffYearsMonthsDays(d, now);
-	return `${diff.years}y ${diff.months}m ${diff.days}d`;
+	return `${diff.years}y ${diff.months}m`;
 }
 
 function serviceYearsExact(fromIso: string | null, now = new Date()) {
@@ -159,9 +161,26 @@ function emailBadge(email: string | null) {
 	return { label: "Email", className: "bg-blue-100 text-blue-800" };
 }
 
+function downloadBlob(filename: string, blob: Blob) {
+	const url = URL.createObjectURL(blob);
+	const a = document.createElement("a");
+	a.href = url;
+	a.download = filename;
+	document.body.appendChild(a);
+	a.click();
+	a.remove();
+	URL.revokeObjectURL(url);
+}
+
+function weekOfMonth(date: Date) {
+	const day = date.getDate();
+	return Math.floor((day - 1) / 7) + 1; // 1..5
+}
+
 export default function EmployeesPage() {
 	const router = useRouter();
 	const { role: sessionRole } = useAuthRole();
+	const api = (globalThis as unknown as { electronAPI?: any }).electronAPI;
 
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string>("");
@@ -169,15 +188,17 @@ export default function EmployeesPage() {
 	const [licensureByApplicantId, setLicensureByApplicantId] = useState<
 		Record<string, { nextYmd: string | null; nextDays: number | null }>
 	>({});
+	const [expiringSummaryByApplicantId, setExpiringSummaryByApplicantId] = useState<
+		Record<string, { nextYmd: string | null; nextDays: number | null }>
+	>({});
 	const [search, setSearch] = useState("");
-	const [sortBy, setSortBy] = useState<"name" | "created_at" | "category" | "expiring">("name");
+	const [sortBy, setSortBy] = useState<"name" | "created_at" | "category" | "expiring" | "service">("name");
 	const [viewMode, setViewMode] = useState<"grid" | "table">(() => {
   if (typeof window !== "undefined") {
     return (localStorage.getItem("employees:viewMode") as "grid" | "table") || "grid";
   }
   return "grid";
 });
-	const [expiringOpen, setExpiringOpen] = useState(false);
 
 
 
@@ -196,6 +217,11 @@ export default function EmployeesPage() {
 	const [editorApplicantId, setEditorApplicantId] = useState<string | null>(null);
 	const [excelOpen, setExcelOpen] = useState(false);
 
+	const [exportOpen, setExportOpen] = useState(false);
+	const [exportMonth, setExportMonth] = useState("ALL"); // MM
+	const [exportWeek, setExportWeek] = useState("ALL"); // 1..5
+	const [exportTitle, setExportTitle] = useState("Employees (1+ year of service)");
+
 	const [archiveOpen, setArchiveOpen] = useState(false);
 	const [archiveEmployee, setArchiveEmployee] = useState<Applicant | null>(null);
 
@@ -209,7 +235,7 @@ export default function EmployeesPage() {
 			const { data, error: fetchError } = await supabase
 				.from("applicants")
 				.select(
-					"applicant_id, created_at, date_hired_fsai, first_name, middle_name, last_name, extn_name, client_position, detachment, status, gender, birth_date, age, client_contact_num, client_email, profile_image_path, is_archived, is_trashed"
+					"applicant_id, created_at, date_hired_fsai, first_name, middle_name, last_name, client_position, detachment, status, gender, birth_date, age, client_contact_num, client_email, profile_image_path, is_archived, is_trashed"
 				)
 				.eq("is_archived", false)
 				.eq("is_trashed", false)
@@ -252,6 +278,33 @@ export default function EmployeesPage() {
 					}
 				} catch {
 					setLicensureByApplicantId({});
+				}
+
+				// Merge: prefer Electron expiring summary (same source as top-nav popup) when available.
+				try {
+					if (api?.notifications?.getExpiringSummary) {
+						const res = await api.notifications.getExpiringSummary({ limit: 200 });
+						const rows = ((res as any)?.rows ?? []) as Array<{ applicant_id: string; expires_on: string; days_until_expiry: number }>;
+						const map: Record<string, { nextYmd: string | null; nextDays: number | null }> = {};
+						for (const r of rows) {
+							const id = String(r.applicant_id || "");
+							if (!id) continue;
+							const expiresYmd = ymd(r.expires_on) ?? null;
+							const days = Number.isFinite(Number(r.days_until_expiry)) ? Number(r.days_until_expiry) : null;
+							const existing = map[id];
+							const better = (cur: { nextYmd: string | null; nextDays: number | null } | undefined) => {
+								if (!cur?.nextYmd) return true;
+								if (!expiresYmd) return false;
+								return expiresYmd < cur.nextYmd;
+							};
+							if (better(existing)) map[id] = { nextYmd: expiresYmd, nextDays: days };
+						}
+						setExpiringSummaryByApplicantId(map);
+					} else {
+						setExpiringSummaryByApplicantId({});
+					}
+				} catch {
+					setExpiringSummaryByApplicantId({});
 				}
 			}
 		} finally {
@@ -375,14 +428,22 @@ if (hiredMonthFilter !== "ALL") {
 				return d !== 0 ? d : getFullName(a).localeCompare(getFullName(b));
 			}
 			if (sortBy === "expiring") {
-				const aDaysRaw = licensureByApplicantId[a.applicant_id]?.nextDays ?? null;
-				const bDaysRaw = licensureByApplicantId[b.applicant_id]?.nextDays ?? null;
+				const aDaysRaw = (expiringSummaryByApplicantId[a.applicant_id]?.nextDays ?? licensureByApplicantId[a.applicant_id]?.nextDays) ?? null;
+				const bDaysRaw = (expiringSummaryByApplicantId[b.applicant_id]?.nextDays ?? licensureByApplicantId[b.applicant_id]?.nextDays) ?? null;
 				const score = (days: number | null) => {
 					if (days == null) return 1_000_000;
 					// Put already-expired after upcoming expirations.
 					return days < 0 ? 500_000 + Math.abs(days) : days;
 				};
 				const d = score(aDaysRaw) - score(bDaysRaw);
+				return d !== 0 ? d : getFullName(a).localeCompare(getFullName(b));
+			}
+			if (sortBy === "service") {
+				const ay = serviceYearsExact(a.date_hired_fsai, new Date());
+				const by = serviceYearsExact(b.date_hired_fsai, new Date());
+				// Longest service first; missing join dates last.
+				const score = (v: number | null) => (v == null ? -1 : v);
+				const d = score(by) - score(ay);
 				return d !== 0 ? d : getFullName(a).localeCompare(getFullName(b));
 			}
 			return getFullName(a).localeCompare(getFullName(b));
@@ -394,6 +455,7 @@ if (hiredMonthFilter !== "ALL") {
   search,
   sortBy,
 	licensureByApplicantId,
+	expiringSummaryByApplicantId,
   statusFilter,
   genderFilter,
   detachmentFilter,
@@ -419,39 +481,7 @@ if (hiredMonthFilter !== "ALL") {
 		};
 	}, [employees]);
 
-	const expiringItems = useMemo(() => {
-		const score = (days: number | null) => {
-			if (days == null) return 1_000_000;
-			return days < 0 ? 500_000 + Math.abs(days) : days;
-		};
-		const items = employees
-			.map((e) => {
-				const next = licensureByApplicantId[e.applicant_id] || { nextYmd: null, nextDays: null };
-				if (!next.nextYmd) return null;
-				return {
-					employee: e,
-					nextYmd: next.nextYmd,
-					nextDays: next.nextDays,
-					score: score(next.nextDays),
-				};
-			})
-			.filter(Boolean) as Array<{ employee: Applicant; nextYmd: string; nextDays: number | null; score: number }>;
-
-		items.sort((a, b) => {
-			const d = a.score - b.score;
-			return d !== 0 ? d : getFullName(a.employee).localeCompare(getFullName(b.employee));
-		});
-		return items;
-	}, [employees, licensureByApplicantId]);
-
-	const expiringUpcoming = useMemo(
-		() => expiringItems.filter((x) => x.nextDays != null && x.nextDays >= 0),
-		[expiringItems]
-	);
-	const expiringExpired = useMemo(
-		() => expiringItems.filter((x) => x.nextDays != null && x.nextDays < 0),
-		[expiringItems]
-	);
+	// Expiring list is handled in the top navigation dropdown (Main_Modules layout).
 
 	function clearFilters() {
 		setStatusFilter("ALL");
@@ -556,16 +586,143 @@ if (hiredMonthFilter !== "ALL") {
 		}
 	}
 
+	function getExportCandidates() {
+		const now = new Date();
+		return filtered
+			.filter((e) => {
+				const years = serviceYearsExact(e.date_hired_fsai, now);
+				if (years == null || years < 1) return false;
+
+				if (exportMonth !== "ALL" || exportWeek !== "ALL") {
+					if (!e.date_hired_fsai) return false;
+					const hired = new Date(e.date_hired_fsai);
+					if (Number.isNaN(hired.getTime())) return false;
+					if (exportMonth !== "ALL") {
+						const m = String(hired.getMonth() + 1).padStart(2, "0");
+						if (m !== exportMonth) return false;
+					}
+					if (exportWeek !== "ALL") {
+						const w = String(weekOfMonth(hired));
+						if (w !== exportWeek) return false;
+					}
+				}
+
+				return true;
+			});
+	}
+
+	function exportFileBase() {
+		const parts = ["employees", "min1yr"];
+		if (exportMonth !== "ALL") parts.push(`m${exportMonth}`);
+		if (exportWeek !== "ALL") parts.push(`w${exportWeek}`);
+		parts.push(new Date().toISOString().slice(0, 10));
+		return parts.join("_");
+	}
+
+	function exportEmployeesXlsx() {
+		setError("");
+		const rows = getExportCandidates();
+		if (!rows.length) {
+			setError("No employees match the export criteria (must be 1+ year of service).");
+			return;
+		}
+		const title = exportTitle.trim() || "Employees (1+ year of service)";
+
+		const now = new Date();
+		const data = rows.map((e) => {
+			return {
+				Name: getFullName(e),
+				"Job Title": e.client_position ?? "",
+				Detachment: e.detachment ?? "",
+				Gender: (e.gender ?? "").trim(),
+				"Hire Date": e.date_hired_fsai ? new Date(e.date_hired_fsai).toLocaleDateString() : "",
+				"Service Length": formatServiceLengthShort(e.date_hired_fsai, now),
+				Email: (e.client_email ?? "").trim(),
+				Phone: (e.client_contact_num ?? "").trim(),
+			};
+		});
+
+		const headers = ["Name", "Job Title", "Detachment", "Gender", "Hire Date", "Service Length", "Email", "Phone"];
+		const body = data.map((row) => [
+			row.Name,
+			row["Job Title"],
+			row.Detachment,
+			row.Gender,
+			row["Hire Date"],
+			row["Service Length"],
+			row.Email,
+			row.Phone,
+		]);
+		const ws = XLSX.utils.aoa_to_sheet([
+			[title],
+			[`Generated: ${new Date().toLocaleString()}`],
+			[],
+			headers,
+			...body,
+		]);
+		const wb = XLSX.utils.book_new();
+		XLSX.utils.book_append_sheet(wb, ws, "Employees");
+		const out = XLSX.write(wb, { type: "array", bookType: "xlsx" });
+		downloadBlob(
+			`${exportFileBase()}.xlsx`,
+			new Blob([out], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" })
+		);
+		setExportOpen(false);
+	}
+
+	function exportEmployeesPdf() {
+		setError("");
+		const rows = getExportCandidates();
+		if (!rows.length) {
+			setError("No employees match the export criteria (must be 1+ year of service).");
+			return;
+		}
+		const title = exportTitle.trim() || "Employees (1+ year of service)";
+
+		const now = new Date();
+		const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
+		doc.setFontSize(14);
+		doc.text(title, 40, 40);
+
+		const head = [["Name", "Job Title", "Detachment", "Gender", "Hire Date", "Service", "Email", "Phone"]];
+		const body = rows.map((e) => {
+			return [
+				getFullName(e),
+				e.client_position ?? "",
+				e.detachment ?? "",
+				(e.gender ?? "").trim(),
+				e.date_hired_fsai ? new Date(e.date_hired_fsai).toLocaleDateString() : "",
+				formatServiceLengthShort(e.date_hired_fsai, now),
+				(e.client_email ?? "").trim(),
+				(e.client_contact_num ?? "").trim(),
+			];
+		});
+
+		autoTable(doc, {
+			startY: 60,
+			head,
+			body,
+			styles: { fontSize: 8, cellPadding: 3 },
+			headStyles: { fillColor: [255, 218, 3], textColor: [0, 0, 0] },
+		});
+
+		doc.save(`${exportFileBase()}.pdf`);
+		setExportOpen(false);
+	}
+
 	return (
 		<div className="space-y-5">
 			<div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
 				<div className="flex items-center gap-3 text-black">
-					<input
-						value={search}
-						onChange={(e) => setSearch(e.target.value)}
-						placeholder="Search name, email, phone, status, detachment, etc."
-						className="bg-white border rounded-full px-4 py-2 shadow-sm w-full md:w-[360px]"
-					/>
+					<div className="relative w-full md:w-[360px]">
+						<Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
+						<input
+							value={search}
+							onChange={(e) => setSearch(e.target.value)}
+							placeholder="Search name, email, phone, status, detachment, etc."
+							className="bg-white border rounded-full pl-10 pr-4 py-2 shadow-sm w-full"
+						/>
+					</div>
 					<button
 						type="button"
 						onClick={() => setFiltersOpen(true)}
@@ -581,141 +738,16 @@ if (hiredMonthFilter !== "ALL") {
 						<select
 							value={sortBy}
 							onChange={(e) =>
-								setSortBy(e.target.value as "name" | "created_at" | "category" | "expiring")
+								setSortBy(e.target.value as "name" | "created_at" | "category" | "expiring" | "service")
 							}
-							className="px-4 py-2 rounded-full bg-black text-white font-medium border border-black"
+							className="px-4 py-2 rounded-full bg-white text-black font-medium border border-gray-300"
 						>
 							<option value="name">Name</option>
 							<option value="created_at">Newest Date</option>
 							<option value="category">Category</option>
 							<option value="expiring">Expiring Licenses</option>
+							<option value="service">Years of Service</option>
 						</select>
-					</div>
-					<div className="relative">
-						<button
-							type="button"
-							onClick={() => setExpiringOpen((v) => !v)}
-							className="px-4 py-2 rounded-full bg-black text-white font-medium border border-black"
-							title="View employees with license expirations"
-						>
-							Expiring Licenses ({expiringUpcoming.length})
-						</button>
-
-						{expiringOpen ? (
-							<div className="absolute right-0 mt-2 w-[420px] max-w-[90vw] rounded-2xl border bg-white shadow-xl z-20">
-								<div className="px-4 py-3 border-b flex items-center justify-between gap-3">
-									<div className="min-w-0">
-										<div className="text-sm font-bold text-black truncate">Expiring Licenses</div>
-										<div className="text-xs text-gray-500">
-											Upcoming: {expiringUpcoming.length} · Expired: {expiringExpired.length}
-										</div>
-									</div>
-									<div className="flex items-center gap-2">
-										<button
-											type="button"
-											onClick={() => {
-												setSortBy("expiring");
-												setExpiringOpen(false);
-											}}
-											className="px-3 py-1.5 rounded-xl border bg-white text-xs text-black"
-										>
-											Sort List
-										</button>
-										<button
-											type="button"
-											onClick={() => setExpiringOpen(false)}
-											className="px-3 py-1.5 rounded-xl border bg-white text-xs text-black"
-										>
-											Close
-										</button>
-									</div>
-								</div>
-
-								<div className="max-h-[420px] overflow-auto p-2">
-									{expiringItems.length === 0 ? (
-										<div className="px-3 py-8 text-center text-sm text-gray-500">
-											No license expirations found.
-										</div>
-									) : (
-										<div className="space-y-2">
-											<div className="px-2 pt-1 text-xs font-semibold text-gray-700">Upcoming</div>
-											{expiringUpcoming.slice(0, 12).map((x) => {
-												const e = x.employee;
-												const badge = emailBadge(e.client_email);
-												const detailsHref = `/Main_Modules/Employees/details/?id=${encodeURIComponent(
-													e.applicant_id
-												)}&from=${encodeURIComponent("/Main_Modules/Employees/")}`;
-												return (
-													<button
-														key={e.applicant_id}
-														type="button"
-														onClick={() => {
-															router.push(detailsHref);
-															setExpiringOpen(false);
-														}}
-														className="w-full text-left rounded-2xl border bg-white px-3 py-2 hover:bg-gray-50"
-													>
-														<div className="flex items-center justify-between gap-3">
-															<div className="min-w-0">
-																<div className="text-sm font-semibold text-black truncate">{getFullName(e)}</div>
-																<div className="text-xs text-gray-500 truncate">{x.nextYmd}</div>
-															</div>
-															<div className="shrink-0 text-right">
-																<div className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-semibold ${badge.className}`}>
-																	{badge.label}
-																</div>
-																<div className="mt-1 text-xs text-gray-500">
-																	{x.nextDays == null ? "—" : `${x.nextDays} day(s)`}
-																</div>
-															</div>
-														</div>
-													</button>
-												);
-											})}
-
-											{expiringExpired.length ? (
-												<>
-													<div className="px-2 pt-3 text-xs font-semibold text-gray-700">Expired</div>
-													{expiringExpired.slice(0, 6).map((x) => {
-														const e = x.employee;
-														const badge = emailBadge(e.client_email);
-														const detailsHref = `/Main_Modules/Employees/details/?id=${encodeURIComponent(
-															e.applicant_id
-														)}&from=${encodeURIComponent("/Main_Modules/Employees/")}`;
-														return (
-															<button
-																key={`${e.applicant_id}-expired`}
-																type="button"
-																onClick={() => {
-																	router.push(detailsHref);
-																	setExpiringOpen(false);
-																}}
-																className="w-full text-left rounded-2xl border bg-white px-3 py-2 hover:bg-gray-50"
-															>
-																<div className="flex items-center justify-between gap-3">
-																	<div className="min-w-0">
-																		<div className="text-sm font-semibold text-black truncate">{getFullName(e)}</div>
-																		<div className="text-xs text-gray-500 truncate">{x.nextYmd}</div>
-																	</div>
-																	<div className="shrink-0 text-right">
-																		<div className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-semibold ${badge.className}`}>
-																		{badge.label}
-																	</div>
-																	<div className="mt-1 text-xs text-gray-500">
-																		{x.nextDays == null ? "—" : `${x.nextDays} day(s)`}
-																	</div>
-																</div>
-															</div>
-														</button>
-													);
-												})}
-												</>
-											) : null}
-										</div>
-									)}
-								</div>
-							</div>
-						) : null}
 					</div>
 					<div className="flex items-center gap-2 ml-2">
 						<button
@@ -739,6 +771,16 @@ if (hiredMonthFilter !== "ALL") {
 
 					{sessionRole !== "employee" ? (
 						<div className="flex items-center gap-2">
+							<button
+								type="button"
+								onClick={() => setExportOpen(true)}
+								className="h-10 w-10 rounded-xl border bg-white flex items-center justify-center"
+								aria-label="Export"
+								title="Export"
+							>
+								<FileDown className="w-5 h-5 text-gray-800" />
+							</button>
+
 							<button
 								onClick={openExcelImport}
 								className="px-4 py-2 rounded-full bg-white border text-black font-semibold flex items-center gap-2"
@@ -815,6 +857,8 @@ if (hiredMonthFilter !== "ALL") {
                 <span className="text-gray-500">Detachment:</span>{" "}
                 {e.detachment ?? "—"}
 										</div>
+										<div className="text-xs text-gray-500 truncate">
+										</div>
 									</div>
 								</div>
 
@@ -828,17 +872,6 @@ if (hiredMonthFilter !== "ALL") {
 									</span>
 
 									<div className="flex items-center gap-2">
-										<button
-											onClick={(ev) => {
-												ev.stopPropagation();
-											router.push(detailsHref);
-										}}
-										className="h-9 w-9 rounded-xl border bg-white flex items-center justify-center text-black"
-										title="View"
-									>
-										<Eye className="w-4 h-4" />
-									</button>
-
 									{sessionRole !== "employee" && (
 										<button
 											onClick={(ev) => {
@@ -898,7 +931,6 @@ if (hiredMonthFilter !== "ALL") {
 					<th className="px-4 py-3 text-left font-semibold text-black">Detachment</th>
 					<th className="px-4 py-3 text-left font-semibold text-black">Next License Expiry</th>
 					<th className="px-4 py-3 text-left font-semibold text-black">Status</th>
-					<th className="px-4 py-3 text-center font-semibold text-black last:rounded-r-xl">View</th>
 					{sessionRole !== "employee" ? (
 						<th className="px-4 py-3 text-center font-semibold text-black last:rounded-r-xl">Actions</th>
 					) : null}
@@ -908,6 +940,7 @@ if (hiredMonthFilter !== "ALL") {
 				{filtered.map((e) => {
 					const profileUrl = getProfileUrl(e.profile_image_path);
 					const next = licensureByApplicantId[e.applicant_id] || { nextYmd: null, nextDays: null };
+					const canClick = sessionRole !== "employee";
 					const detailsHref = `/Main_Modules/Employees/details/?id=${encodeURIComponent(
 						e.applicant_id
 					)}&from=${encodeURIComponent("/Main_Modules/Employees/")}`;
@@ -915,8 +948,20 @@ if (hiredMonthFilter !== "ALL") {
 					return (
 						<tr
 							key={e.applicant_id}
-							onClick={() => router.push(detailsHref)}
-							className="bg-white shadow-sm hover:shadow-md cursor-pointer transition"
+							role={canClick ? "button" : undefined}
+							tabIndex={canClick ? 0 : -1}
+							onKeyDown={(ev) => {
+								if (!canClick) return;
+								if (ev.key === "Enter" || ev.key === " ") {
+									ev.preventDefault();
+									router.push(detailsHref);
+								}
+							}}
+							onClick={() => {
+								if (!canClick) return;
+								router.push(detailsHref);
+							}}
+							className={`bg-white shadow-sm transition ${canClick ? "hover:shadow-md cursor-pointer" : ""}`}
 						>
 							<td className="px-4 py-3 rounded-l-xl">
 								<div className="h-10 w-10 rounded-full bg-gray-100 overflow-hidden">
@@ -962,20 +1007,6 @@ if (hiredMonthFilter !== "ALL") {
 								>
 									{normalizeStatus(e.status)}
 								</span>
-							</td>
-							<td
-								className={`px-4 py-3 text-center ${sessionRole === "employee" ? "rounded-r-xl" : ""}`}
-							>
-								<button
-									onClick={(ev) => {
-										ev.stopPropagation();
-										router.push(detailsHref);
-									}}
-									className="p-2 rounded-lg hover:bg-gray-100"
-									title="View"
-								>
-									<Eye className="w-5 h-5 text-gray-600" />
-								</button>
 							</td>
 							{sessionRole !== "employee" ? (
 								<td className="px-4 py-3 text-center rounded-r-xl">
@@ -1044,6 +1075,128 @@ if (hiredMonthFilter !== "ALL") {
 							<button onClick={confirmTrash} className="px-4 py-2 rounded-xl bg-red-600 text-white font-semibold">
 								Move to Trash
 							</button>
+						</div>
+					</div>
+				</div>
+			) : null}
+
+			{exportOpen && sessionRole !== "employee" ? (
+				<div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
+					<div className="bg-white rounded-3xl shadow-xl max-w-4xl w-full overflow-hidden">
+						<div className="px-6 py-4 border-b flex items-center justify-between">
+							<div className="text-lg font-bold text-black">Export</div>
+							<button
+								onClick={() => setExportOpen(false)}
+								className="px-3 py-2 rounded-xl border bg-white"
+								type="button"
+							>
+								Close
+							</button>
+						</div>
+
+						<div className="p-6 space-y-4">
+							<div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+								<label className="text-sm text-black md:col-span-3">
+									<div className="text-gray-600 mb-1">Title</div>
+									<input
+										value={exportTitle}
+										onChange={(e) => setExportTitle(e.target.value)}
+										className="w-full border rounded-xl px-3 py-2 bg-white"
+										placeholder="Employees (1+ year of service)"
+									/>
+								</label>
+
+								<label className="text-sm text-black">
+									<div className="text-gray-600 mb-1">Month (Hire Date)</div>
+									<select
+										value={exportMonth}
+										onChange={(e) => setExportMonth(e.target.value)}
+										className="w-full border rounded-xl px-3 py-2 bg-white"
+									>
+										<option value="ALL">All</option>
+										<option value="01">January</option>
+										<option value="02">February</option>
+										<option value="03">March</option>
+										<option value="04">April</option>
+										<option value="05">May</option>
+										<option value="06">June</option>
+										<option value="07">July</option>
+										<option value="08">August</option>
+										<option value="09">September</option>
+										<option value="10">October</option>
+										<option value="11">November</option>
+										<option value="12">December</option>
+									</select>
+								</label>
+
+								<label className="text-sm text-black">
+									<div className="text-gray-600 mb-1">Week (Hire Date)</div>
+									<select
+										value={exportWeek}
+										onChange={(e) => setExportWeek(e.target.value)}
+										className="w-full border rounded-xl px-3 py-2 bg-white"
+									>
+										<option value="ALL">All</option>
+										<option value="1">Week 1 (1-7)</option>
+										<option value="2">Week 2 (8-14)</option>
+										<option value="3">Week 3 (15-21)</option>
+										<option value="4">Week 4 (22-28)</option>
+										<option value="5">Week 5 (29-31)</option>
+									</select>
+								</label>
+
+								<div className="flex items-end justify-end gap-2">
+									<button
+										type="button"
+										onClick={exportEmployeesPdf}
+										className="h-10 w-10 rounded-xl border bg-white flex items-center justify-center hover:bg-gray-50"
+										title="Download PDF"
+										aria-label="Download PDF"
+									>
+										<FileText className="w-5 h-5 text-gray-800" />
+									</button>
+									<button
+										type="button"
+										onClick={exportEmployeesXlsx}
+										className="h-10 px-4 rounded-xl bg-black text-white text-xs font-semibold hover:bg-gray-800"
+										title="Download XLSX"
+										aria-label="Download XLSX"
+									>
+										XLSX
+									</button>
+								</div>
+							</div>
+
+							<div className="rounded-2xl border overflow-hidden">
+								<div className="px-4 py-2 bg-gray-50 text-sm text-gray-700 flex items-center justify-between">
+									<div>Preview (1+ year of service)</div>
+									<div className="text-xs text-gray-500">{getExportCandidates().length} employee(s)</div>
+								</div>
+								<div className="max-h-[360px] overflow-auto">
+									<table className="w-full text-sm">
+										<thead className="sticky top-0 bg-white">
+											<tr className="border-b">
+												<th className="px-4 py-2 text-left font-semibold">Name</th>
+												<th className="px-4 py-2 text-left font-semibold">Job Title</th>
+												<th className="px-4 py-2 text-left font-semibold">Detachment</th>
+												<th className="px-4 py-2 text-left font-semibold">Hire Date</th>
+												<th className="px-4 py-2 text-left font-semibold">Service</th>
+											</tr>
+										</thead>
+										<tbody>
+											{getExportCandidates().map((e) => (
+												<tr key={e.applicant_id} className="border-b last:border-b-0">
+													<td className="px-4 py-2">{getFullName(e)}</td>
+													<td className="px-4 py-2">{e.client_position ?? "—"}</td>
+													<td className="px-4 py-2">{e.detachment ?? "—"}</td>
+													<td className="px-4 py-2">{e.date_hired_fsai ? new Date(e.date_hired_fsai).toLocaleDateString() : "—"}</td>
+													<td className="px-4 py-2">{formatServiceLengthShort(e.date_hired_fsai)}</td>
+												</tr>
+											))}
+										</tbody>
+									</table>
+								</div>
+							</div>
 						</div>
 					</div>
 				</div>

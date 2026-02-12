@@ -608,7 +608,7 @@ export default function MainModulesLayout({ children }: LayoutProps) {
 
       <div className="flex-1 min-w-0 flex flex-col min-h-0">
         {/* Top Navigation */}
-        <header className="bg-gray-50 sticky top-0 z-10">
+        <header className="bg-gray-50 sticky top-0 z-40">
           <div className="px-6 pt-6">
             <div className="flex items-center justify-between gap-4">
               <div>
@@ -642,7 +642,7 @@ export default function MainModulesLayout({ children }: LayoutProps) {
                   </button>
 
                   {activityOpen ? (
-                    <div className="absolute right-0 mt-2 w-[360px] max-w-[90vw] rounded-2xl border bg-white shadow-lg overflow-hidden">
+                    <div className="absolute right-0 mt-2 w-[360px] max-w-[90vw] rounded-2xl border bg-white shadow-lg overflow-hidden z-50">
                       <div className="px-4 py-3 border-b flex items-center justify-between">
                         <div className="text-sm font-semibold text-black">Recent Activity</div>
                         <Link
@@ -719,7 +719,7 @@ export default function MainModulesLayout({ children }: LayoutProps) {
                   </button>
 
                   {expiringOpen ? (
-                    <div className="absolute right-0 mt-2 w-[420px] max-w-[92vw] rounded-2xl border bg-white shadow-lg overflow-hidden">
+                    <div className="absolute right-0 mt-2 w-[420px] max-w-[92vw] rounded-2xl border bg-white shadow-lg overflow-hidden z-50">
                       <div className="px-4 py-3 border-b flex items-center justify-between">
                         <div className="text-sm font-semibold text-black">Expiring Licenses</div>
                         <Link

@@ -17,7 +17,6 @@ type ApplicantInsert = {
   first_name?: string | null;
   middle_name?: string | null;
   last_name?: string | null;
-  extn_name?: string | null;
   gender?: string | null;
   birth_date?: string | null;
   age?: number | null;
@@ -243,8 +242,6 @@ function rowToApplicant(row: RowObject): { payload: ApplicantInsert | null; erro
     first_name: firstName,
     middle_name: toNullableText(pick(row, ["middle_name", "middle name", "middlename"])),
     last_name: lastName,
-    extn_name: toNullableText(pick(row, ["extn_name", "extn", "suffix"])),
-
     gender: toNullableText(pick(row, ["gender", "sex"])),
     birth_date: toDateYmd(pick(row, ["birth_date", "birthdate", "date of birth", "dob"])),
     age: toNullableInt(pick(row, ["age"])),

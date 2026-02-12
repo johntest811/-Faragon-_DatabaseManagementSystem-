@@ -12,7 +12,6 @@ type Applicant = {
   first_name: string | null;
   middle_name: string | null;
   last_name: string | null;
-  extn_name: string | null;
   client_position: string | null;
   detachment: string | null;
   status: string | null;
@@ -26,7 +25,7 @@ const BUCKETS = {
 };
 
 function getFullName(a: Applicant) {
-  const parts = [a.first_name, a.middle_name, a.last_name, a.extn_name].filter(Boolean);
+  const parts = [a.first_name, a.middle_name, a.last_name].filter(Boolean);
   return parts.length ? parts.join(" ") : "(No name)";
 }
 
@@ -62,7 +61,7 @@ export default function TrashPage() {
     const { data, error: fetchError } = await supabase
       .from("applicants")
       .select(
-        "applicant_id, created_at, first_name, middle_name, last_name, extn_name, client_position, detachment, status, profile_image_path, is_trashed, trashed_at"
+        "applicant_id, created_at, first_name, middle_name, last_name, client_position, detachment, status, profile_image_path, is_trashed, trashed_at"
       )
       .eq("is_trashed", true)
       .order("trashed_at", { ascending: false })
