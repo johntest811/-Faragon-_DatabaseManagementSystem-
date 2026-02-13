@@ -98,14 +98,6 @@ function serviceYearsExact(fromIso: string | null, now = new Date()) {
   return diff.years + diff.months / 12 + diff.days / 365.25;
 }
 
-function formatServiceLengthShort(fromIso: string | null, now = new Date()) {
-  if (!fromIso) return "—";
-  const d = new Date(fromIso);
-  if (Number.isNaN(d.getTime())) return "—";
-  const diff = diffYearsMonthsDays(d, now);
-  return `${diff.years}y ${diff.months}m`;
-}
-
 function ymd(d: string | null) {
   if (!d) return null;
   const dt = new Date(d);
@@ -490,10 +482,7 @@ export default function ArchivePage() {
                 <td className="px-4 py-3">{e.age ?? "—"}</td>
                 <td className="px-4 py-3">
                   {e.date_hired_fsai ? (
-                    <div className="leading-tight">
-                      <div>{new Date(e.date_hired_fsai).toLocaleDateString()}</div>
-                      <div className="text-xs text-gray-500">{formatServiceLengthShort(e.date_hired_fsai)}</div>
-                    </div>
+                    <div className="leading-tight">{new Date(e.date_hired_fsai).toLocaleDateString()}</div>
                   ) : (
                     "—"
                   )}

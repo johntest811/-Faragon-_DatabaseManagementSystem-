@@ -14,6 +14,9 @@ import {
   Briefcase,
   ArrowLeft,
   ExternalLink,
+  X,
+  ZoomIn,
+  ZoomOut,
 } from "lucide-react";
 import { supabase } from "../../../Client/SupabaseClients";
 import { useAuthRole } from "../../../Client/useRbac";
@@ -176,6 +179,17 @@ function publicUrl(bucket: string, path: string | null) {
   return data.publicUrl || null;
 }
 
+type ViewerItem = {
+  key: string;
+  title: string;
+  url: string;
+};
+
+function isImageUrl(url: string | null) {
+  if (!url) return false;
+  return /\.(png|jpe?g|webp|gif|bmp|svg)(\?|$)/i.test(url);
+}
+
 function InfoRow({
   icon: Icon,
   label,
@@ -198,25 +212,112 @@ function InfoRow({
   );
 }
 
-function DocLink({ title, url }: { title: string; url: string | null }) {
+function ImageViewerModal({
+  open,
+  items,
+  index,
+  zoom,
+  onClose,
+  onChangeIndex,
+  onZoomIn,
+  onZoomOut,
+  onResetZoom,
+  onWheelZoom,
+}: {
+  open: boolean;
+  items: ViewerItem[];
+  index: number;
+  zoom: number;
+  onClose: () => void;
+  onChangeIndex: (next: number) => void;
+  onZoomIn: () => void;
+  onZoomOut: () => void;
+  onResetZoom: () => void;
+  onWheelZoom: (deltaY: number) => void;
+}) {
+  if (!open || !items.length) return null;
+  const current = items[index] ?? items[0];
+
   return (
-    <div className="flex items-center justify-between gap-3 py-2">
-      <div className="flex items-center gap-2 min-w-0">
-        <FileText className="w-4 h-4 text-yellow-700" />
-        <div className="text-sm font-medium text-gray-900 truncate">{title}</div>
+    <div className="fixed inset-0 z-[100] bg-black/70 flex items-center justify-center p-4">
+      <div className="w-full max-w-6xl h-[85vh] bg-white rounded-3xl overflow-hidden shadow-2xl flex">
+        <div className="flex-1 flex flex-col min-w-0">
+          <div className="px-4 py-3 border-b flex items-center justify-between gap-2">
+            <div className="text-sm font-semibold text-black truncate">{current.title}</div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={onZoomOut}
+                className="h-9 w-9 rounded-xl border bg-white flex items-center justify-center text-black"
+                title="Zoom Out"
+              >
+                <ZoomOut className="w-4 h-4" />
+              </button>
+              <button
+                type="button"
+                onClick={onZoomIn}
+                className="h-9 w-9 rounded-xl border bg-white flex items-center justify-center text-black"
+                title="Zoom In"
+              >
+                <ZoomIn className="w-4 h-4" />
+              </button>
+              <button
+                type="button"
+                onClick={onResetZoom}
+                className="px-3 py-2 rounded-xl border bg-white text-black text-xs font-semibold"
+              >
+                Reset
+              </button>
+              <button
+                type="button"
+                onClick={onClose}
+                className="h-9 w-9 rounded-xl border bg-white flex items-center justify-center text-black"
+                title="Close"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+
+          <div
+            className="flex-1 overflow-auto bg-gray-100"
+            onWheel={(e) => {
+              e.preventDefault();
+              onWheelZoom(e.deltaY);
+            }}
+          >
+            <div className="h-full min-h-full flex items-center justify-center p-6">
+              <img
+                src={current.url}
+                alt={current.title}
+                className="max-h-full max-w-full object-contain origin-center"
+                style={{ transform: `scale(${zoom})` }}
+              />
+            </div>
+          </div>
+        </div>
+
+        <div className="w-64 border-l bg-white flex flex-col">
+          <div className="px-4 py-3 border-b text-sm font-semibold text-black">Scanned Documents</div>
+          <div className="overflow-y-auto p-3 space-y-2">
+            {items.map((item, idx) => (
+              <button
+                key={item.key}
+                type="button"
+                onClick={() => onChangeIndex(idx)}
+                className={`w-full text-left rounded-xl border p-2 ${
+                  idx === index ? "border-[#FFDA03] bg-yellow-50" : "border-gray-200 bg-white"
+                }`}
+              >
+                <div className="h-16 w-full rounded-lg overflow-hidden bg-gray-100 flex items-center justify-center">
+                  <img src={item.url} alt={item.title} className="h-full w-full object-cover" />
+                </div>
+                <div className="mt-2 text-xs font-medium text-black truncate">{item.title}</div>
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
-      {url ? (
-        <a
-          href={url}
-          target="_blank"
-          rel="noreferrer"
-          className="inline-flex items-center gap-1 text-sm text-blue-600 hover:underline"
-        >
-          Open <ExternalLink className="w-4 h-4" />
-        </a>
-      ) : (
-        <div className="text-xs text-gray-400">Not uploaded</div>
-      )}
     </div>
   );
 }
@@ -245,6 +346,10 @@ function EmployeeDetailsInner() {
   const [employment, setEmployment] = useState<EmploymentItem[]>([]);
   const [lic, setLic] = useState<Licensure | null>(null);
   const [bio, setBio] = useState<Biodata | null>(null);
+  const [viewerOpen, setViewerOpen] = useState(false);
+  const [viewerItems, setViewerItems] = useState<ViewerItem[]>([]);
+  const [viewerIndex, setViewerIndex] = useState(0);
+  const [viewerZoom, setViewerZoom] = useState(1);
 
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
@@ -405,6 +510,40 @@ function EmployeeDetailsInner() {
     };
   }, [applicant, certs, bio]);
 
+  const scannedImageItems = useMemo(() => {
+    const list: Array<{ key: string; title: string; url: string | null }> = [
+      { key: "profile", title: "Profile Image", url: profile },
+      { key: "applicationForm", title: "Application Form", url: docUrls?.applicationForm ?? null },
+      { key: "sss", title: "SSS Certain", url: docUrls?.sss ?? null },
+      { key: "tin", title: "TIN ID", url: docUrls?.tin ?? null },
+      { key: "pagibig", title: "PAG-IBIG ID", url: docUrls?.pagibig ?? null },
+      { key: "philhealth", title: "PHILHEALTH ID", url: docUrls?.philhealth ?? null },
+      { key: "securityLicense", title: "Security License", url: docUrls?.securityLicense ?? null },
+      { key: "gunSafety", title: "Gun Safety Certificate", url: docUrls?.gunSafety ?? null },
+      { key: "training", title: "Training Certificate", url: docUrls?.training ?? null },
+      { key: "seminar", title: "Seminar Certificate", url: docUrls?.seminar ?? null },
+      { key: "hs", title: "Highschool Diploma", url: docUrls?.hs ?? null },
+      { key: "college", title: "College Diploma", url: docUrls?.college ?? null },
+      { key: "vocational", title: "Vocational", url: docUrls?.vocational ?? null },
+    ];
+
+    return list
+      .filter((x): x is { key: string; title: string; url: string } => Boolean(x.url))
+      .filter((x) => isImageUrl(x.url));
+  }, [profile, docUrls]);
+
+  function openImageViewerFromKey(key: string) {
+    if (!canEdit) return;
+    if (!scannedImageItems.length) return;
+
+    const idx = scannedImageItems.findIndex((x) => x.key === key);
+    const items = scannedImageItems.map((x) => ({ key: x.key, title: x.title, url: x.url }));
+    setViewerItems(items);
+    setViewerIndex(idx >= 0 ? idx : 0);
+    setViewerZoom(1);
+    setViewerOpen(true);
+  }
+
   if (loading) {
     return (
       <div className="bg-white rounded-3xl border shadow-sm p-8 text-center text-gray-500">
@@ -465,7 +604,14 @@ function EmployeeDetailsInner() {
           <div className="flex flex-col items-center text-center">
             <div className="h-36 w-36 rounded-3xl bg-gray-100 overflow-hidden flex items-center justify-center">
               {profile ? (
-                <img src={profile} alt={name} className="h-full w-full object-cover" />
+                <button
+                  type="button"
+                  onClick={() => openImageViewerFromKey("profile")}
+                  className="h-full w-full"
+                  title={canEdit ? "Open image" : undefined}
+                >
+                  <img src={profile} alt={name} className="h-full w-full object-cover" />
+                </button>
               ) : (
                 <div className="text-sm text-gray-500">No Photo</div>
               )}
@@ -520,8 +666,30 @@ function EmployeeDetailsInner() {
 
           <div className="mt-4 rounded-2xl border bg-white px-4 py-3">
             <div className="text-xs text-gray-500">Application Form</div>
-            <div className="mt-2">
-              <DocLink title="Application Form" url={docUrls?.applicationForm ?? null} />
+            <div className="mt-2 flex items-center justify-between gap-3">
+              <div className="text-sm font-medium text-gray-900">Application Form</div>
+              {docUrls?.applicationForm ? (
+                canEdit && isImageUrl(docUrls.applicationForm) ? (
+                  <button
+                    type="button"
+                    onClick={() => openImageViewerFromKey("applicationForm")}
+                    className="inline-flex items-center gap-1 text-sm text-blue-600 hover:underline"
+                  >
+                    Open <ExternalLink className="w-4 h-4" />
+                  </button>
+                ) : (
+                  <a
+                    href={docUrls.applicationForm}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1 text-sm text-blue-600 hover:underline"
+                  >
+                    Open <ExternalLink className="w-4 h-4" />
+                  </a>
+                )
+              ) : (
+                <div className="text-xs text-gray-400">Not uploaded</div>
+              )}
             </div>
           </div>
 
@@ -647,21 +815,100 @@ function EmployeeDetailsInner() {
         <section className="bg-white rounded-3xl border shadow-sm p-6">
           <div className="text-lg font-bold text-gray-900">Scanned Documents</div>
           <div className="mt-4 divide-y">
-            <DocLink title="Application Form" url={docUrls?.applicationForm ?? null} />
-            <DocLink title="SSS Certain" url={docUrls?.sss ?? null} />
-            <DocLink title="TIN ID" url={docUrls?.tin ?? null} />
-            <DocLink title="PAG-IBIG ID" url={docUrls?.pagibig ?? null} />
-            <DocLink title="PHILHEALTH ID" url={docUrls?.philhealth ?? null} />
-            <DocLink title="Security License" url={docUrls?.securityLicense ?? null} />
-            <DocLink title="Gun Safety Certificate" url={docUrls?.gunSafety ?? null} />
-            <DocLink title="Training Certificate" url={docUrls?.training ?? null} />
-            <DocLink title="Seminar Certificate" url={docUrls?.seminar ?? null} />
-            <DocLink title="Highschool Diploma" url={docUrls?.hs ?? null} />
-            <DocLink title="College Diploma" url={docUrls?.college ?? null} />
-            <DocLink title="Vocational" url={docUrls?.vocational ?? null} />
+            <div className="flex items-center justify-between gap-3 py-2">
+              <div className="flex items-center gap-2 min-w-0">
+                <FileText className="w-4 h-4 text-yellow-700" />
+                <div className="text-sm font-medium text-gray-900 truncate">Profile Image</div>
+              </div>
+              {profile ? (
+                canEdit && isImageUrl(profile) ? (
+                  <button
+                    type="button"
+                    onClick={() => openImageViewerFromKey("profile")}
+                    className="inline-flex items-center gap-1 text-sm text-blue-600 hover:underline"
+                  >
+                    Open <ExternalLink className="w-4 h-4" />
+                  </button>
+                ) : (
+                  <a
+                    href={profile}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1 text-sm text-blue-600 hover:underline"
+                  >
+                    Open <ExternalLink className="w-4 h-4" />
+                  </a>
+                )
+              ) : (
+                <div className="text-xs text-gray-400">Not uploaded</div>
+              )}
+            </div>
+
+            {[
+              { key: "applicationForm", title: "Application Form", url: docUrls?.applicationForm ?? null },
+              { key: "sss", title: "SSS Certain", url: docUrls?.sss ?? null },
+              { key: "tin", title: "TIN ID", url: docUrls?.tin ?? null },
+              { key: "pagibig", title: "PAG-IBIG ID", url: docUrls?.pagibig ?? null },
+              { key: "philhealth", title: "PHILHEALTH ID", url: docUrls?.philhealth ?? null },
+              { key: "securityLicense", title: "Security License", url: docUrls?.securityLicense ?? null },
+              { key: "gunSafety", title: "Gun Safety Certificate", url: docUrls?.gunSafety ?? null },
+              { key: "training", title: "Training Certificate", url: docUrls?.training ?? null },
+              { key: "seminar", title: "Seminar Certificate", url: docUrls?.seminar ?? null },
+              { key: "hs", title: "Highschool Diploma", url: docUrls?.hs ?? null },
+              { key: "college", title: "College Diploma", url: docUrls?.college ?? null },
+              { key: "vocational", title: "Vocational", url: docUrls?.vocational ?? null },
+            ].map((doc) => (
+              <div key={doc.key} className="flex items-center justify-between gap-3 py-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <FileText className="w-4 h-4 text-yellow-700" />
+                  <div className="text-sm font-medium text-gray-900 truncate">{doc.title}</div>
+                </div>
+                {doc.url ? (
+                  canEdit && isImageUrl(doc.url) ? (
+                    <button
+                      type="button"
+                      onClick={() => openImageViewerFromKey(doc.key)}
+                      className="inline-flex items-center gap-1 text-sm text-blue-600 hover:underline"
+                    >
+                      Open <ExternalLink className="w-4 h-4" />
+                    </button>
+                  ) : (
+                    <a
+                      href={doc.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1 text-sm text-blue-600 hover:underline"
+                    >
+                      Open <ExternalLink className="w-4 h-4" />
+                    </a>
+                  )
+                ) : (
+                  <div className="text-xs text-gray-400">Not uploaded</div>
+                )}
+              </div>
+            ))}
           </div>
         </section>
       </div>
+
+      <ImageViewerModal
+        open={viewerOpen}
+        items={viewerItems}
+        index={viewerIndex}
+        zoom={viewerZoom}
+        onClose={() => setViewerOpen(false)}
+        onChangeIndex={(next) => {
+          setViewerIndex(next);
+          setViewerZoom(1);
+        }}
+        onZoomIn={() => setViewerZoom((z) => Math.min(4, Math.round((z + 0.2) * 10) / 10))}
+        onZoomOut={() => setViewerZoom((z) => Math.max(0.4, Math.round((z - 0.2) * 10) / 10))}
+        onResetZoom={() => setViewerZoom(1)}
+        onWheelZoom={(deltaY) => {
+          if (deltaY < 0) setViewerZoom((z) => Math.min(4, Math.round((z + 0.1) * 10) / 10));
+          else setViewerZoom((z) => Math.max(0.4, Math.round((z - 0.1) * 10) / 10));
+        }}
+      />
 
       <EmployeeEditorModal
         open={editorOpen}

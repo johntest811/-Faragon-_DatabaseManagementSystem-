@@ -829,8 +829,8 @@ export default function SettingsPage() {
 	}
 
 	return (
-		<section className="bg-white rounded-2xl shadow-sm border p-5">
-			<div className="flex items-center justify-between gap-3 mb-3">
+		<section className="bg-white rounded-2xl shadow-sm border p-5 space-y-6">
+			<div className="flex items-center justify-between gap-3 mb-4">
 				<div>
 					<div className="text-lg font-semibold text-black">Settings</div>
 					<div className="text-sm text-gray-500">Email notifications for expiring licensures</div>
@@ -879,7 +879,7 @@ export default function SettingsPage() {
 				</div>
 			</div>
 
-			<div className="flex flex-wrap items-center gap-3 mb-4">
+			<div className="flex flex-wrap items-center gap-2">
 				<div className="inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm">
 					<span className="text-gray-600">Notifications:</span>
 					<span className={enabled ? "text-green-700 font-semibold" : "text-gray-600 font-semibold"}>
@@ -927,7 +927,7 @@ export default function SettingsPage() {
 						</div>
 					) : null}
 
-					<div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+					<div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
 						<div className="rounded-2xl border p-4">
 							<div className="font-semibold mb-2 text-black">Gmail Sender</div>
 							<div className="text-xs text-gray-500 mb-4">
@@ -1199,44 +1199,44 @@ export default function SettingsPage() {
 								placeholder="Asia/Manila"
 								className="w-full rounded-xl border px-3 py-2 text-black"
 							/>
-						</div>
 
-						<div className="mt-4 rounded-xl border p-3">
-							<div className="font-semibold text-black text-sm mb-2">Expired licenses</div>
-							<div className="text-xs text-gray-500 mb-2">
-								If enabled, reminders will also include licenses that already expired (within the chosen window).
-							</div>
-							<div className="flex flex-wrap items-center gap-3">
-								<label className="flex items-center gap-2 text-sm text-black">
-									<input
-										type="checkbox"
-										checked={includeExpired}
-										onChange={(e) => setIncludeExpired(e.target.checked)}
-									/>
-									Include expired
-								</label>
-								<div className="flex items-center gap-2">
-									<span className="text-sm text-black">Expired within</span>
-									<input
-										type="number"
-										min={1}
-										max={365}
-										value={expiredWithinDays}
-										onChange={(e) => setExpiredWithinDays(Number(e.target.value))}
-										className="w-24 rounded-xl border px-3 py-2 text-black"
-									/>
-									<span className="text-sm text-black">days</span>
+							<div className="mt-4 rounded-xl border p-3">
+								<div className="font-semibold text-black text-sm mb-2">Expired licenses</div>
+								<div className="text-xs text-gray-500 mb-2">
+									If enabled, reminders will also include licenses that already expired (within the chosen window).
 								</div>
-							</div>
-							{!isDesktop ? (
-								<div className="text-xs text-gray-500 mt-2">
-									This setting affects Preview only on the web; sending runs in the desktop app.
+								<div className="flex flex-wrap items-center gap-3">
+									<label className="flex items-center gap-2 text-sm text-black">
+										<input
+											type="checkbox"
+											checked={includeExpired}
+											onChange={(e) => setIncludeExpired(e.target.checked)}
+										/>
+										Include expired
+									</label>
+									<div className="flex items-center gap-2">
+										<span className="text-sm text-black">Expired within</span>
+										<input
+											type="number"
+											min={1}
+											max={365}
+											value={expiredWithinDays}
+											onChange={(e) => setExpiredWithinDays(Number(e.target.value))}
+											className="w-24 rounded-xl border px-3 py-2 text-black"
+										/>
+										<span className="text-sm text-black">days</span>
+									</div>
 								</div>
-							) : null}
+								{!isDesktop ? (
+									<div className="text-xs text-gray-500 mt-2">
+										This setting affects Preview only on the web; sending runs in the desktop app.
+									</div>
+								) : null}
+							</div>
 						</div>
 					</div>
 
-					<div className="flex flex-wrap items-center gap-3">
+					<div className="flex flex-wrap items-center gap-2">
 						<button
 							onClick={() => void saveAll()}
 							disabled={saving}
@@ -1318,7 +1318,7 @@ export default function SettingsPage() {
 						</button>
 					</div>
 
-					<div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+					<div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
 						<div className="rounded-2xl border p-4">
 							<div className="font-semibold mb-2 text-black">Test recipient</div>
 							<div className="text-xs text-gray-500 mb-3">

@@ -1,95 +1,178 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useMemo, useState, useEffect } from "react";
 import { Search, ArrowUpDown } from "lucide-react";
+import { supabase } from "@/app/Client/SupabaseClients";
+import { useAuthRole } from "@/app/Client/useRbac";
 
 type ClientRow = {
-  id: string;
+  contract_id: string;
   contractNo: string;
-  cluster: number;
   clientName: string;
-  area: string;
-  project: string;
+  detachment: string;
+  position: string;
   start: string;
   end: string;
-  manpower: number;
-  guards: number;
-  status: "Active" | "Inactive";
+  status: string;
 };
 
-const DATA: ClientRow[] = [
-  {
-    id: "1",
-    contractNo: "2025-01-04",
-    cluster: 1,
-    clientName: "Beauty Elements Venture, Inc.",
-    area: "BEVI Head Office",
-    project: "Manufacture",
-    start: "1/1/2026",
-    end: "12/31/2026",
-    manpower: 2,
-    guards: 2,
-    status: "Active",
-  },
-  {
-    id: "2",
-    contractNo: "2025-01-03",
-    cluster: 3,
-    clientName: "Beauty Elements Venture, Inc.",
-    area: "One Standpoint",
-    project: "Manufacture",
-    start: "1/23/2026",
-    end: "1/22/2027",
-    manpower: 22,
-    guards: 1,
-    status: "Active",
-  },
-  {
-    id: "3",
-    contractNo: "2023-02-02",
-    cluster: 1,
-    clientName: "Broadway Centrum Commercial Center Admin, Inc.",
-    area: "Broadway Centrum Mall",
-    project: "Mall",
-    start: "3/1/2024",
-    end: "7/31/2027",
-    manpower: 4,
-    guards: 5,
-    status: "Active",
-  },
-];
+function normalizeContractStatus(value: string | null | undefined) {
+  const v = String(value ?? "").trim().toUpperCase();
+  if (v === "ACTIVE" || v === "ENDED" || v === "CANCELLED") return v;
+  return "ACTIVE";
+}
 
 export default function ClientsPage() {
-  const router = useRouter();
+  const { role } = useAuthRole();
+  const isAdmin = role === "admin" || role === "superadmin";
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [rows, setRows] = useState<ClientRow[]>([]);
+  const [saving, setSaving] = useState(false);
+  const [success, setSuccess] = useState("");
+
+  const [formContractNo, setFormContractNo] = useState("");
+  const [formClientName, setFormClientName] = useState("");
+  const [formDetachment, setFormDetachment] = useState("");
+  const [formPosition, setFormPosition] = useState("");
+  const [formStartDate, setFormStartDate] = useState("");
+  const [formEndDate, setFormEndDate] = useState("");
+  const [formStatus, setFormStatus] = useState<"ACTIVE" | "ENDED" | "CANCELLED">("ACTIVE");
+  const [showAddModal, setShowAddModal] = useState(false);
   const [search, setSearch] = useState("");
   const [sortBy, setSortBy] = useState<"name" | "newest" | "expiring">("name");
   const [sortKey, setSortKey] = useState<keyof ClientRow>("clientName");
   const [sortAsc, setSortAsc] = useState(true);
   const [page, setPage] = useState(1);
-  const [loading, setLoading] = useState(true);
 
-  const pageSize = 4;
+  const pageSize = 8;
 
   useEffect(() => {
-    const t = setTimeout(() => setLoading(false), 1200);
-    return () => clearTimeout(t);
+    let cancelled = false;
+
+    async function loadContracts() {
+      setLoading(true);
+      setError("");
+
+      const res = await supabase
+        .from("contracts")
+        .select("contract_id, employee_number, full_name, detachment, position, start_date, end_date, status")
+        .order("created_at", { ascending: false })
+        .limit(1000);
+
+      if (cancelled) return;
+      if (res.error) {
+        setRows([]);
+        setError(res.error.message || "Failed to load contracts");
+        setLoading(false);
+        return;
+      }
+
+      const mapped = ((res.data ?? []) as Array<Record<string, unknown>>).map((r) => ({
+        contract_id: String(r.contract_id ?? ""),
+        contractNo: String(r.employee_number ?? "").trim() || String(r.contract_id ?? "").slice(0, 8),
+        clientName: String(r.full_name ?? "").trim() || "(No name)",
+        detachment: String(r.detachment ?? "").trim(),
+        position: String(r.position ?? "").trim(),
+        start: String(r.start_date ?? "").trim(),
+        end: String(r.end_date ?? "").trim(),
+        status: normalizeContractStatus(r.status as string | null | undefined),
+      }));
+
+      setRows(mapped);
+      setLoading(false);
+    }
+
+    loadContracts();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  const filtered = DATA.filter((item) =>
-    Object.values(item)
-      .join(" ")
-      .toLowerCase()
-      .includes(search.toLowerCase())
-  );
+  async function reloadContracts() {
+    const res = await supabase
+      .from("contracts")
+      .select("contract_id, employee_number, full_name, detachment, position, start_date, end_date, status")
+      .order("created_at", { ascending: false })
+      .limit(1000);
 
-  function parseMdY(value: string) {
-    const [mRaw, dRaw, yRaw] = String(value || "").split("/");
-    const m = Number(mRaw);
-    const d = Number(dRaw);
-    const y = Number(yRaw);
-    if (!m || !d || !y) return null;
-    return new Date(y, m - 1, d, 0, 0, 0, 0).getTime();
+    if (res.error) {
+      setError(res.error.message || "Failed to reload contracts");
+      return;
+    }
+
+    const mapped = ((res.data ?? []) as Array<Record<string, unknown>>).map((r) => ({
+      contract_id: String(r.contract_id ?? ""),
+      contractNo: String(r.employee_number ?? "").trim() || String(r.contract_id ?? "").slice(0, 8),
+      clientName: String(r.full_name ?? "").trim() || "(No name)",
+      detachment: String(r.detachment ?? "").trim(),
+      position: String(r.position ?? "").trim(),
+      start: String(r.start_date ?? "").trim(),
+      end: String(r.end_date ?? "").trim(),
+      status: normalizeContractStatus(r.status as string | null | undefined),
+    }));
+    setRows(mapped);
+  }
+
+  async function createContract() {
+    if (!isAdmin) return;
+    setError("");
+    setSuccess("");
+
+    const name = formClientName.trim();
+    if (!name) {
+      setError("Client Name is required.");
+      return;
+    }
+
+    setSaving(true);
+    const payload = {
+      employee_number: formContractNo.trim() || null,
+      full_name: name,
+      detachment: formDetachment.trim() || null,
+      position: formPosition.trim() || null,
+      start_date: formStartDate || null,
+      end_date: formEndDate || null,
+      status: formStatus,
+    };
+
+    const res = await supabase.from("contracts").insert(payload);
+    setSaving(false);
+
+    if (res.error) {
+      setError(res.error.message || "Failed to create client contract");
+      return;
+    }
+
+    setSuccess("Client contract added.");
+    setFormContractNo("");
+    setFormClientName("");
+    setFormDetachment("");
+    setFormPosition("");
+    setFormStartDate("");
+    setFormEndDate("");
+    setFormStatus("ACTIVE");
+    setShowAddModal(false);
+    await reloadContracts();
+  }
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return rows;
+    return rows.filter((item) =>
+      [item.contractNo, item.clientName, item.detachment, item.position, item.start, item.end, item.status]
+        .join(" ")
+        .toLowerCase()
+        .includes(q)
+    );
+  }, [rows, search]);
+
+  function parseYmd(value: string) {
+    const v = String(value || "").trim();
+    if (!v) return 0;
+    const d = new Date(v);
+    const t = d.getTime();
+    return Number.isFinite(t) ? t : 0;
   }
 
   function applySortPreset(next: typeof sortBy) {
@@ -110,18 +193,15 @@ export default function ClientsPage() {
   }
 
   const sorted = [...filtered].sort((a, b) => {
-    const numericKeys: (keyof ClientRow)[] = ["cluster", "manpower", "guards"];
     const dateKeys: (keyof ClientRow)[] = ["start", "end"];
 
     const av = a[sortKey];
     const bv = b[sortKey];
 
     let cmp = 0;
-    if (numericKeys.includes(sortKey)) {
-      cmp = Number(av) - Number(bv);
-    } else if (dateKeys.includes(sortKey)) {
-      const at = parseMdY(String(av)) ?? 0;
-      const bt = parseMdY(String(bv)) ?? 0;
+    if (dateKeys.includes(sortKey)) {
+      const at = parseYmd(String(av));
+      const bt = parseYmd(String(bv));
       cmp = at - bt;
     } else {
       const as = String(av ?? "").toLowerCase();
@@ -132,8 +212,9 @@ export default function ClientsPage() {
     return sortAsc ? cmp : -cmp;
   });
 
-  const totalPages = Math.ceil(sorted.length / pageSize);
-  const paginated = sorted.slice((page - 1) * pageSize, page * pageSize);
+  const totalPages = Math.max(1, Math.ceil(sorted.length / pageSize));
+  const pageClamped = Math.min(page, totalPages);
+  const paginated = sorted.slice((pageClamped - 1) * pageSize, pageClamped * pageSize);
 
   function handleSort(key: keyof ClientRow) {
     if (key === sortKey) setSortAsc(!sortAsc);
@@ -145,6 +226,65 @@ export default function ClientsPage() {
 
   return (
     <section className="bg-white rounded-3xl border p-6 space-y-5">
+      <div>
+        <div className="text-lg font-semibold text-black">Logistics • Client Contracts</div>
+        <div className="text-sm text-gray-500 mt-1">Manage and track client contracts from Supabase.</div>
+      </div>
+
+      {isAdmin ? (
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={() => setShowAddModal(true)}
+            className="px-4 py-2 rounded-xl bg-[#FFDA03] text-black font-semibold"
+          >
+            Insert Information
+          </button>
+        </div>
+      ) : null}
+
+      {isAdmin && showAddModal ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          onClick={() => setShowAddModal(false)}
+        >
+          <div
+            className="w-full max-w-3xl rounded-2xl bg-white border p-5 space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between">
+              <div className="text-sm font-semibold text-black">Add Client Contract</div>
+              <button
+                type="button"
+                onClick={() => setShowAddModal(false)}
+                className="px-3 py-1.5 rounded-lg border text-sm text-black"
+              >
+                Close
+              </button>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <input value={formContractNo} onChange={(e) => setFormContractNo(e.target.value)} placeholder="Contract No." className="w-full rounded-xl border px-3 py-2 text-black" />
+              <input value={formClientName} onChange={(e) => setFormClientName(e.target.value)} placeholder="Client Name" className="w-full rounded-xl border px-3 py-2 text-black md:col-span-2" />
+              <input value={formDetachment} onChange={(e) => setFormDetachment(e.target.value)} placeholder="Detachment" className="w-full rounded-xl border px-3 py-2 text-black" />
+              <input value={formPosition} onChange={(e) => setFormPosition(e.target.value)} placeholder="Position" className="w-full rounded-xl border px-3 py-2 text-black" />
+              <select value={formStatus} onChange={(e) => setFormStatus(e.target.value as "ACTIVE" | "ENDED" | "CANCELLED")} className="w-full rounded-xl border px-3 py-2 text-black bg-white">
+                <option value="ACTIVE">ACTIVE</option>
+                <option value="ENDED">ENDED</option>
+                <option value="CANCELLED">CANCELLED</option>
+              </select>
+              <input type="date" value={formStartDate} onChange={(e) => setFormStartDate(e.target.value)} className="w-full rounded-xl border px-3 py-2 text-black" />
+              <input type="date" value={formEndDate} onChange={(e) => setFormEndDate(e.target.value)} className="w-full rounded-xl border px-3 py-2 text-black" />
+            </div>
+            <div className="flex items-center justify-end gap-2">
+              <button type="button" onClick={() => setShowAddModal(false)} className="px-4 py-2 rounded-xl border text-black font-medium">Cancel</button>
+              <button onClick={() => void createContract()} disabled={saving} className={`px-4 py-2 rounded-xl bg-[#FFDA03] text-black font-semibold ${saving ? "opacity-60" : ""}`}>
+                {saving ? "Saving..." : "Add Contract"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {/* Search + Sort */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
         <div className="flex items-center gap-3 border rounded-2xl px-4 py-3 max-w-xl w-full">
@@ -181,6 +321,9 @@ export default function ClientsPage() {
         </div>
       </div>
 
+      {error ? <div className="text-sm text-red-600">{error}</div> : null}
+      {success ? <div className="text-sm text-green-700">{success}</div> : null}
+
       {/* Table */}
       <div className="relative overflow-x-auto">
         <table className="w-full text-sm text-black border-separate border-spacing-y-2">
@@ -188,14 +331,11 @@ export default function ClientsPage() {
             <tr className="bg-[#FFDA03]">
               {[
                 ["contractNo", "Contract No."],
-                ["cluster", "Cluster"],
                 ["clientName", "Client Name"],
-                ["area", "Specific Area"],
-                ["project", "Project Name"],
+                ["detachment", "Detachment"],
+                ["position", "Position"],
                 ["start", "Contract Start"],
                 ["end", "Contract End"],
-                ["manpower", "Contracted Manpower"],
-                ["guards", "No. of Deployed Guards"],
                 ["status", "Status"],
               ].map(([key, label]) => (
                 <th
@@ -216,10 +356,10 @@ export default function ClientsPage() {
             {loading
               ? Array.from({ length: pageSize }).map((_, i) => (
                   <tr key={i} className="animate-pulse bg-white shadow-sm">
-                    {Array.from({ length: 10 }).map((_, j) => (
+                    {Array.from({ length: 7 }).map((_, j) => (
                       <td
                         key={j}
-                        className={`px-4 py-4 ${j === 0 ? "rounded-l-xl" : ""} ${j === 9 ? "rounded-r-xl" : ""}`}
+                        className={`px-4 py-4 ${j === 0 ? "rounded-l-xl" : ""} ${j === 6 ? "rounded-r-xl" : ""}`}
                       >
                         <div className="h-4 bg-gray-200 rounded w-full" />
                       </td>
@@ -228,30 +368,24 @@ export default function ClientsPage() {
                 ))
               : paginated.map((row) => (
                   <tr
-                    key={row.id}
-                    onClick={() => router.push("/Main_Modules/Clients/" + row.id)}
-                    className="bg-white shadow-sm hover:shadow-md cursor-pointer transition"
+                    key={row.contract_id}
+                    className="bg-white shadow-sm hover:shadow-md transition"
                   >
                     <td className="px-4 py-3 rounded-l-xl">{row.contractNo}</td>
-                    <td className="px-4 py-3">{row.cluster}</td>
                     <td className="px-4 py-3 font-medium">
                       {row.clientName}
                     </td>
-                    <td className="px-4 py-3">{row.area}</td>
-                    <td className="px-4 py-3">{row.project}</td>
+                    <td className="px-4 py-3">{row.detachment || "—"}</td>
+                    <td className="px-4 py-3">{row.position || "—"}</td>
                     <td className="px-4 py-3">{row.start}</td>
                     <td className="px-4 py-3">{row.end}</td>
-                    <td className="px-4 py-3 text-center">
-                      {row.manpower}
-                    </td>
-                    <td className="px-4 py-3 text-center">
-                      {row.guards}
-                    </td>
                     <td className="px-4 py-3 rounded-r-xl">
                       <span
                         className={`px-3 py-1 rounded-full text-xs font-medium ${
-                          row.status === "Active"
+                          row.status === "ACTIVE"
                             ? "bg-green-100 text-green-700"
+                            : row.status === "ENDED"
+                            ? "bg-orange-100 text-orange-700"
                             : "bg-gray-100 text-gray-600"
                         }`}
                       >
@@ -267,7 +401,7 @@ export default function ClientsPage() {
       {/* Pagination */}
       <div className="flex justify-between items-center text-sm">
         <span>
-          Page {page} of {totalPages}
+          Page {pageClamped} of {totalPages}
         </span>
         <div className="flex gap-2">
           <button

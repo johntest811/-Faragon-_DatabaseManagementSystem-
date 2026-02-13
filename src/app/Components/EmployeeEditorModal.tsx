@@ -162,6 +162,11 @@ type EmploymentRecordRow = {
   leave_reason: string | null;
 };
 
+type JobTitleRow = {
+  title_id: string;
+  title: string;
+};
+
 const BUCKETS = {
   applicants: "applicants",
   certificates: "certificates",
@@ -348,6 +353,9 @@ export default function EmployeeEditorModal({
   const [lic, setLic] = useState<LicensureDraft>(emptyLicensureDraft);
   const [bio, setBio] = useState<BiodataDraft>(emptyBiodataDraft);
   const [jobs, setJobs] = useState<EmploymentItem[]>([]);
+  const [jobTitleOptions, setJobTitleOptions] = useState<JobTitleRow[]>([]);
+  const [newJobTitle, setNewJobTitle] = useState("");
+  const [jobTitlesSource, setJobTitlesSource] = useState<"table" | "applicants">("table");
 
 
   const effectiveId = mode === "edit" ? applicantId ?? null : draftApplicantId;
@@ -380,6 +388,83 @@ export default function EmployeeEditorModal({
   function goBack() {
     const prev = Math.max(currentStepIndex - 1, 0);
     setTab(STEPS[prev]);
+    setError("");
+  }
+
+  function normalizeJobTitle(value: string) {
+    return value.trim().replace(/\s+/g, " ");
+  }
+
+  async function addJobTitleOption() {
+    const title = normalizeJobTitle(newJobTitle);
+    if (!title) {
+      setNewJobTitle("");
+      return;
+    }
+
+    const exists = jobTitleOptions.some((x) => x.title.toLowerCase() === title.toLowerCase());
+    if (exists) {
+      setApp((d) => ({ ...d, client_position: title }));
+      setNewJobTitle("");
+      return;
+    }
+
+    if (jobTitlesSource !== "table") {
+      setJobTitleOptions((prev) => {
+        const next = [...prev, { title_id: title, title }];
+        return next.sort((a, b) => a.title.localeCompare(b.title));
+      });
+      setApp((d) => ({ ...d, client_position: title }));
+      setNewJobTitle("");
+      setError("");
+      return;
+    }
+
+    const insertRes = await supabase
+      .from("job_titles")
+      .insert({ title })
+      .select("title_id, title")
+      .single();
+
+    if (insertRes.error) {
+      setError(insertRes.error.message || "Failed to save new job title");
+      return;
+    }
+
+    setJobTitleOptions((prev) => {
+      const next = [...prev, insertRes.data as JobTitleRow];
+      return next.sort((a, b) => a.title.localeCompare(b.title));
+    });
+    setApp((d) => ({ ...d, client_position: title }));
+    setNewJobTitle("");
+    setError("");
+  }
+
+  async function deleteSelectedJobTitle() {
+    const title = normalizeJobTitle(app.client_position);
+    if (!title) return;
+
+    const target = jobTitleOptions.find((x) => x.title.toLowerCase() === title.toLowerCase());
+    if (!target) {
+      setApp((d) => ({ ...d, client_position: "" }));
+      return;
+    }
+
+    if (jobTitlesSource !== "table") {
+      setJobTitleOptions((prev) => prev.filter((x) => x.title.toLowerCase() !== title.toLowerCase()));
+      setApp((d) => ({ ...d, client_position: "" }));
+      setError("");
+      return;
+    }
+
+    const delRes = await supabase.from("job_titles").delete().eq("title_id", target.title_id);
+    if (delRes.error) {
+      setError(delRes.error.message || "Failed to delete job title");
+      return;
+    }
+
+    setJobTitleOptions((prev) => prev.filter((x) => x.title_id !== target.title_id));
+    setApp((d) => ({ ...d, client_position: "" }));
     setError("");
   }
 
@@ -585,6 +670,60 @@ export default function EmployeeEditorModal({
       cancelled = true;
     };
   }, [open, mode, applicantId]);
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+
+    async function loadJobTitles() {
+      const tableRes = await supabase
+        .from("job_titles")
+        .select("title_id, title")
+        .order("title", { ascending: true })
+        .limit(1000);
+
+      if (!tableRes.error) {
+        if (!cancelled) {
+          setJobTitlesSource("table");
+          setJobTitleOptions((tableRes.data as JobTitleRow[]) ?? []);
+        }
+        return;
+      }
+
+      const fallbackRes = await supabase
+        .from("applicants")
+        .select("client_position")
+        .not("client_position", "is", null)
+        .limit(1000);
+
+      if (fallbackRes.error || cancelled) return;
+      const rows = (fallbackRes.data ?? []) as Array<{ client_position: string | null }>;
+      const titles = Array.from(
+        new Set(rows.map((r) => normalizeJobTitle(r.client_position ?? "")).filter(Boolean))
+      ).sort((a, b) => a.localeCompare(b));
+
+      if (!cancelled) {
+        setJobTitlesSource("applicants");
+        setJobTitleOptions(titles.map((title) => ({ title_id: title, title })));
+      }
+    }
+
+    loadJobTitles();
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
+
+  useEffect(() => {
+    const current = normalizeJobTitle(app.client_position);
+    if (!current) return;
+
+    setJobTitleOptions((prev) => {
+      const exists = prev.some((x) => x.title.toLowerCase() === current.toLowerCase());
+      if (exists) return prev;
+      return [...prev, { title_id: current, title: current }].sort((a, b) => a.title.localeCompare(b.title));
+    });
+  }, [app.client_position]);
 
   async function uploadToBucket(bucket: string, id: string, file: File, prefix: string) {
     const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
@@ -956,7 +1095,7 @@ export default function EmployeeEditorModal({
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <label className="text-sm text-black md:col-span-2">
                   <div className="flex items-center justify-between">
                     <div className="text-gray-600 mb-1">Custom ID</div>
@@ -984,6 +1123,9 @@ export default function EmployeeEditorModal({
                     className="w-full border rounded-xl px-3 py-2"
                   />
                 </label>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <label className="text-sm text-black">
                   <div className="text-gray-600 mb-1">First Name</div>
                   <input value={app.first_name} onChange={(e) => setApp((d) => ({ ...d, first_name: e.target.value }))}
@@ -1034,11 +1176,14 @@ export default function EmployeeEditorModal({
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <label className="text-sm text-black">
+                <label className="text-sm text-black md:col-span-2">
                   <div className="text-gray-600 mb-1">Email Address</div>
                   <input value={app.client_email} onChange={(e) => setApp((d) => ({ ...d, client_email: e.target.value }))}
                     className="w-full border rounded-xl px-3 py-2" />
                 </label>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <label className="text-sm text-black">
                   <div className="text-gray-600 mb-1">Emergency Contact</div>
                   <input value={app.emergency_contact_person}
@@ -1068,18 +1213,61 @@ export default function EmployeeEditorModal({
                 </label>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                 <label className="text-sm text-black">
                   <div className="text-gray-600 mb-1">Job Title</div>
-                  <input value={app.client_position}
+                  <select
+                    value={app.client_position}
                     onChange={(e) => setApp((d) => ({ ...d, client_position: e.target.value }))}
-                    className="w-full border rounded-xl px-3 py-2" />
+                    className="w-full border rounded-xl px-3 py-2 bg-white"
+                  >
+                    <option value="">— Select Job Title —</option>
+                    {jobTitleOptions.map((row) => (
+                      <option key={row.title_id} value={row.title}>
+                        {row.title}
+                      </option>
+                    ))}
+                  </select>
+                  <div className="mt-2 flex items-center gap-2">
+                    <input
+                      value={newJobTitle}
+                      onChange={(e) => setNewJobTitle(e.target.value)}
+                      placeholder="Add new job title"
+                      className="w-full border rounded-xl px-3 py-2"
+                    />
+                    <button
+                      type="button"
+                      onClick={addJobTitleOption}
+                      className="px-3 py-2 rounded-xl border bg-white text-black text-sm"
+                    >
+                      Add
+                    </button>
+                    <button
+                      type="button"
+                      onClick={deleteSelectedJobTitle}
+                      disabled={!normalizeJobTitle(app.client_position)}
+                      className={`px-3 py-2 rounded-xl border bg-white text-black text-sm ${
+                        !normalizeJobTitle(app.client_position) ? "opacity-60" : ""
+                      }`}
+                    >
+                      Delete
+                    </button>
+                  </div>
                 </label>
                 <label className="text-sm text-black">
                   <div className="text-gray-600 mb-1">Detachment</div>
                   <input value={app.detachment}
                     onChange={(e) => setApp((d) => ({ ...d, detachment: e.target.value }))}
                     className="w-full border rounded-xl px-3 py-2" />
+                </label>
+                <label className="text-sm text-black">
+                  <div className="text-gray-600 mb-1">Hire Date</div>
+                  <input
+                    type="date"
+                    value={app.date_hired_fsai}
+                    onChange={(e) => setApp((d) => ({ ...d, date_hired_fsai: e.target.value }))}
+                    className="w-full border rounded-xl px-3 py-2"
+                  />
                 </label>
                 <label className="text-sm text-black">
                   <div className="text-gray-600 mb-1">Status</div>

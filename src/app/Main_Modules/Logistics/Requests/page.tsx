@@ -1,63 +1,28 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Eye, Search, LayoutGrid, Table } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Search, LayoutGrid, Table } from "lucide-react";
+import { supabase } from "@/app/Client/SupabaseClients";
+import { useAuthRole } from "@/app/Client/useRbac";
 
 type RequestRow = {
-  date: string;
-  equipment: string;
-  type: string;
-  name: string;
-  jobId: string;
+  deployment_id: string;
+  created_at: string;
+  full_name: string;
+  position: string;
   detachment: string;
   status: string;
+  shift: string;
+  start_date: string;
+  expected_end_date: string;
 };
-
-const mockRequests: RequestRow[] = [
-  {
-    date: "1/16/2026 - 12:25:36",
-    equipment: "Handheld Radio",
-    type: "Electronics",
-    name: "Juan Dela Cruz",
-    jobId: "JOB-1001",
-    detachment: "HQ",
-    status: "Pending",
-  },
-  {
-    date: "1/17/2026 - 09:40:12",
-    equipment: "Flashlight",
-    type: "Utility",
-    name: "Maria Santos",
-    jobId: "JOB-1002",
-    detachment: "Gate 1",
-    status: "In Progress",
-  },
-  {
-    date: "1/17/2026 - 11:15:02",
-    equipment: "Metal Detector",
-    type: "Security",
-    name: "Pedro Cruz",
-    jobId: "JOB-1003",
-    detachment: "Warehouse",
-    status: "Reserved",
-  },
-  {
-    date: "1/18/2026 - 08:10:55",
-    equipment: "CCTV Camera",
-    type: "Surveillance",
-    name: "Ana Lopez",
-    jobId: "JOB-1004",
-    detachment: "HQ",
-    status: "Completed",
-  },
-];
 
 function StatusBadge({ status }: { status: string }) {
   const styles: Record<string, string> = {
-    Pending: "bg-yellow-100 text-yellow-700",
-    "In Progress": "bg-blue-100 text-blue-700",
-    Reserved: "bg-purple-100 text-purple-700",
-    Completed: "bg-green-100 text-green-700",
+    ACTIVE: "bg-green-100 text-green-700",
+    INACTIVE: "bg-gray-100 text-gray-600",
+    PENDING: "bg-yellow-100 text-yellow-700",
+    REASSIGN: "bg-orange-100 text-orange-700",
   };
 
   return (
@@ -71,7 +36,30 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
+function parseRequestDateMs(value: string) {
+  const d = new Date(String(value || ""));
+  const ms = d.getTime();
+  return Number.isFinite(ms) ? ms : 0;
+}
+
 export default function LogisticsRequestsPage() {
+  const { role } = useAuthRole();
+  const isAdmin = role === "admin" || role === "superadmin";
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [rows, setRows] = useState<RequestRow[]>([]);
+  const [saving, setSaving] = useState(false);
+  const [success, setSuccess] = useState("");
+  const [applicantOptions, setApplicantOptions] = useState<Array<{ applicant_id: string; full_name: string }>>([]);
+
+  const [formApplicantId, setFormApplicantId] = useState("");
+  const [formPosition, setFormPosition] = useState("");
+  const [formDetachment, setFormDetachment] = useState("");
+  const [formShift, setFormShift] = useState("");
+  const [formStartDate, setFormStartDate] = useState("");
+  const [formExpectedEndDate, setFormExpectedEndDate] = useState("");
+  const [formStatus, setFormStatus] = useState("ACTIVE");
+  const [showAddModal, setShowAddModal] = useState(false);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("All");
   const [sortBy, setSortBy] = useState<"name" | "newest" | "expiring">("newest");
@@ -94,57 +82,208 @@ export default function LogisticsRequestsPage() {
     }
   }, [viewMode]);
 
-  function parseRequestDateMs(value: string) {
-    const [datePart, timePart] = value.split(" - ").map((s) => s.trim());
-    if (!datePart) return 0;
+  useEffect(() => {
+    let cancelled = false;
 
-    const [mStr, dStr, yStr] = datePart.split("/");
-    const m = Number(mStr);
-    const d = Number(dStr);
-    const y = Number(yStr);
+    async function loadRequests() {
+      setLoading(true);
+      setError("");
 
-    let hh = 0;
-    let mm = 0;
-    let ss = 0;
-    if (timePart) {
-      const [hhStr, mmStr, ssStr] = timePart.split(":");
-      hh = Number(hhStr);
-      mm = Number(mmStr);
-      ss = Number(ssStr);
+      const res = await supabase
+        .from("deployment_status")
+        .select("deployment_id, applicant_id, detachment, client_position, shift, start_date, expected_end_date, deployment_status, created_at")
+        .order("created_at", { ascending: false })
+        .limit(1000);
+
+      if (cancelled) return;
+      if (res.error) {
+        setRows([]);
+        setError(res.error.message || "Failed to load requests");
+        setLoading(false);
+        return;
+      }
+
+      const baseRows = (res.data as Array<Record<string, unknown>>) ?? [];
+      const ids = Array.from(new Set(baseRows.map((r) => String(r.applicant_id ?? "").trim()).filter(Boolean)));
+      const nameMap = new Map<string, string>();
+
+      for (let i = 0; i < ids.length; i += 500) {
+        const chunk = ids.slice(i, i + 500);
+        const aRes = await supabase
+          .from("applicants")
+          .select("applicant_id, first_name, middle_name, last_name")
+          .in("applicant_id", chunk);
+        if (aRes.error) continue;
+        for (const a of ((aRes.data as Array<Record<string, unknown>>) ?? [])) {
+          const id = String(a.applicant_id ?? "").trim();
+          if (!id) continue;
+          const full = [a.first_name, a.middle_name, a.last_name]
+            .map((x) => String(x ?? "").trim())
+            .filter(Boolean)
+            .join(" ");
+          nameMap.set(id, full || "(No name)");
+        }
+      }
+
+      const mapped: RequestRow[] = baseRows.map((r) => {
+        const applicantId = String(r.applicant_id ?? "").trim();
+        return {
+          deployment_id: String(r.deployment_id ?? ""),
+          created_at: String(r.created_at ?? "").trim(),
+          full_name: nameMap.get(applicantId) ?? "(No name)",
+          position: String(r.client_position ?? "").trim(),
+          detachment: String(r.detachment ?? "").trim(),
+          status: String(r.deployment_status ?? "").trim().toUpperCase() || "ACTIVE",
+          shift: String(r.shift ?? "").trim(),
+          start_date: String(r.start_date ?? "").trim(),
+          expected_end_date: String(r.expected_end_date ?? "").trim(),
+        };
+      });
+
+      setRows(mapped);
+      setLoading(false);
     }
 
-    const dt = new Date(y, m - 1, d, hh, mm, ss);
-    const ms = dt.getTime();
-    return Number.isFinite(ms) ? ms : 0;
+    async function loadApplicantOptions() {
+      const aRes = await supabase
+        .from("applicants")
+        .select("applicant_id, first_name, middle_name, last_name")
+        .eq("is_trashed", false)
+        .order("created_at", { ascending: false })
+        .limit(1000);
+      if (aRes.error || cancelled) return;
+      const opts = ((aRes.data ?? []) as Array<Record<string, unknown>>).map((r) => ({
+        applicant_id: String(r.applicant_id ?? ""),
+        full_name:
+          [r.first_name, r.middle_name, r.last_name]
+            .map((v) => String(v ?? "").trim())
+            .filter(Boolean)
+            .join(" ") || "(No name)",
+      }));
+      setApplicantOptions(opts);
+    }
+
+    loadRequests();
+    loadApplicantOptions();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function reloadRequests() {
+    const res = await supabase
+      .from("deployment_status")
+      .select("deployment_id, applicant_id, detachment, client_position, shift, start_date, expected_end_date, deployment_status, created_at")
+      .order("created_at", { ascending: false })
+      .limit(1000);
+    if (res.error) {
+      setError(res.error.message || "Failed to reload requests");
+      return;
+    }
+
+    const baseRows = (res.data as Array<Record<string, unknown>>) ?? [];
+    const ids = Array.from(new Set(baseRows.map((r) => String(r.applicant_id ?? "").trim()).filter(Boolean)));
+    const nameMap = new Map<string, string>();
+    for (let i = 0; i < ids.length; i += 500) {
+      const chunk = ids.slice(i, i + 500);
+      const aRes = await supabase
+        .from("applicants")
+        .select("applicant_id, first_name, middle_name, last_name")
+        .in("applicant_id", chunk);
+      if (aRes.error) continue;
+      for (const a of ((aRes.data as Array<Record<string, unknown>>) ?? [])) {
+        const id = String(a.applicant_id ?? "").trim();
+        const full = [a.first_name, a.middle_name, a.last_name]
+          .map((x) => String(x ?? "").trim())
+          .filter(Boolean)
+          .join(" ");
+        nameMap.set(id, full || "(No name)");
+      }
+    }
+
+    const mapped: RequestRow[] = baseRows.map((r) => {
+      const applicantId = String(r.applicant_id ?? "").trim();
+      return {
+        deployment_id: String(r.deployment_id ?? ""),
+        created_at: String(r.created_at ?? "").trim(),
+        full_name: nameMap.get(applicantId) ?? "(No name)",
+        position: String(r.client_position ?? "").trim(),
+        detachment: String(r.detachment ?? "").trim(),
+        status: String(r.deployment_status ?? "").trim().toUpperCase() || "ACTIVE",
+        shift: String(r.shift ?? "").trim(),
+        start_date: String(r.start_date ?? "").trim(),
+        expected_end_date: String(r.expected_end_date ?? "").trim(),
+      };
+    });
+    setRows(mapped);
   }
 
-  const filtered = mockRequests.filter((row) => {
+  async function addRequestRow() {
+    if (!isAdmin) return;
+    setError("");
+    setSuccess("");
+
+    if (!formApplicantId) {
+      setError("Please select an applicant.");
+      return;
+    }
+
+    setSaving(true);
+    const res = await supabase.from("deployment_status").insert({
+      applicant_id: formApplicantId,
+      detachment: formDetachment.trim() || null,
+      client_position: formPosition.trim() || null,
+      shift: formShift.trim() || null,
+      start_date: formStartDate || null,
+      expected_end_date: formExpectedEndDate || null,
+      deployment_status: formStatus.trim().toUpperCase() || "ACTIVE",
+    });
+    setSaving(false);
+
+    if (res.error) {
+      setError(res.error.message || "Failed to add deployment request");
+      return;
+    }
+
+    setSuccess("Deployment request added.");
+    setFormApplicantId("");
+    setFormPosition("");
+    setFormDetachment("");
+    setFormShift("");
+    setFormStartDate("");
+    setFormExpectedEndDate("");
+    setFormStatus("ACTIVE");
+    setShowAddModal(false);
+    await reloadRequests();
+  }
+
+  const filtered = useMemo(() => rows.filter((row) => {
     const matchesSearch =
-      row.equipment.toLowerCase().includes(search.toLowerCase()) ||
-      row.name.toLowerCase().includes(search.toLowerCase()) ||
-      row.jobId.toLowerCase().includes(search.toLowerCase());
+      row.position.toLowerCase().includes(search.toLowerCase()) ||
+      row.full_name.toLowerCase().includes(search.toLowerCase()) ||
+      row.deployment_id.toLowerCase().includes(search.toLowerCase()) ||
+      row.detachment.toLowerCase().includes(search.toLowerCase());
 
     const matchesStatus =
       statusFilter === "All" || row.status === statusFilter;
 
     return matchesSearch && matchesStatus;
-  });
+  }), [rows, search, statusFilter]);
 
-  const sorted = [...filtered].sort((a, b) => {
+  const sorted = useMemo(() => [...filtered].sort((a, b) => {
     if (sortBy === "name") {
-      return a.name.localeCompare(b.name);
+      return a.full_name.localeCompare(b.full_name);
     }
     if (sortBy === "newest") {
-      return parseRequestDateMs(b.date) - parseRequestDateMs(a.date);
+      return parseRequestDateMs(b.created_at) - parseRequestDateMs(a.created_at);
     }
 
-    // "Expiring Licenses" doesn't exist for requests; treat status urgency as a proxy.
     const rank = (s: string) =>
-      s === "Pending" ? 0 : s === "In Progress" ? 1 : s === "Reserved" ? 2 : 3;
+      s === "ACTIVE" ? 0 : s === "PENDING" ? 1 : s === "REASSIGN" ? 2 : 3;
     const d = rank(a.status) - rank(b.status);
     if (d !== 0) return d;
-    return parseRequestDateMs(b.date) - parseRequestDateMs(a.date);
-  });
+    return parseRequestDateMs(b.created_at) - parseRequestDateMs(a.created_at);
+  }), [filtered, sortBy]);
 
   return (
     <div className="rounded-3xl bg-white border p-6">
@@ -154,9 +293,72 @@ export default function LogisticsRequestsPage() {
           Logistics • Requests
         </div>
         <div className="text-sm text-gray-500">
-          Track and manage logistics requests
+          Connected to deployment_status.
         </div>
       </div>
+
+      {isAdmin ? (
+        <div className="mb-5 flex justify-end">
+          <button
+            type="button"
+            onClick={() => setShowAddModal(true)}
+            className="px-4 py-2 rounded-xl bg-[#FFDA03] text-black font-semibold"
+          >
+            Insert Information
+          </button>
+        </div>
+      ) : null}
+
+      {isAdmin && showAddModal ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          onClick={() => setShowAddModal(false)}
+        >
+          <div
+            className="w-full max-w-3xl rounded-2xl bg-white border p-5 space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between">
+              <div className="text-sm font-semibold text-black">Add Deployment Request</div>
+              <button
+                type="button"
+                onClick={() => setShowAddModal(false)}
+                className="px-3 py-1.5 rounded-lg border text-sm text-black"
+              >
+                Close
+              </button>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <select value={formApplicantId} onChange={(e) => setFormApplicantId(e.target.value)} className="w-full rounded-xl border px-3 py-2 text-black bg-white md:col-span-2">
+                <option value="">Select applicant</option>
+                {applicantOptions.map((a) => (
+                  <option key={a.applicant_id} value={a.applicant_id}>{a.full_name}</option>
+                ))}
+              </select>
+              <select value={formStatus} onChange={(e) => setFormStatus(e.target.value)} className="w-full rounded-xl border px-3 py-2 text-black bg-white">
+                <option value="ACTIVE">ACTIVE</option>
+                <option value="PENDING">PENDING</option>
+                <option value="REASSIGN">REASSIGN</option>
+                <option value="INACTIVE">INACTIVE</option>
+              </select>
+              <input value={formPosition} onChange={(e) => setFormPosition(e.target.value)} placeholder="Position" className="w-full rounded-xl border px-3 py-2 text-black" />
+              <input value={formDetachment} onChange={(e) => setFormDetachment(e.target.value)} placeholder="Detachment" className="w-full rounded-xl border px-3 py-2 text-black" />
+              <input value={formShift} onChange={(e) => setFormShift(e.target.value)} placeholder="Shift" className="w-full rounded-xl border px-3 py-2 text-black" />
+              <input type="date" value={formStartDate} onChange={(e) => setFormStartDate(e.target.value)} className="w-full rounded-xl border px-3 py-2 text-black" />
+              <input type="date" value={formExpectedEndDate} onChange={(e) => setFormExpectedEndDate(e.target.value)} className="w-full rounded-xl border px-3 py-2 text-black" />
+            </div>
+            <div className="flex items-center justify-end gap-2">
+              <button type="button" onClick={() => setShowAddModal(false)} className="px-4 py-2 rounded-xl border text-black font-medium">Cancel</button>
+              <button onClick={() => void addRequestRow()} disabled={saving} className={`px-4 py-2 rounded-xl bg-[#FFDA03] text-black font-semibold ${saving ? "opacity-60" : ""}`}>
+                {saving ? "Saving..." : "Add Request"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {error ? <div className="text-sm text-red-600 mb-3">{error}</div> : null}
+      {success ? <div className="text-sm text-green-700 mb-3">{success}</div> : null}
 
       {/* Search & Filter */}
       <div className="flex flex-col md:flex-row md:items-center gap-3 mb-5">
@@ -212,10 +414,10 @@ export default function LogisticsRequestsPage() {
           className="border rounded-xl px-3 py-2 text-sm text-black"
         >
           <option value="All">All Status</option>
-          <option value="Pending">Pending</option>
-          <option value="In Progress">In Progress</option>
-          <option value="Reserved">Reserved</option>
-          <option value="Completed">Completed</option>
+          <option value="ACTIVE">ACTIVE</option>
+          <option value="PENDING">PENDING</option>
+          <option value="REASSIGN">REASSIGN</option>
+          <option value="INACTIVE">INACTIVE</option>
         </select>
       </div>
 
@@ -225,23 +427,21 @@ export default function LogisticsRequestsPage() {
             <div key={i} className="bg-white rounded-2xl shadow-sm border p-5 hover:shadow-md transition">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <div className="text-sm font-semibold text-black truncate">{row.equipment}</div>
-                  <div className="text-xs text-gray-500 truncate">{row.type} • {row.detachment}</div>
-                  <div className="mt-2 text-xs text-gray-500">{row.date}</div>
+                  <div className="text-sm font-semibold text-black truncate">{row.position || "(No position)"}</div>
+                  <div className="text-xs text-gray-500 truncate">{row.detachment || "No detachment"} • {row.shift || "No shift"}</div>
+                  <div className="mt-2 text-xs text-gray-500">{row.created_at ? row.created_at.slice(0, 19) : "—"}</div>
                 </div>
                 <StatusBadge status={row.status} />
               </div>
 
               <div className="mt-4 text-sm text-black">
-                <div className="font-medium">{row.name}</div>
-                <div className="text-xs text-gray-500">Job ID: {row.jobId}</div>
+                <div className="font-medium">{row.full_name}</div>
+                <div className="text-xs text-gray-500">Deployment ID: {row.deployment_id.slice(0, 8)}</div>
               </div>
 
-              <div className="mt-4 flex items-center justify-end gap-2">
-                <button className="h-9 w-9 rounded-xl border bg-white flex items-center justify-center" title="View">
-                  <Eye className="w-5 h-5 text-gray-700" />
-                </button>
-                <button className="px-4 py-2 text-xs rounded-xl bg-black text-white hover:bg-gray-800">Manage</button>
+              <div className="mt-4 flex items-center justify-between gap-2 text-xs text-gray-600">
+                <span>Start: {row.start_date || "—"}</span>
+                <span>End: {row.expected_end_date || "—"}</span>
               </div>
             </div>
           ))}
@@ -256,43 +456,37 @@ export default function LogisticsRequestsPage() {
             <thead className="sticky top-0 z-10">
               <tr className="bg-[#FFDA03]">
                 <th className="px-4 py-3 text-left font-semibold text-black first:rounded-l-xl">Timestamp & Date</th>
-                <th className="px-4 py-3 text-left font-semibold text-black">Equipment</th>
-                <th className="px-4 py-3 text-left font-semibold text-black">Type</th>
+                <th className="px-4 py-3 text-left font-semibold text-black">Deployment ID</th>
                 <th className="px-4 py-3 text-left font-semibold text-black">Name</th>
-                <th className="px-4 py-3 text-left font-semibold text-black">Job ID</th>
+                <th className="px-4 py-3 text-left font-semibold text-black">Position</th>
                 <th className="px-4 py-3 text-left font-semibold text-black">Detachment</th>
+                <th className="px-4 py-3 text-left font-semibold text-black">Shift</th>
                 <th className="px-4 py-3 text-left font-semibold text-black">Status</th>
-                <th className="px-4 py-3 text-center font-semibold text-black">View</th>
-                <th className="px-4 py-3 text-center font-semibold text-black last:rounded-r-xl">Action</th>
+                <th className="px-4 py-3 text-left font-semibold text-black">Start</th>
+                <th className="px-4 py-3 text-left font-semibold text-black last:rounded-r-xl">Expected End</th>
               </tr>
             </thead>
 
             <tbody>
               {sorted.map((row, i) => (
                 <tr key={i} className="bg-white shadow-sm hover:shadow-md transition">
-                  <td className="px-4 py-3 rounded-l-xl">{row.date}</td>
-                  <td className="px-4 py-3 font-medium">{row.equipment}</td>
-                  <td className="px-4 py-3">{row.type}</td>
-                  <td className="px-4 py-3">{row.name}</td>
-                  <td className="px-4 py-3">{row.jobId}</td>
+                  <td className="px-4 py-3 rounded-l-xl">{row.created_at ? row.created_at.slice(0, 19) : "—"}</td>
+                  <td className="px-4 py-3">{row.deployment_id.slice(0, 8)}</td>
+                  <td className="px-4 py-3">{row.full_name}</td>
+                  <td className="px-4 py-3 font-medium">{row.position || "—"}</td>
                   <td className="px-4 py-3">{row.detachment}</td>
+                  <td className="px-4 py-3">{row.shift || "—"}</td>
                   <td className="px-4 py-3">
                     <StatusBadge status={row.status} />
                   </td>
-                  <td className="px-4 py-3 text-center">
-                    <button className="h-9 w-9 rounded-xl border bg-white inline-flex items-center justify-center hover:bg-gray-50">
-                      <Eye className="w-5 h-5 text-gray-700" />
-                    </button>
-                  </td>
-                  <td className="px-4 py-3 text-center rounded-r-xl">
-                    <button className="px-4 py-2 text-xs rounded-xl bg-black text-white hover:bg-gray-800">Manage</button>
-                  </td>
+                  <td className="px-4 py-3">{row.start_date || "—"}</td>
+                  <td className="px-4 py-3 rounded-r-xl">{row.expected_end_date || "—"}</td>
                 </tr>
               ))}
 
               {sorted.length === 0 && (
                 <tr>
-                  <td colSpan={9} className="py-10 text-center text-gray-400">
+                  <td colSpan={10} className="py-10 text-center text-gray-400">
                     No matching requests found
                   </td>
                 </tr>

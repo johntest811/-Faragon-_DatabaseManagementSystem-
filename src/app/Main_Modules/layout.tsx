@@ -176,7 +176,27 @@ export default function MainModulesLayout({ children }: LayoutProps) {
     try {
       const res = await api.notifications.getExpiringSummary({ limit: 50 });
       setExpiringCount(Number((res as any)?.pendingCount ?? res?.count ?? 0));
-      setExpiringRows((res?.rows ?? []) as any);
+      const sortedRows = ([...((res?.rows ?? []) as any[])]).sort((a, b) => {
+        const toMs = (value: unknown) => {
+          const d = new Date(String(value ?? ""));
+          const t = d.getTime();
+          return Number.isFinite(t) ? t : 0;
+        };
+
+        const aTime =
+          toMs(a?.last_sent_at) ||
+          toMs(a?.created_at) ||
+          toMs(a?.updated_at) ||
+          toMs(a?.expires_on);
+        const bTime =
+          toMs(b?.last_sent_at) ||
+          toMs(b?.created_at) ||
+          toMs(b?.updated_at) ||
+          toMs(b?.expires_on);
+
+        return bTime - aTime;
+      });
+      setExpiringRows(sortedRows as any);
 
       try {
         const ids = Array.from(new Set((res?.rows ?? []).map((r: any) => String(r.applicant_id || "")).filter(Boolean)));
@@ -406,7 +426,7 @@ export default function MainModulesLayout({ children }: LayoutProps) {
           </div>
         </div>
 
-        <nav className="flex-1 min-h-0 overflow-y-auto px-3 space-y-1 pb-3">
+        <nav className="flex-1 min-h-0 overflow-y-auto px-3 space-y-2 pb-3">
           {menu.map((item) => {
             // Render the workforce group once at the first workforce item.
             const isFirstWorkforce = firstWorkforceKey && item.key === firstWorkforceKey;
@@ -414,7 +434,7 @@ export default function MainModulesLayout({ children }: LayoutProps) {
               if (!workforceItems.length) return null;
 
               return (
-                <div key="workforce" className="relative">
+                <div key="workforce" className="relative mb-1">
                   <button
                     type="button"
                     onClick={() => {
@@ -462,7 +482,7 @@ export default function MainModulesLayout({ children }: LayoutProps) {
                   ) : null}
 
                   {!collapsed && workforceOpen ? (
-                    <div className="ml-4 pl-3 border-l border-gray-200 space-y-1">
+                    <div className="mt-1 ml-4 pl-3 border-l border-gray-200 space-y-1">
                       {workforceItems.map((w) => {
                         const active =
                           menuActivePath === w.href || menuActivePath.startsWith(w.href);
@@ -487,7 +507,7 @@ export default function MainModulesLayout({ children }: LayoutProps) {
               if (!logisticsAllowed) return null;
 
               return (
-                <div key="logistics" className="relative">
+                <div key="logistics" className="relative mb-1">
                   <button
                     type="button"
                     onClick={() => {
@@ -534,7 +554,7 @@ export default function MainModulesLayout({ children }: LayoutProps) {
                   ) : null}
 
                   {!collapsed && logisticsOpen ? (
-                    <div className="ml-4 pl-3 border-l border-gray-200 space-y-1">
+                    <div className="mt-1 ml-4 pl-3 border-l border-gray-200 space-y-1">
                       {LOGISTICS_ITEMS.map((l) => {
                         const active = pathname === l.href || pathname.startsWith(l.href);
                         return (

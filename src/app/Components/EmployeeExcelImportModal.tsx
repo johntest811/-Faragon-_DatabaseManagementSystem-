@@ -44,6 +44,36 @@ type LicensureUpsert = {
   security_expiration?: string | null;
 };
 
+type ApplicantExistingRow = {
+  applicant_id: string;
+  custom_id: string | null;
+  first_name: string | null;
+  middle_name: string | null;
+  last_name: string | null;
+  gender: string | null;
+  birth_date: string | null;
+  age: number | null;
+  client_contact_num: string | null;
+  client_email: string | null;
+  present_address: string | null;
+  province_address: string | null;
+  emergency_contact_person: string | null;
+  emergency_contact_num: string | null;
+  education_attainment: string | null;
+  date_hired_fsai: string | null;
+  client_position: string | null;
+  detachment: string | null;
+  status: string | null;
+  security_licensed_num: string | null;
+  sss_number: string | null;
+  pagibig_number: string | null;
+  philhealth_number: string | null;
+  tin_number: string | null;
+};
+
+const APPLICANT_MERGE_SELECT =
+  "applicant_id, custom_id, first_name, middle_name, last_name, gender, birth_date, age, client_contact_num, client_email, present_address, province_address, emergency_contact_person, emergency_contact_num, education_attainment, date_hired_fsai, client_position, detachment, status, security_licensed_num, sss_number, pagibig_number, philhealth_number, tin_number";
+
 const TEMPLATE_HEADERS = [
   "Timestamp",
   "Last Name",
@@ -410,8 +440,8 @@ export default function EmployeeExcelImportModal({ open, onClose, onImported }: 
   const [rows, setRows] = useState<RowObject[]>([]);
   const [parsingError, setParsingError] = useState<string>("");
   const [importing, setImporting] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [resultMsg, setResultMsg] = useState<string>("");
-  const [overwriteExisting, setOverwriteExisting] = useState(true);
 
   function normalizeMatchKey(v: unknown) {
     return String(v ?? "")
@@ -420,15 +450,26 @@ export default function EmployeeExcelImportModal({ open, onClose, onImported }: 
       .replace(/\s+/g, " ");
   }
 
-  function updatePayloadFromApplicantInsert(payload: ApplicantInsert) {
-    // For overwrites, avoid wiping existing DB values when the sheet has blanks.
-    // Only update fields that have a non-empty value.
+  function hasValue(v: unknown) {
+    if (v == null) return false;
+    if (typeof v === "string") return v.trim().length > 0;
+    return true;
+  }
+
+  function isPlaceholderName(field: string, v: unknown) {
+    if (field !== "first_name" && field !== "last_name") return false;
+    return String(v ?? "").trim().toUpperCase() === "N/A";
+  }
+
+  function updatePayloadMissingOnly(existing: ApplicantExistingRow, incoming: ApplicantInsert) {
+    // Fill only empty/missing DB fields from the import row.
     const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(payload)) {
-      if (v == null) continue;
-      if (typeof v === "string" && !v.trim()) continue;
-      // The importer uses "N/A" when identity columns are missing. Don't overwrite DB with that.
-      if ((k === "first_name" || k === "last_name") && String(v).trim().toUpperCase() === "N/A") continue;
+    for (const [k, v] of Object.entries(incoming)) {
+      if (!hasValue(v)) continue;
+      if (isPlaceholderName(k, v)) continue;
+
+      const existingVal = existing[k as keyof ApplicantExistingRow];
+      if (hasValue(existingVal)) continue;
       out[k] = v;
     }
     return out;
@@ -450,6 +491,99 @@ export default function EmployeeExcelImportModal({ open, onClose, onImported }: 
       type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     });
     downloadBlob("employee_import_template.xlsx", blob);
+  }
+
+  async function exportAllEmployeesTemplateXlsx() {
+    setExporting(true);
+    setParsingError("");
+    setResultMsg("");
+
+    try {
+      const allApplicants: Array<Record<string, unknown>> = [];
+      const pageSize = 1000;
+      let offset = 0;
+
+      while (true) {
+        const res = await supabase
+          .from("applicants")
+          .select(
+            "applicant_id, created_at, last_name, first_name, middle_name, birth_date, age, gender, education_attainment, date_hired_fsai, security_licensed_num, client_position, sss_number, pagibig_number, philhealth_number, tin_number, detachment, client_contact_num, client_email, present_address, province_address, emergency_contact_person, emergency_contact_num, status"
+          )
+          .eq("is_trashed", false)
+          .range(offset, offset + pageSize - 1);
+
+        if (res.error) throw res.error;
+        const batch = (res.data as Array<Record<string, unknown>>) ?? [];
+        if (!batch.length) break;
+        allApplicants.push(...batch);
+        if (batch.length < pageSize) break;
+        offset += batch.length;
+      }
+
+      const ids = allApplicants
+        .map((r) => String(r.applicant_id ?? "").trim())
+        .filter(Boolean);
+
+      const licensureMap = new Map<string, { security_expiration: string | null }>();
+      for (let i = 0; i < ids.length; i += 500) {
+        const chunk = ids.slice(i, i + 500);
+        const licRes = await supabase
+          .from("licensure")
+          .select("applicant_id, security_expiration")
+          .in("applicant_id", chunk);
+
+        if (licRes.error) continue;
+        for (const row of ((licRes.data as Array<{ applicant_id: string; security_expiration: string | null }>) ?? [])) {
+          licensureMap.set(String(row.applicant_id), { security_expiration: row.security_expiration ?? null });
+        }
+      }
+
+      const bodyRows = allApplicants.map((r) => {
+        const applicantId = String(r.applicant_id ?? "").trim();
+        const securityExpiration = licensureMap.get(applicantId)?.security_expiration ?? "";
+        return [
+          toText(r.created_at),
+          toText(r.last_name),
+          toText(r.first_name),
+          toText(r.middle_name),
+          toText(r.birth_date),
+          toText(r.age),
+          toText(r.gender),
+          toText(r.education_attainment),
+          toText(r.date_hired_fsai),
+          toText(r.security_licensed_num),
+          toText(securityExpiration),
+          toText(r.client_position),
+          toText(r.sss_number),
+          toText(r.pagibig_number),
+          toText(r.philhealth_number),
+          toText(r.tin_number),
+          toText(r.detachment),
+          toText(r.client_contact_num),
+          toText(r.client_email),
+          toText(r.present_address),
+          toText(r.province_address),
+          toText(r.emergency_contact_person),
+          toText(r.emergency_contact_num),
+          toText(r.status),
+        ];
+      });
+
+      const aoa = [[...TEMPLATE_HEADERS], ...bodyRows];
+      const ws = XLSX.utils.aoa_to_sheet(aoa);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Employees");
+      const out = XLSX.write(wb, { bookType: "xlsx", type: "array" });
+      const blob = new Blob([out], {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      });
+      downloadBlob("employees_template_export.xlsx", blob);
+      setResultMsg(`Exported ${bodyRows.length} employee row(s) in template format.`);
+    } catch (e: unknown) {
+      setParsingError(e instanceof Error ? e.message : "Failed to export employees");
+    } finally {
+      setExporting(false);
+    }
   }
 
   const preview = useMemo(() => {
@@ -519,57 +653,74 @@ export default function EmployeeExcelImportModal({ open, onClose, onImported }: 
 
     let inserted = 0;
     let updated = 0;
+    let unchanged = 0;
     try {
       const chunkSize = 100;
       for (let i = 0; i < prepared.length; i += chunkSize) {
         const slice = prepared.slice(i, i + chunkSize);
 
-        // If overwrite is enabled, try to match existing applicants in this batch.
-        const secNums = overwriteExisting
-          ? Array.from(
-              new Set(
-                slice
-                  .map((x) => normalizeMatchKey(x.applicant.security_licensed_num))
-                  .filter(Boolean)
-              )
-            )
-          : [];
-        const emails = overwriteExisting
-          ? Array.from(
-              new Set(
-                slice
-                  .map((x) => normalizeMatchKey(x.applicant.client_email))
-                  .filter(Boolean)
-              )
-            )
-          : [];
+        const secNums = Array.from(
+          new Set(
+            slice
+              .map((x) => normalizeMatchKey(x.applicant.security_licensed_num))
+              .filter(Boolean)
+          )
+        );
+        const emails = Array.from(
+          new Set(
+            slice
+              .map((x) => normalizeMatchKey(x.applicant.client_email))
+              .filter(Boolean)
+          )
+        );
+        const customIds = Array.from(
+          new Set(
+            slice
+              .map((x) => normalizeMatchKey(x.applicant.custom_id))
+              .filter(Boolean)
+          )
+        );
 
-        const existingBySec = new Map<string, string>();
-        const existingByEmail = new Map<string, string>();
-        if (overwriteExisting && (secNums.length || emails.length)) {
+        const existingBySec = new Map<string, ApplicantExistingRow>();
+        const existingByEmail = new Map<string, ApplicantExistingRow>();
+        const existingByCustomId = new Map<string, ApplicantExistingRow>();
+
+        if (secNums.length || emails.length || customIds.length) {
           if (secNums.length) {
             const ex = await supabase
               .from("applicants")
-              .select("applicant_id, security_licensed_num")
+              .select(APPLICANT_MERGE_SELECT)
               .in("security_licensed_num", secNums);
             if (!ex.error) {
-              for (const r of (ex.data as any[]) ?? []) {
-                const k = normalizeMatchKey(r?.security_licensed_num);
-                const id = String(r?.applicant_id ?? "").trim();
-                if (k && id) existingBySec.set(k, id);
+              for (const r of ((ex.data as ApplicantExistingRow[]) ?? [])) {
+                const k = normalizeMatchKey(r.security_licensed_num);
+                if (k) existingBySec.set(k, r);
               }
             }
           }
+
           if (emails.length) {
             const ex = await supabase
               .from("applicants")
-              .select("applicant_id, client_email")
+              .select(APPLICANT_MERGE_SELECT)
               .in("client_email", emails);
             if (!ex.error) {
-              for (const r of (ex.data as any[]) ?? []) {
-                const k = normalizeMatchKey(r?.client_email);
-                const id = String(r?.applicant_id ?? "").trim();
-                if (k && id) existingByEmail.set(k, id);
+              for (const r of ((ex.data as ApplicantExistingRow[]) ?? [])) {
+                const k = normalizeMatchKey(r.client_email);
+                if (k) existingByEmail.set(k, r);
+              }
+            }
+          }
+
+          if (customIds.length) {
+            const ex = await supabase
+              .from("applicants")
+              .select(APPLICANT_MERGE_SELECT)
+              .in("custom_id", customIds);
+            if (!ex.error) {
+              for (const r of ((ex.data as ApplicantExistingRow[]) ?? [])) {
+                const k = normalizeMatchKey(r.custom_id);
+                if (k) existingByCustomId.set(k, r);
               }
             }
           }
@@ -583,24 +734,30 @@ export default function EmployeeExcelImportModal({ open, onClose, onImported }: 
           const item = slice[j];
           const secKey = normalizeMatchKey(item.applicant.security_licensed_num);
           const emailKey = normalizeMatchKey(item.applicant.client_email);
-          const existingId = overwriteExisting
-            ? (secKey && existingBySec.get(secKey)) || (emailKey && existingByEmail.get(emailKey)) || null
-            : null;
+          const customIdKey = normalizeMatchKey(item.applicant.custom_id);
 
-          if (existingId) {
-            const updPayload = updatePayloadFromApplicantInsert(item.applicant);
+          const existing =
+            (customIdKey && existingByCustomId.get(customIdKey)) ||
+            (secKey && existingBySec.get(secKey)) ||
+            (emailKey && existingByEmail.get(emailKey)) ||
+            null;
+
+          if (existing) {
+            const updPayload = updatePayloadMissingOnly(existing, item.applicant);
             if (Object.keys(updPayload).length) {
-              const updRes = await supabase.from("applicants").update(updPayload).eq("applicant_id", existingId);
+              const updRes = await supabase.from("applicants").update(updPayload).eq("applicant_id", existing.applicant_id);
               if (updRes.error) {
                 errors.push(`Row ${i + j + 2}: Update failed: ${updRes.error.message}`);
                 continue;
               }
+              updated += 1;
+            } else {
+              unchanged += 1;
             }
-            updated += 1;
 
             const lic = item.licensure;
             const hasAny = Boolean(lic?.security_license_number || lic?.security_expiration);
-            if (hasAny) licRows.push({ applicant_id: existingId, ...lic });
+            if (hasAny) licRows.push({ applicant_id: existing.applicant_id, ...lic });
           } else {
             toInsert.push(item.applicant);
             toInsertIdx.push(j);
@@ -639,11 +796,9 @@ export default function EmployeeExcelImportModal({ open, onClose, onImported }: 
     } catch (e: unknown) {
       errors.push(e instanceof Error ? e.message : "Import failed");
     } finally {
-      const processed = inserted + updated;
+      const processed = inserted + updated + unchanged;
       const skipped = Math.max(0, rows.length - processed);
-      const msg = overwriteExisting
-        ? `Imported ${inserted} • Updated ${updated} • Skipped ${skipped}.`
-        : `Imported ${inserted} • Skipped ${skipped}.`;
+      const msg = `Imported ${inserted} • Updated ${updated} • Unchanged ${unchanged} • Skipped ${skipped}.`;
       setResultMsg(msg);
       onImported?.({ inserted, skipped, errors });
       setImporting(false);
@@ -691,6 +846,16 @@ export default function EmployeeExcelImportModal({ open, onClose, onImported }: 
                   >
                     Template XLSX
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => void exportAllEmployeesTemplateXlsx()}
+                    disabled={exporting || importing}
+                    className={`px-3 py-2 rounded-xl border bg-white text-black text-sm font-semibold ${
+                      exporting || importing ? "opacity-60" : ""
+                    }`}
+                  >
+                    {exporting ? "Exporting…" : "Export All (Template)"}
+                  </button>
                 </div>
 
                 <label className="px-3 py-2 rounded-xl bg-[#FFDA03] text-black text-sm font-semibold cursor-pointer">
@@ -708,16 +873,9 @@ export default function EmployeeExcelImportModal({ open, onClose, onImported }: 
             {parsingError ? <div className="mt-3 text-sm text-red-600">{parsingError}</div> : null}
             {resultMsg ? <div className="mt-3 text-sm text-green-700">{resultMsg}</div> : null}
 
-            <div className="mt-3 flex items-center gap-2 text-sm text-black">
-              <input
-                id="overwriteExisting"
-                type="checkbox"
-                checked={overwriteExisting}
-                onChange={(e) => setOverwriteExisting(e.target.checked)}
-              />
-              <label htmlFor="overwriteExisting" className="select-none">
-                Overwrite existing employees (match by Security Licensed Number or Email)
-              </label>
+            <div className="mt-3 text-sm text-black">
+              Duplicate-safe import is enabled: existing employees are matched by Custom ID, Security Licensed Number,
+              or Email, then only missing fields are filled.
             </div>
           </div>
 
@@ -730,23 +888,40 @@ export default function EmployeeExcelImportModal({ open, onClose, onImported }: 
                 </div>
               </div>
 
-              <button
-                type="button"
-                disabled={importing || preview.ok === 0}
-                onClick={importNow}
-                className={`px-4 py-2 rounded-xl bg-[#FFDA03] text-black font-semibold ${
-                  importing || preview.ok === 0 ? "opacity-60" : ""
-                }`}
-              >
-                {importing ? "Importing…" : "Import"}
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  disabled={importing || rows.length === 0}
+                  onClick={() => {
+                    setRows([]);
+                    setFileName("");
+                    setParsingError("");
+                    setResultMsg("");
+                  }}
+                  className={`px-4 py-2 rounded-xl border bg-white text-black font-semibold ${
+                    importing || rows.length === 0 ? "opacity-60" : ""
+                  }`}
+                >
+                  Clear Table
+                </button>
+                <button
+                  type="button"
+                  disabled={importing || preview.ok === 0}
+                  onClick={importNow}
+                  className={`px-4 py-2 rounded-xl bg-[#FFDA03] text-black font-semibold ${
+                    importing || preview.ok === 0 ? "opacity-60" : ""
+                  }`}
+                >
+                  {importing ? "Importing…" : "Import"}
+                </button>
+              </div>
             </div>
 
             <div className="mt-3 overflow-x-auto">
               <div className="max-h-[260px] overflow-y-auto rounded-xl border">
-                <table className="w-full text-xs">
+                <table className="w-full text-xs text-black">
                   <thead className="sticky top-0 bg-white">
-                    <tr className="text-left text-gray-600 border-b">
+                    <tr className="text-left text-black border-b">
                       <th className="py-2 px-3">Row</th>
                       <th className="py-2 px-3">Name</th>
                       <th className="py-2 px-3">Status</th>

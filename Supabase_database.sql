@@ -179,6 +179,12 @@ CREATE TABLE public.employment_record (
   CONSTRAINT employment_record_pkey PRIMARY KEY (applicant_id),
   CONSTRAINT employment_record_applicant_id_fkey FOREIGN KEY (applicant_id) REFERENCES public.applicants(applicant_id)
 );
+CREATE TABLE public.job_titles (
+  title_id uuid NOT NULL DEFAULT gen_random_uuid(),
+  title text NOT NULL UNIQUE,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT job_titles_pkey PRIMARY KEY (title_id)
+);
 CREATE TABLE public.licensure (
   applicant_id uuid NOT NULL,
   driver_license_number character varying,
@@ -309,5 +315,4 @@ CREATE TABLE public.role_module_access (
   CONSTRAINT role_module_access_pkey PRIMARY KEY (role_id, module_key),
   CONSTRAINT role_module_access_role_id_fkey FOREIGN KEY (role_id) REFERENCES public.app_roles(role_id),
   CONSTRAINT role_module_access_module_key_fkey FOREIGN KEY (module_key) REFERENCES public.modules(module_key)
-);
-
+);make the popup close when clicking the dark background area (outside the modal card)

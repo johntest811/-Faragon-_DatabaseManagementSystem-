@@ -121,7 +121,7 @@ function formatServiceLengthShort(fromIso: string | null, now = new Date()) {
   const d = new Date(fromIso);
   if (Number.isNaN(d.getTime())) return "—";
   const diff = diffYearsMonthsDays(d, now);
-  return `${diff.years}y ${diff.months}m`;
+  return `${diff.years}y ${diff.months}m ${diff.days}d`;
 }
 
 function ymd(d: string | null) {
@@ -615,6 +615,7 @@ export default function ReassignPage() {
             <th className="px-4 py-3 text-left font-semibold text-black">Birth Date</th>
             <th className="px-4 py-3 text-left font-semibold text-black">Age</th>
             <th className="px-4 py-3 text-left font-semibold text-black">Hired Date</th>
+            <th className="px-4 py-3 text-left font-semibold text-black">Years w/ Company</th>
             <th className="px-4 py-3 text-left font-semibold text-black">Detachment</th>
             <th className="px-4 py-3 text-left font-semibold text-black">Next License Expiry</th>
             <th className="px-4 py-3 text-left font-semibold text-black">Status</th>
@@ -660,16 +661,8 @@ export default function ReassignPage() {
                 <td className="px-4 py-3">{e.gender ?? "—"}</td>
                 <td className="px-4 py-3">{e.birth_date ?? "—"}</td>
                 <td className="px-4 py-3">{e.age ?? "—"}</td>
-                <td className="px-4 py-3">
-                  {e.date_hired_fsai ? (
-                    <div className="leading-tight">
-                      <div>{new Date(e.date_hired_fsai).toLocaleDateString()}</div>
-                      <div className="text-xs text-gray-500">{formatServiceLengthShort(e.date_hired_fsai)}</div>
-                    </div>
-                  ) : (
-                    "—"
-                  )}
-                </td>
+                <td className="px-4 py-3">{e.date_hired_fsai ? new Date(e.date_hired_fsai).toLocaleDateString() : "—"}</td>
+                <td className="px-4 py-3">{formatServiceLengthShort(e.date_hired_fsai)}</td>
                 <td className="px-4 py-3">{e.detachment ?? "—"}</td>
                 <td className="px-4 py-3">
                   {next.nextYmd ? (
@@ -750,6 +743,9 @@ export default function ReassignPage() {
                     <div className="text-xs text-gray-500 truncate">
                       <span className="text-gray-500">Detachment:</span> {e.detachment ?? "—"}
                     </div>
+                    <div className="text-xs text-gray-500 truncate">
+                      <span className="text-gray-500">Years w/ Company:</span> {formatServiceLengthShort(e.date_hired_fsai)}
+                    </div>
                   </div>
                 </div>
 
@@ -785,7 +781,7 @@ export default function ReassignPage() {
             <div className="text-lg font-bold text-black">Export</div>
             <button
               onClick={() => setExportOpen(false)}
-              className="px-3 py-2 rounded-xl border bg-white"
+              className="px-3 py-2 rounded-xl border bg-white text-black"
               type="button"
             >
               Close
@@ -871,14 +867,14 @@ export default function ReassignPage() {
                 <div className="text-xs text-gray-500">{getExportCandidates().length} employee(s)</div>
               </div>
               <div className="max-h-[360px] overflow-auto">
-                <table className="w-full text-sm">
+                <table className="w-full text-sm text-black">
                   <thead className="sticky top-0 bg-white">
                     <tr className="border-b">
-                      <th className="px-4 py-2 text-left font-semibold">Name</th>
-                      <th className="px-4 py-2 text-left font-semibold">Job Title</th>
-                      <th className="px-4 py-2 text-left font-semibold">Detachment</th>
-                      <th className="px-4 py-2 text-left font-semibold">Hire Date</th>
-                      <th className="px-4 py-2 text-left font-semibold">Service</th>
+                      <th className="px-4 py-2 text-left font-semibold text-black">Name</th>
+                      <th className="px-4 py-2 text-left font-semibold text-black">Job Title</th>
+                      <th className="px-4 py-2 text-left font-semibold text-black">Detachment</th>
+                      <th className="px-4 py-2 text-left font-semibold text-black">Hire Date</th>
+                      <th className="px-4 py-2 text-left font-semibold text-black">Service</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -907,7 +903,7 @@ export default function ReassignPage() {
             <div className="text-lg font-bold text-black">Filters</div>
             <button
               onClick={() => setFiltersOpen(false)}
-              className="px-3 py-2 rounded-xl border bg-white"
+              className="px-3 py-2 rounded-xl border bg-white text-black"
             >
               Close
             </button>
