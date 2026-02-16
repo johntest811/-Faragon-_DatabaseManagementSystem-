@@ -42,7 +42,7 @@ export default function SplashScreen({ onFinish }: SplashScreenProps) {
       >
         FARAGON SECURITY AGENCY INC.
       </h1>
-
+    
       {/* DOT LOADER */}
       <div className="flex gap-3 mt-2">
         {Array.from({ length: 5 }).map((_, i) => (

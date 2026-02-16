@@ -1,9 +1,14 @@
 @import "tailwindcss";
 
+
+
 :root {
   --background: #ffffff;
   --foreground: #171717;
 }
+
+
+
 
 @theme inline {
   --color-background: var(--background);
@@ -27,7 +32,7 @@ body {
 @font-face {
   font-family: "FaragonFont";
   src: url("/fonts/ScholarBlock.ttf") format("truetype");
-  font-weight: bold;
+  font-weight: 700;
   font-style: normal;
 }
 
