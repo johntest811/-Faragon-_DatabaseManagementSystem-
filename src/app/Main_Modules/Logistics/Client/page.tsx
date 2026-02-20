@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useMemo, useState, useEffect } from "react";
@@ -266,15 +265,14 @@ return (
             <tr className="bg-[#FFDA03]">
               {[
                 ["contractNo", "Contract No."],
-                ["clientName", "Client Name"],
                 ["cluster", "Cluster"],
-                ["project_name", "Project Name"],
-                ["contracted_number", "Contracted Number"],
-                ["deployed", "Deployed"],
+                ["clientName", "Client Name"],
                 ["detachment", "Specific Area"],
-                ["position", "Position"],
+                ["project_name", "Project Name"],
                 ["start", "Contract Start"],
                 ["end", "Contract End"],
+                ["contracted_number", "Contracted Manpower"],
+                ["deployed", "No. of Deployed Guards"],
                 ["status", "Status"],
               ].map(([key, label]) => (
                 <th
@@ -304,7 +302,6 @@ return (
                 <td className="px-4 py-3">{row.contracted_number}</td>
                 <td className="px-4 py-3">{row.deployed}</td>
                 <td className="px-4 py-3">{row.detachment}</td>
-                <td className="px-4 py-3">{row.position}</td>
                 <td className="px-4 py-3">{row.start}</td>
                 <td className="px-4 py-3">{row.end}</td>
                 <td className="px-4 py-3">{row.status}</td>
@@ -422,5 +419,4 @@ return (
 
   
 }
-
 
