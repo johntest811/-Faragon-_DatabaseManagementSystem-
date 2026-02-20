@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState, useEffect } from "react";
-import { Search, ArrowUpDown } from "lucide-react";
+import { Search } from "lucide-react";
 import { supabase } from "@/app/Client/SupabaseClients";
 import { useAuthRole } from "@/app/Client/useRbac";
 
@@ -108,7 +108,7 @@ export default function LogisticsInventoryPage() {
     );
   }, [rows, search]);
 
-  // ================= SORT =================
+  // ================= SORT (LOGIC KEPT) =================
   const sorted = [...filtered].sort((a, b) => {
     const dateKeys: (keyof InventoryRow)[] = ["date"];
     const numberKeys: (keyof InventoryRow)[] = ["quantity", "amount"];
@@ -120,8 +120,7 @@ export default function LogisticsInventoryPage() {
         new Date(a[sortKey] as string).getTime() -
         new Date(b[sortKey] as string).getTime();
     } else if (numberKeys.includes(sortKey)) {
-      result =
-        Number(a[sortKey] ?? 0) - Number(b[sortKey] ?? 0);
+      result = Number(a[sortKey] ?? 0) - Number(b[sortKey] ?? 0);
     } else {
       result = String(a[sortKey] ?? "")
         .toLowerCase()
@@ -139,17 +138,10 @@ export default function LogisticsInventoryPage() {
     pageClamped * pageSize
   );
 
-  function handleSort(key: keyof InventoryRow) {
-    if (sortKey === key) setSortAsc(!sortAsc);
-    else {
-      setSortKey(key);
-      setSortAsc(true);
-    }
-  }
 
   return (
+  <>
     <section className="bg-white rounded-3xl border p-6 space-y-5">
-
       {/* HEADER */}
       <div className="flex justify-between items-center">
         <div>
@@ -187,38 +179,35 @@ export default function LogisticsInventoryPage() {
         />
       </div>
 
-      {error && <div className="text-red-600">{error}</div>}
-      {success && <div className="text-green-600">{success}</div>}
-
       {/* TABLE */}
       <div className="relative overflow-x-auto">
         <table className="w-full text-sm border-separate border-spacing-y-2">
           <thead>
-  <tr className="bg-[#FFDA03]">
-    {[
-      ["date", "Date"],
-      ["particular", "Particular"],
-      ["quantity", "QTY"],
-      ["amount", "Amount"],
-      ["remarks", "Remarks"],
-      ["firearms_ammunitions", "Firearms"],
-      ["communications_equipment", "Communications"],
-      ["furniture_and_fixtures", "Furniture"],
-      ["office_equipments_sec_equipments", "Office Equip."],
-      ["sec_equipments", "Sec Equip."],
-      ["vehicle_and_motorcycle", "Vehicle"],
-    ].map(([key, label], index, arr) => (
-      <th
-        key={key}
-        className={`px-4 py-3 text-left font-semibold text-black
-        ${index === 0 ? "rounded-l-xl" : ""}
-        ${index === arr.length - 1 ? "rounded-r-xl" : ""}`}
-      >
-        {label}
-      </th>
-    ))}
-  </tr>
-</thead>
+            <tr className="bg-[#FFDA03]">
+              {[
+                "Date",
+                "Particular",
+                "QTY",
+                "Amount",
+                "Remarks",
+                "Firearms",
+                "Communications",
+                "Furniture",
+                "Office Equip.",
+                "Sec Equip.",
+                "Vehicle",
+              ].map((label, i, arr) => (
+                <th
+                  key={label}
+                  className={`px-4 py-3 text-left font-semibold text-black
+                  ${i === 0 ? "rounded-l-xl" : ""}
+                  ${i === arr.length - 1 ? "rounded-r-xl" : ""}`}
+                >
+                  {label}
+                </th>
+              ))}
+            </tr>
+          </thead>
 
           <tbody>
             {loading ? (
@@ -247,9 +236,13 @@ export default function LogisticsInventoryPage() {
                   <td className="px-4 py-3">{row.firearms_ammunitions}</td>
                   <td className="px-4 py-3">{row.communications_equipment}</td>
                   <td className="px-4 py-3">{row.furniture_and_fixtures}</td>
-                  <td className="px-4 py-3">{row.office_equipments_sec_equipments}</td>
+                  <td className="px-4 py-3">
+                    {row.office_equipments_sec_equipments}
+                  </td>
                   <td className="px-4 py-3">{row.sec_equipments}</td>
-                  <td className="px-4 py-3 rounded-r-xl">{row.vehicle_and_motorcycle}</td>
+                  <td className="px-4 py-3 rounded-r-xl">
+                    {row.vehicle_and_motorcycle}
+                  </td>
                 </tr>
               ))
             )}
@@ -259,7 +252,9 @@ export default function LogisticsInventoryPage() {
 
       {/* PAGINATION */}
       <div className="flex justify-between items-center text-sm">
-        <span>Page {pageClamped} of {totalPages}</span>
+        <span>
+          Page {pageClamped} of {totalPages}
+        </span>
         <div className="flex gap-2">
           <button
             disabled={pageClamped === 1}
@@ -278,5 +273,91 @@ export default function LogisticsInventoryPage() {
         </div>
       </div>
     </section>
-  );
+
+    {/* INSERT MODAL (UNCHANGED) */}
+    {showAddModal && (
+      <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center">
+        <div className="bg-white rounded-2xl p-6 w-full max-w-xl space-y-4">
+          <h2 className="text-lg font-semibold">
+            Insert Inventory Information
+          </h2>
+
+          <div className="grid grid-cols-2 gap-4">
+            <input
+              type="date"
+              className="border rounded-xl px-3 py-2"
+              value={formData.date}
+              onChange={(e) =>
+                setFormData({ ...formData, date: e.target.value })
+              }
+            />
+
+            <input
+              placeholder="Particular"
+              className="border rounded-xl px-3 py-2"
+              value={formData.particular}
+              onChange={(e) =>
+                setFormData({ ...formData, particular: e.target.value })
+              }
+            />
+
+            <input
+              type="number"
+              placeholder="Quantity"
+              className="border rounded-xl px-3 py-2"
+              value={formData.quantity}
+              onChange={(e) =>
+                setFormData({
+                  ...formData,
+                  quantity: Number(e.target.value),
+                })
+              }
+            />
+
+            <input
+              type="number"
+              placeholder="Amount"
+              className="border rounded-xl px-3 py-2"
+              value={formData.amount}
+              onChange={(e) =>
+                setFormData({
+                  ...formData,
+                  amount: Number(e.target.value),
+                })
+              }
+            />
+
+            <input
+              placeholder="Remarks"
+              className="border rounded-xl px-3 py-2 col-span-2"
+              value={formData.remarks}
+              onChange={(e) =>
+                setFormData({ ...formData, remarks: e.target.value })
+              }
+            />
+          </div>
+
+          <div className="flex justify-end gap-3 pt-4">
+            <button
+              onClick={() => setShowAddModal(false)}
+              className="px-4 py-2 rounded-xl border"
+            >
+              Cancel
+            </button>
+
+            <button
+              onClick={addRow}
+              disabled={saving}
+              className="px-4 py-2 rounded-xl bg-[#FFDA03] font-semibold"
+            >
+              {saving ? "Saving..." : "Save"}
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+  </>
+);
+
+ 
 }
