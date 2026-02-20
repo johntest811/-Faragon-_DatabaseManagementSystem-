@@ -1,100 +1,146 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useMemo, useState, useEffect } from "react";
 import { Search, ArrowUpDown } from "lucide-react";
+import { supabase } from "@/app/Client/SupabaseClients";
+import { useAuthRole } from "@/app/Client/useRbac";
 
 type InventoryRow = {
   id: string;
-  detachment: string;
-  equipment: string;
-  control: string;
-  serial: string;
-  model: string;
-  assigned: string;
-  status: "Active" | "Available" | "Issued";
+  date: string;
+  particular: string;
+  quantity: number;
+  amount: number;
+  remarks: string;
+  firearms_ammunitions: string;
+  communications_equipment: string;
+  furniture_and_fixtures: string;
+  office_equipments_sec_equipments: string;
+  sec_equipments: string;
+  vehicle_and_motorcycle: string;
 };
 
-const DATA: InventoryRow[] = [
-  {
-    id: "1",
-    detachment: "HQ",
-    equipment: "Handheld Radio",
-    control: "CTRL-001",
-    serial: "SN-98321",
-    model: "Motorola XPR 3300",
-    assigned: "Juan Dela Cruz",
-    status: "Active",
-  },
-  {
-    id: "2",
-    detachment: "Warehouse",
-    equipment: "CCTV Camera",
-    control: "CTRL-014",
-    serial: "SN-55521",
-    model: "Hikvision DS-2CD",
-    assigned: "Unassigned",
-    status: "Available",
-  },
-  {
-    id: "3",
-    detachment: "HQ",
-    equipment: "Metal Detector",
-    control: "CTRL-033",
-    serial: "SN-77231",
-    model: "Garrett Pro",
-    assigned: "Pedro Santos",
-    status: "Issued",
-  },
-  {
-    id: "4",
-    detachment: "Gate 1",
-    equipment: "Flashlight",
-    control: "CTRL-102",
-    serial: "SN-33922",
-    model: "Streamlight",
-    assigned: "Maria Lopez",
-    status: "Active",
-  },
-];
-
 export default function LogisticsInventoryPage() {
-  const router = useRouter();
-  const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState("All");
-  const [sortKey, setSortKey] = useState<keyof InventoryRow>("equipment");
-  const [sortAsc, setSortAsc] = useState(true);
-  const [page, setPage] = useState(1);
-  const [loading, setLoading] = useState(true);
+  const { role } = useAuthRole();
+  const isAdmin = role === "admin" || role === "superadmin";
 
-  const pageSize = 4;
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [rows, setRows] = useState<InventoryRow[]>([]);
+  const [saving, setSaving] = useState(false);
+  const [success, setSuccess] = useState("");
+  const [showAddModal, setShowAddModal] = useState(false);
+
+  const [search, setSearch] = useState("");
+  const [sortKey, setSortKey] = useState<keyof InventoryRow>("date");
+  const [sortAsc, setSortAsc] = useState(false);
+  const [page, setPage] = useState(1);
+
+  const pageSize = 10;
+
+  const [formData, setFormData] = useState<Omit<InventoryRow, "id">>({
+    date: "",
+    particular: "",
+    quantity: 0,
+    amount: 0,
+    remarks: "",
+    firearms_ammunitions: "",
+    communications_equipment: "",
+    furniture_and_fixtures: "",
+    office_equipments_sec_equipments: "",
+    sec_equipments: "",
+    vehicle_and_motorcycle: "",
+  });
+
+  // ================= LOAD DATA =================
+  async function loadData() {
+    setLoading(true);
+    setError("");
+
+    const res = await supabase
+      .from("inventory_fixed_asset")
+      .select("*")
+      .order("date", { ascending: false });
+
+    if (res.error) {
+      setError(res.error.message);
+      setRows([]);
+    } else {
+      setRows((res.data as InventoryRow[]) || []);
+    }
+
+    setLoading(false);
+  }
 
   useEffect(() => {
-    const t = setTimeout(() => setLoading(false), 1200);
-    return () => clearTimeout(t);
+    loadData();
   }, []);
 
-  const filtered = DATA.filter((item) => {
-    const matchesSearch = Object.values(item)
-      .join(" ")
-      .toLowerCase()
-      .includes(search.toLowerCase());
-    const matchesStatus =
-      statusFilter === "All" || item.status === statusFilter;
-    return matchesSearch && matchesStatus;
-  });
+  // ================= INSERT =================
+  async function addRow() {
+    if (!isAdmin) return;
 
+    setSaving(true);
+    setError("");
+    setSuccess("");
+
+    const res = await supabase
+      .from("inventory_fixed_asset")
+      .insert([formData]);
+
+    setSaving(false);
+
+    if (res.error) {
+      setError(res.error.message);
+      return;
+    }
+
+    setSuccess("Inserted successfully.");
+    setShowAddModal(false);
+    await loadData();
+  }
+
+  // ================= SEARCH =================
+  const filtered = useMemo(() => {
+    const q = search.toLowerCase();
+    return rows.filter((r) =>
+      Object.values(r).join(" ").toLowerCase().includes(q)
+    );
+  }, [rows, search]);
+
+  // ================= SORT =================
   const sorted = [...filtered].sort((a, b) => {
-    const valA = a[sortKey].toString().toLowerCase();
-    const valB = b[sortKey].toString().toLowerCase();
-    return sortAsc ? valA.localeCompare(valB) : valB.localeCompare(valA);
+    const dateKeys: (keyof InventoryRow)[] = ["date"];
+    const numberKeys: (keyof InventoryRow)[] = ["quantity", "amount"];
+
+    let result = 0;
+
+    if (dateKeys.includes(sortKey)) {
+      result =
+        new Date(a[sortKey] as string).getTime() -
+        new Date(b[sortKey] as string).getTime();
+    } else if (numberKeys.includes(sortKey)) {
+      result =
+        Number(a[sortKey] ?? 0) - Number(b[sortKey] ?? 0);
+    } else {
+      result = String(a[sortKey] ?? "")
+        .toLowerCase()
+        .localeCompare(String(b[sortKey] ?? "").toLowerCase());
+    }
+
+    return sortAsc ? result : -result;
   });
 
-  const totalPages = Math.ceil(sorted.length / pageSize);
-  const paginated = sorted.slice((page - 1) * pageSize, page * pageSize);
+  // ================= PAGINATION =================
+  const totalPages = Math.max(1, Math.ceil(sorted.length / pageSize));
+  const pageClamped = Math.min(page, totalPages);
+  const paginated = sorted.slice(
+    (pageClamped - 1) * pageSize,
+    pageClamped * pageSize
+  );
 
   function handleSort(key: keyof InventoryRow) {
-    if (key === sortKey) setSortAsc(!sortAsc);
+    if (sortKey === key) setSortAsc(!sortAsc);
     else {
       setSortKey(key);
       setSortAsc(true);
@@ -103,129 +149,127 @@ export default function LogisticsInventoryPage() {
 
   return (
     <section className="bg-white rounded-3xl border p-6 space-y-5">
-      {/* Search + Filter */}
-      <div className="flex flex-col sm:flex-row gap-4 justify-between">
-        <div className="flex items-center gap-3 border rounded-2xl px-4 py-3 max-w-xl w-full">
-          <div className="h-10 w-10 rounded-xl bg-[#FFDA03] flex items-center justify-center">
-            <Search className="w-5 h-5 text-black" />
+
+      {/* HEADER */}
+      <div className="flex justify-between items-center">
+        <div>
+          <div className="text-lg font-semibold text-black">
+            Logistics • Fixed Asset Inventory
           </div>
-          <input
-            placeholder="Search by equipment, serial, assigned, etc..."
-            className="flex-1 outline-none text-sm text-black placeholder:text-gray-400"
-            value={search}
-            onChange={(e) => {
-              setSearch(e.target.value);
-              setPage(1);
-            }}
-          />
+          <div className="text-sm text-gray-500">
+            Manage and track fixed assets.
+          </div>
         </div>
 
-        <select
-          className="border rounded-xl px-4 py-2 text-sm text-black"
-          value={statusFilter}
-          onChange={(e) => {
-            setStatusFilter(e.target.value);
-            setPage(1);
-          }}
-        >
-          <option value="All">All Status</option>
-          <option value="Active">Active</option>
-          <option value="Available">Available</option>
-          <option value="Issued">Issued</option>
-        </select>
+        {isAdmin && (
+          <button
+            onClick={() => setShowAddModal(true)}
+            className="px-4 py-2 bg-[#FFDA03] rounded-xl font-semibold"
+          >
+            Insert Information
+          </button>
+        )}
       </div>
 
-      {/* Table */}
-      <div className="relative overflow-x-auto rounded-2xl border">
-        <table className="w-full text-sm text-black">
-          <thead className="bg-gray-100 sticky top-0 z-10">
-            <tr>
-              {[
-                ["detachment", "Detachment"],
-                ["equipment", "Equipment"],
-                ["control", "Control #"],
-                ["serial", "Serial"],
-                ["model", "Model"],
-                ["assigned", "Assigned To"],
-                ["status", "Status"],
-              ].map(([key, label]) => (
-                <th
-                  key={key}
-                  onClick={() => handleSort(key as keyof InventoryRow)}
-                  className="px-4 py-3 text-left font-medium text-black border-b cursor-pointer select-none"
-                >
-                  <div className="flex items-center gap-1">
-                    {label}
-                    <ArrowUpDown className="w-3 h-3" />
-                  </div>
-                </th>
-              ))}
-            </tr>
-          </thead>
+      {/* SEARCH */}
+      <div className="flex items-center gap-3 border rounded-2xl px-4 py-3 max-w-xl">
+        <div className="h-10 w-10 rounded-xl bg-[#FFDA03] flex items-center justify-center">
+          <Search className="w-5 h-5 text-black" />
+        </div>
+        <input
+          placeholder="Search inventory..."
+          className="flex-1 outline-none text-sm"
+          value={search}
+          onChange={(e) => {
+            setSearch(e.target.value);
+            setPage(1);
+          }}
+        />
+      </div>
+
+      {error && <div className="text-red-600">{error}</div>}
+      {success && <div className="text-green-600">{success}</div>}
+
+      {/* TABLE */}
+      <div className="relative overflow-x-auto">
+        <table className="w-full text-sm border-separate border-spacing-y-2">
+          <thead>
+  <tr className="bg-[#FFDA03]">
+    {[
+      ["date", "Date"],
+      ["particular", "Particular"],
+      ["quantity", "QTY"],
+      ["amount", "Amount"],
+      ["remarks", "Remarks"],
+      ["firearms_ammunitions", "Firearms"],
+      ["communications_equipment", "Communications"],
+      ["furniture_and_fixtures", "Furniture"],
+      ["office_equipments_sec_equipments", "Office Equip."],
+      ["sec_equipments", "Sec Equip."],
+      ["vehicle_and_motorcycle", "Vehicle"],
+    ].map(([key, label], index, arr) => (
+      <th
+        key={key}
+        className={`px-4 py-3 text-left font-semibold text-black
+        ${index === 0 ? "rounded-l-xl" : ""}
+        ${index === arr.length - 1 ? "rounded-r-xl" : ""}`}
+      >
+        {label}
+      </th>
+    ))}
+  </tr>
+</thead>
 
           <tbody>
-            {loading
-              ? Array.from({ length: pageSize }).map((_, i) => (
-                  <tr key={i} className="animate-pulse">
-                    {Array.from({ length: 7 }).map((_, j) => (
-                      <td key={j} className="px-4 py-4 border-b">
-                        <div className="h-4 bg-gray-200 rounded w-full" />
-                      </td>
-                    ))}
-                  </tr>
-                ))
-              : paginated.map((item) => (
-                  <tr
-                    key={item.id}
-                    onClick={() =>
-                      router.push(
-                        "/Main_Modules/Logistics/Inventory/" + item.id
-                      )
-                    }
-                    className="hover:bg-yellow-50 cursor-pointer"
-                  >
-                    <td className="px-4 py-3 border-b">{item.detachment}</td>
-                    <td className="px-4 py-3 border-b font-medium">
-                      {item.equipment}
-                    </td>
-                    <td className="px-4 py-3 border-b">{item.control}</td>
-                    <td className="px-4 py-3 border-b">{item.serial}</td>
-                    <td className="px-4 py-3 border-b">{item.model}</td>
-                    <td className="px-4 py-3 border-b">{item.assigned}</td>
-                    <td className="px-4 py-3 border-b">
-                      <span
-                        className={`px-3 py-1 rounded-full text-xs font-medium ${
-                          item.status === "Active"
-                            ? "bg-green-100 text-green-700"
-                            : item.status === "Available"
-                            ? "bg-gray-100 text-gray-600"
-                            : "bg-blue-100 text-blue-700"
-                        }`}
-                      >
-                        {item.status}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
+            {loading ? (
+              <tr>
+                <td colSpan={11} className="text-center py-8">
+                  Loading...
+                </td>
+              </tr>
+            ) : paginated.length === 0 ? (
+              <tr>
+                <td colSpan={11} className="text-center py-8">
+                  No records found.
+                </td>
+              </tr>
+            ) : (
+              paginated.map((row) => (
+                <tr
+                  key={row.id}
+                  className="bg-white shadow-sm hover:shadow-md transition"
+                >
+                  <td className="px-4 py-3 rounded-l-xl">{row.date}</td>
+                  <td className="px-4 py-3">{row.particular}</td>
+                  <td className="px-4 py-3">{row.quantity}</td>
+                  <td className="px-4 py-3">{row.amount}</td>
+                  <td className="px-4 py-3">{row.remarks}</td>
+                  <td className="px-4 py-3">{row.firearms_ammunitions}</td>
+                  <td className="px-4 py-3">{row.communications_equipment}</td>
+                  <td className="px-4 py-3">{row.furniture_and_fixtures}</td>
+                  <td className="px-4 py-3">{row.office_equipments_sec_equipments}</td>
+                  <td className="px-4 py-3">{row.sec_equipments}</td>
+                  <td className="px-4 py-3 rounded-r-xl">{row.vehicle_and_motorcycle}</td>
+                </tr>
+              ))
+            )}
           </tbody>
         </table>
       </div>
 
-      {/* Pagination */}
+      {/* PAGINATION */}
       <div className="flex justify-between items-center text-sm">
-        <span>
-          Page {page} of {totalPages}
-        </span>
+        <span>Page {pageClamped} of {totalPages}</span>
         <div className="flex gap-2">
           <button
-            disabled={page === 1}
+            disabled={pageClamped === 1}
             onClick={() => setPage((p) => p - 1)}
             className="px-3 py-1 border rounded-lg disabled:opacity-40"
           >
             Prev
           </button>
           <button
-            disabled={page === totalPages}
+            disabled={pageClamped === totalPages}
             onClick={() => setPage((p) => p + 1)}
             className="px-3 py-1 border rounded-lg disabled:opacity-40"
           >
