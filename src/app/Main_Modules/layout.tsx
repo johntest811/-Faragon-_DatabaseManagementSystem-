@@ -15,7 +15,6 @@ import {
   Shield,
   Settings,
   Trash2,
-  Bell,
   ChevronLeft,
   ChevronDown,
   Truck,
@@ -26,6 +25,7 @@ import {
   Package,
   FileText,
   ClipboardCheck,
+  CircleAlert,
 } from "lucide-react";
 
 type LayoutProps = Readonly<{ children: React.ReactNode }>;
@@ -69,6 +69,7 @@ export default function MainModulesLayout({ children }: LayoutProps) {
   const [logisticsFlyoutOpen, setLogisticsFlyoutOpen] = useState(false);
   const [activityOpen, setActivityOpen] = useState(false);
   const [expiringOpen, setExpiringOpen] = useState(false);
+  const [adminAlertOpen, setAdminAlertOpen] = useState(false);
   const [activityCount, setActivityCount] = useState(0);
   const [activityMissingTable, setActivityMissingTable] = useState(false);
   const [resendingKey, setResendingKey] = useState<string | null>(null);
@@ -140,9 +141,10 @@ export default function MainModulesLayout({ children }: LayoutProps) {
     function onDocDown(e: MouseEvent) {
       const t = e.target as HTMLElement | null;
       if (!t) return;
-      if (t.closest?.("[data-activity-menu]") || t.closest?.("[data-expiring-menu]")) return;
+      if (t.closest?.("[data-activity-menu]") || t.closest?.("[data-expiring-menu]") || t.closest?.("[data-admin-alert-menu]")) return;
       setActivityOpen(false);
       setExpiringOpen(false);
+      setAdminAlertOpen(false);
     }
     document.addEventListener("mousedown", onDocDown);
     return () => document.removeEventListener("mousedown", onDocDown);
@@ -331,9 +333,18 @@ export default function MainModulesLayout({ children }: LayoutProps) {
 
   useEffect(() => {
     if (!pathname || !sessionRole) return;
-    const allowed = ALL_MENU
+    const baseAllowed = ALL_MENU
       .filter((m) => allowedKeys.has(m.key))
       .some((m) => pathname === m.href || pathname.startsWith(m.href));
+    const logisticsChildAllowed =
+      allowedKeys.has("logistics") &&
+      [
+        "/Main_Modules/Client/",
+        "/Main_Modules/Inventory/",
+        "/Main_Modules/Reports/",
+        "/Main_Modules/Requests/",
+      ].some((prefix) => pathname === prefix || pathname.startsWith(prefix));
+    const allowed = baseAllowed || logisticsChildAllowed;
     if (!allowed) {
       router.replace("/Main_Modules/Dashboard/");
     }
@@ -347,10 +358,10 @@ export default function MainModulesLayout({ children }: LayoutProps) {
   const LOGISTICS_ITEMS = useMemo(
     () =>
       [
-        { key: "logistics_client", name: "Client", href: "/Main_Modules/Logistics/Client/", icon: CreditCard },
-        { key: "logistics_inventory", name: "Inventory", href: "/Main_Modules/Logistics/Inventory/", icon: Package },
-        { key: "logistics_reports", name: "Reports", href: "/Main_Modules/Logistics/Reports/", icon: FileText },
-        { key: "logistics_requests", name: "Requests", href: "/Main_Modules/Logistics/Requests/", icon: ClipboardCheck },
+        { key: "logistics_client", name: "Client", href: "/Main_Modules/Client/", icon: CreditCard },
+        { key: "logistics_inventory", name: "Inventory", href: "/Main_Modules/Inventory/", icon: Package },
+        { key: "logistics_reports", name: "Reports", href: "/Main_Modules/Reports/", icon: FileText },
+        { key: "logistics_requests", name: "Requests", href: "/Main_Modules/Requests/", icon: ClipboardCheck },
       ] as const,
     []
   );
@@ -389,7 +400,13 @@ export default function MainModulesLayout({ children }: LayoutProps) {
 
   const logisticsActive = useMemo(() => {
     if (!logisticsAllowed) return false;
-    return pathname.startsWith("/Main_Modules/Logistics/");
+    return [
+      "/Main_Modules/Logistics/",
+      "/Main_Modules/Client/",
+      "/Main_Modules/Inventory/",
+      "/Main_Modules/Reports/",
+      "/Main_Modules/Requests/",
+    ].some((prefix) => pathname === prefix || pathname.startsWith(prefix));
   }, [logisticsAllowed, pathname]);
 
   useEffect(() => {
@@ -645,6 +662,7 @@ export default function MainModulesLayout({ children }: LayoutProps) {
                     onClick={() => {
                       setActivityOpen((v) => !v);
                       setExpiringOpen(false);
+                      setAdminAlertOpen(false);
                       refreshActivity();
                     }}
                     className="relative h-10 w-10 rounded-xl bg-[#FFDA03] text-black flex items-center justify-center"
@@ -722,6 +740,7 @@ export default function MainModulesLayout({ children }: LayoutProps) {
                     onClick={() => {
                       setExpiringOpen((v) => !v);
                       setActivityOpen(false);
+                      setAdminAlertOpen(false);
                       refreshExpiring();
                     }}
                     className="relative h-10 w-10 rounded-xl bg-[#FFDA03] text-black flex items-center justify-center"
@@ -857,13 +876,96 @@ export default function MainModulesLayout({ children }: LayoutProps) {
                   <Settings className="w-5 h-5" />
                 </button> */}
 
-                <button
-                  type="button"
-                  className="h-10 w-10 rounded-xl bg-[#FFDA03] text-black flex items-center justify-center"
-                  aria-label="Notifications"
-                >
-                  <Bell className="w-5 h-5" />
-                </button>
+                <div className="relative" data-admin-alert-menu>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAdminAlertOpen((v) => !v);
+                      setActivityOpen(false);
+                      setExpiringOpen(false);
+                    }}
+                    className="relative h-10 w-10 rounded-xl bg-[#FFDA03] text-black flex items-center justify-center"
+                    aria-label="Admin Alerts"
+                  >
+                    <CircleAlert className="w-5 h-5" />
+                    {(activityCount + expiringCount) > 0 ? (
+                      <span
+                        className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-red-600 text-white text-[10px] font-bold leading-[18px] text-center shadow"
+                        aria-label={`Admin alerts count ${activityCount + expiringCount}`}
+                      >
+                        {badgeText(activityCount + expiringCount)}
+                      </span>
+                    ) : null}
+                  </button>
+
+                  {adminAlertOpen ? (
+                    <div className="absolute right-0 mt-2 w-[340px] max-w-[90vw] rounded-2xl border bg-white shadow-lg overflow-hidden z-50">
+                      <div className="px-4 py-3 border-b">
+                        <div className="text-sm font-semibold text-black">Admin Alert Center</div>
+                        <div className="text-xs text-gray-500">Quick actions for pending admin work.</div>
+                      </div>
+
+                      <div className="p-4 space-y-3">
+                        <div className="rounded-xl border bg-gray-50 px-3 py-2 flex items-center justify-between">
+                          <div>
+                            <div className="text-xs text-gray-500">Unread Activity</div>
+                            <div className="text-sm font-semibold text-black">{activityCount}</div>
+                          </div>
+                          <button
+                            type="button"
+                            className="text-xs px-3 py-1.5 rounded-lg border bg-white hover:bg-gray-50"
+                            onClick={() => {
+                              setAdminAlertOpen(false);
+                              router.push("/Main_Modules/Audit/");
+                            }}
+                          >
+                            Open Audit
+                          </button>
+                        </div>
+
+                        <div className="rounded-xl border bg-gray-50 px-3 py-2 flex items-center justify-between">
+                          <div>
+                            <div className="text-xs text-gray-500">Pending License Notices</div>
+                            <div className="text-sm font-semibold text-black">{expiringCount}</div>
+                          </div>
+                          <button
+                            type="button"
+                            className="text-xs px-3 py-1.5 rounded-lg border bg-white hover:bg-gray-50"
+                            onClick={() => {
+                              setAdminAlertOpen(false);
+                              router.push("/Main_Modules/Settings/");
+                            }}
+                          >
+                            Notification Settings
+                          </button>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2">
+                          <button
+                            type="button"
+                            className="text-xs px-3 py-2 rounded-lg border bg-white hover:bg-gray-50"
+                            onClick={() => {
+                              setAdminAlertOpen(false);
+                              router.push("/Main_Modules/Inventory/");
+                            }}
+                          >
+                            Inventory
+                          </button>
+                          <button
+                            type="button"
+                            className="text-xs px-3 py-2 rounded-lg border bg-white hover:bg-gray-50"
+                            onClick={() => {
+                              setAdminAlertOpen(false);
+                              router.push("/Main_Modules/Requests/");
+                            }}
+                          >
+                            Requests
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
 
                 <div className="h-10 w-10 rounded-xl overflow-hidden bg-gray-200 flex items-center justify-center">
                   <span className="text-xs font-semibold text-gray-600">AD</span>

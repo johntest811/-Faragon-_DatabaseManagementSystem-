@@ -22,8 +22,9 @@ type PreferencesRow = {
 	include_driver_license: boolean;
 	include_security_license: boolean;
 	include_insurance: boolean;
-	send_time_local: string;
-	timezone: string;
+	use_scheduled_send: boolean;
+	send_time_local: string | null;
+	timezone: string | null;
 };
 
 type LocalNotificationPrefs = {
@@ -414,6 +415,7 @@ export default function SettingsPage() {
 	const [includeDriver, setIncludeDriver] = useState(false);
 	const [includeSecurity, setIncludeSecurity] = useState(true);
 	const [includeInsurance, setIncludeInsurance] = useState(false);
+	const [useScheduledSend, setUseScheduledSend] = useState(true);
 	const [sendTimeLocal, setSendTimeLocal] = useState("08:00");
 	const [timezone, setTimezone] = useState("Asia/Manila");
 
@@ -478,6 +480,7 @@ export default function SettingsPage() {
 			setIncludeDriver(Boolean(pref.include_driver_license));
 			setIncludeSecurity(Boolean(pref.include_security_license));
 			setIncludeInsurance(Boolean(pref.include_insurance));
+			setUseScheduledSend(pref.use_scheduled_send !== false);
 			setSendTimeLocal(String(pref.send_time_local ?? "08:00").slice(0, 5));
 			setTimezone(pref.timezone ?? "Asia/Manila");
 		}
@@ -541,7 +544,7 @@ export default function SettingsPage() {
 						supabase
 							.from("notification_preferences")
 							.select(
-								"id, is_enabled, days_before_expiry, include_driver_license, include_security_license, include_insurance, send_time_local, timezone"
+								"id, is_enabled, days_before_expiry, include_driver_license, include_security_license, include_insurance, use_scheduled_send, send_time_local, timezone"
 							)
 							.limit(1)
 							.maybeSingle(),
@@ -577,6 +580,7 @@ export default function SettingsPage() {
 						setIncludeDriver(Boolean(pref.include_driver_license));
 						setIncludeSecurity(Boolean(pref.include_security_license));
 						setIncludeInsurance(Boolean(pref.include_insurance));
+						setUseScheduledSend(pref.use_scheduled_send !== false);
 						setSendTimeLocal(String(pref.send_time_local ?? "08:00").slice(0, 5));
 						setTimezone(pref.timezone ?? "Asia/Manila");
 					}
@@ -751,6 +755,7 @@ export default function SettingsPage() {
 						include_driver_license: Boolean(includeDriver),
 						include_security_license: Boolean(includeSecurity),
 						include_insurance: Boolean(includeInsurance),
+						use_scheduled_send: Boolean(useScheduledSend),
 						send_time_local: safeText(sendTimeLocal) || "08:00",
 						timezone: safeText(timezone) || "Asia/Manila",
 					},
@@ -782,6 +787,7 @@ export default function SettingsPage() {
 							include_driver_license: Boolean(includeDriver),
 							include_security_license: Boolean(includeSecurity),
 							include_insurance: Boolean(includeInsurance),
+							use_scheduled_send: Boolean(useScheduledSend),
 							send_time_local: safeText(sendTimeLocal) || "08:00",
 							timezone: safeText(timezone) || "Asia/Manila",
 						})
@@ -794,6 +800,7 @@ export default function SettingsPage() {
 						include_driver_license: Boolean(includeDriver),
 						include_security_license: Boolean(includeSecurity),
 						include_insurance: Boolean(includeInsurance),
+						use_scheduled_send: Boolean(useScheduledSend),
 						send_time_local: safeText(sendTimeLocal) || "08:00",
 						timezone: safeText(timezone) || "Asia/Manila",
 					});
@@ -1184,12 +1191,25 @@ export default function SettingsPage() {
 								</label>
 							</div>
 
+							<label className="flex items-center gap-2 text-sm text-black mt-3">
+								<input
+									type="checkbox"
+									checked={useScheduledSend}
+									onChange={(e) => setUseScheduledSend(e.target.checked)}
+								/>
+								Use scheduled send time and timezone
+							</label>
+							<div className="text-xs text-gray-500 mt-1">
+								When disabled, reminders send instantly once due (no local send-time wait).
+							</div>
+
 							<label className="block text-sm mt-3 mb-1 text-black">Send time (local)</label>
 							<input
 								type="time"
 								value={sendTimeLocal}
 								onChange={(e) => setSendTimeLocal(e.target.value)}
-								className="w-full rounded-xl border px-3 py-2 text-black"
+								disabled={!useScheduledSend}
+								className={`w-full rounded-xl border px-3 py-2 text-black ${!useScheduledSend ? "bg-gray-100 text-gray-500" : ""}`}
 							/>
 
 							<label className="block text-sm mt-3 mb-1 text-black">Timezone</label>
@@ -1197,7 +1217,8 @@ export default function SettingsPage() {
 								value={timezone}
 								onChange={(e) => setTimezone(e.target.value)}
 								placeholder="Asia/Manila"
-								className="w-full rounded-xl border px-3 py-2 text-black"
+								disabled={!useScheduledSend}
+								className={`w-full rounded-xl border px-3 py-2 text-black ${!useScheduledSend ? "bg-gray-100 text-gray-500" : ""}`}
 							/>
 
 							<div className="mt-4 rounded-xl border p-3">
@@ -1318,7 +1339,7 @@ export default function SettingsPage() {
 						</button>
 					</div>
 
-					<div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+					<div className="grid grid-cols-1 gap-4">
 						<div className="rounded-2xl border p-4">
 							<div className="font-semibold mb-2 text-black">Test recipient</div>
 							<div className="text-xs text-gray-500 mb-3">

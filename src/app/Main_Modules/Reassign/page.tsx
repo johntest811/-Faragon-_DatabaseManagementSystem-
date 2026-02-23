@@ -184,7 +184,7 @@ export default function ReassignPage() {
     Record<string, { nextYmd: string | null; nextDays: number | null }>
   >({});
   const [search, setSearch] = useState("");
-  const [sortBy, setSortBy] = useState<"name" | "created_at" | "category" | "service">("name");
+  const [sortBy, setSortBy] = useState<"name" | "last_name" | "letter" | "created_at" | "category" | "service">("name");
 
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [genderFilter, setGenderFilter] = useState<string>("ALL");
@@ -470,6 +470,20 @@ export default function ReassignPage() {
     }
 
     const sorted = [...list].sort((a, b) => {
+      if (sortBy === "last_name") {
+        const al = (a.last_name ?? "").trim().toLowerCase();
+        const bl = (b.last_name ?? "").trim().toLowerCase();
+        const d = al.localeCompare(bl);
+        return d !== 0 ? d : getFullName(a).localeCompare(getFullName(b));
+      }
+      if (sortBy === "letter") {
+        const al = (a.last_name ?? "").trim().toLowerCase();
+        const bl = (b.last_name ?? "").trim().toLowerCase();
+        const ai = al ? al[0] : "~";
+        const bi = bl ? bl[0] : "~";
+        const d = ai.localeCompare(bi);
+        return d !== 0 ? d : getFullName(a).localeCompare(getFullName(b));
+      }
       if (sortBy === "created_at") {
         return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
       }
@@ -550,10 +564,12 @@ export default function ReassignPage() {
             <div className="text-xs text-gray-500">Sort By:</div>
 			<select
 				value={sortBy}
-				onChange={(e) => setSortBy(e.target.value as "name" | "created_at" | "category" | "service")}
+        onChange={(e) => setSortBy(e.target.value as "name" | "last_name" | "letter" | "created_at" | "category" | "service")}
 				className="px-4 py-2 rounded-full bg-white text-black font-medium border border-gray-300"
 			>
 				<option value="name">Name</option>
+        <option value="last_name">Last Name</option>
+        <option value="letter">Letter (A-Z)</option>
 				<option value="created_at">Newest Date</option>
 				<option value="category">Category</option>
 				<option value="service">Years of Service</option>

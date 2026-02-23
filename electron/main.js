@@ -351,7 +351,7 @@ async function loadNotificationConfig(admin) {
     admin
       .from('notification_preferences')
       .select(
-        'id, is_enabled, days_before_expiry, include_driver_license, include_security_license, include_insurance, send_time_local, timezone'
+        'id, is_enabled, days_before_expiry, include_driver_license, include_security_license, include_insurance, use_scheduled_send, send_time_local, timezone'
       )
       .order('updated_at', { ascending: false })
       .limit(1)
@@ -665,7 +665,7 @@ async function fetchExpiringRows(admin, preferences, localPrefs, limit) {
     const chunk = ids.slice(i, i + chunkSize);
     const aRes = await admin
       .from('applicants')
-      .select('applicant_id, first_name, middle_name, last_name, extn_name, client_email, client_contact_num')
+      .select('applicant_id, first_name, middle_name, last_name, extn_name, client_email, client_contact_num, status, is_archived')
       .in('applicant_id', chunk);
     if (aRes.error) throw aRes.error;
     for (const a of aRes.data ?? []) {
@@ -681,6 +681,10 @@ async function fetchExpiringRows(admin, preferences, localPrefs, limit) {
   for (const row of licRows) {
     const applicant = applicantsById.get(row.applicant_id);
     if (!applicant) continue;
+    const normalizedStatus = safeText(applicant.status).toUpperCase();
+    const isArchived = applicant.is_archived === true;
+    if (isArchived || normalizedStatus === 'RETIRED') continue;
+
     const base = {
       applicant_id: row.applicant_id,
       last_name: applicant.last_name ?? null,
@@ -761,11 +765,14 @@ function isDueToSendNow(expiresOnYmd, daysBefore, sendTimeLocal) {
 
   if (today.getTime() < dueDt.getTime()) return false;
 
-  // If today is the due date, wait until the configured local send time.
+  // If today is the due date, wait until the configured local send time
+  // only when scheduling is enabled.
   if (today.getTime() === dueDt.getTime()) {
-    const { hh, mm } = parseLocalSendTimeHHmm(sendTimeLocal);
-    const dueTime = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hh, mm, 0, 0);
-    if (now.getTime() < dueTime.getTime()) return false;
+    if (safeText(sendTimeLocal)) {
+      const { hh, mm } = parseLocalSendTimeHHmm(sendTimeLocal);
+      const dueTime = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hh, mm, 0, 0);
+      if (now.getTime() < dueTime.getTime()) return false;
+    }
   }
 
   // Catch-up: if app was closed on the due date, send as soon as possible
@@ -807,7 +814,8 @@ async function runNotificationSend(admin) {
   const expiring = await fetchExpiringRows(admin, preferences, localPrefs);
 
   const daysBefore = Number(preferences.days_before_expiry ?? 30);
-  const sendTimeLocal = preferences.send_time_local;
+  const useScheduledSend = preferences?.use_scheduled_send !== false;
+  const sendTimeLocal = useScheduledSend ? preferences.send_time_local : null;
 
   // Group email by recipient (client_email) to reduce spam.
   const byRecipient = new Map();
@@ -1116,6 +1124,7 @@ ipcMain.handle('settings:saveNotificationConfig', async (_event, payload) => {
     include_driver_license: Boolean(preferences.include_driver_license ?? false),
     include_security_license: Boolean(preferences.include_security_license ?? true),
     include_insurance: Boolean(preferences.include_insurance ?? false),
+    use_scheduled_send: Boolean(preferences.use_scheduled_send ?? true),
     send_time_local: safeText(preferences.send_time_local) || '08:00',
     timezone: safeText(preferences.timezone) || 'Asia/Manila',
   };
@@ -1644,12 +1653,14 @@ let notificationTimer = null;
 let lastAutoRunKey = null;
 
 function computeAutoRunKey(todayKey, email, preferences) {
-  const sendTime = safeText(preferences?.send_time_local).slice(0, 5) || '08:00';
+  const useScheduledSend = preferences?.use_scheduled_send !== false;
+  const sendTime = useScheduledSend ? (safeText(preferences?.send_time_local).slice(0, 5) || '08:00') : 'instant';
   const daysBefore = clampInt(preferences?.days_before_expiry, { min: 1, max: 365, fallback: 30 });
   const flags = [
     preferences?.include_driver_license ? 'D1' : 'D0',
     preferences?.include_security_license ? 'S1' : 'S0',
     preferences?.include_insurance ? 'I1' : 'I0',
+    useScheduledSend ? 'T1' : 'T0',
     preferences?.is_enabled ? 'E1' : 'E0',
     email?.is_active === false ? 'A0' : 'A1',
   ].join('');
@@ -1671,12 +1682,15 @@ async function maybeAutoSendNotifications() {
     const runKey = computeAutoRunKey(todayKey, email, preferences);
     if (lastAutoRunKey === runKey) return;
 
-    const sendTime = safeText(preferences.send_time_local).slice(0, 5) || '08:00';
-    const [hhRaw, mmRaw] = sendTime.split(':');
-    const hh = Number(hhRaw ?? 8);
-    const mm = Number(mmRaw ?? 0);
-    const due = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hh, mm, 0, 0);
-    if (now.getTime() < due.getTime()) return;
+    const useScheduledSend = preferences?.use_scheduled_send !== false;
+    if (useScheduledSend) {
+      const sendTime = safeText(preferences.send_time_local).slice(0, 5) || '08:00';
+      const [hhRaw, mmRaw] = sendTime.split(':');
+      const hh = Number(hhRaw ?? 8);
+      const mm = Number(mmRaw ?? 0);
+      const due = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hh, mm, 0, 0);
+      if (now.getTime() < due.getTime()) return;
+    }
 
     const result = await runNotificationSend(admin);
     if (result?.ok) {

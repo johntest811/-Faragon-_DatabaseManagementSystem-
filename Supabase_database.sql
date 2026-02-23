@@ -1,15 +1,6 @@
 -- WARNING: This schema is for context only and is not meant to be run.
 -- Table order and constraints may not be valid for execution.
 
-CREATE TABLE public.Paraphernalia (
-  id_paraphernalia uuid NOT NULL,
-  names text,
-  items character varying,
-  quantity integer,
-  price numeric,
-  date character varying,
-  timestamp timestamp without time zone NOT NULL DEFAULT now()
-);
 CREATE TABLE public.admin_role_memberships (
   user_id uuid NOT NULL,
   role_id uuid NOT NULL,
@@ -120,20 +111,6 @@ CREATE TABLE public.certificates (
   CONSTRAINT certificates_pkey PRIMARY KEY (applicant_id),
   CONSTRAINT certificates_applicant_id_fkey FOREIGN KEY (applicant_id) REFERENCES public.applicants(applicant_id)
 );
-CREATE TABLE public.contracts (
-  contract_id uuid NOT NULL DEFAULT gen_random_uuid(),
-  applicant_id uuid,
-  employee_number text,
-  full_name text,
-  detachment text,
-  position text,
-  start_date date,
-  end_date date,
-  status text NOT NULL DEFAULT 'ACTIVE'::text CHECK (status = ANY (ARRAY['ACTIVE'::text, 'ENDED'::text, 'CANCELLED'::text])),
-  created_at timestamp with time zone NOT NULL DEFAULT now(),
-  CONSTRAINT contracts_pkey PRIMARY KEY (contract_id),
-  CONSTRAINT contracts_applicant_id_fkey FOREIGN KEY (applicant_id) REFERENCES public.applicants(applicant_id)
-);
 CREATE TABLE public.deployment_history (
   history_id uuid NOT NULL DEFAULT gen_random_uuid(),
   deployment_id uuid NOT NULL,
@@ -178,6 +155,23 @@ CREATE TABLE public.employment_record (
   leave_reason character varying,
   CONSTRAINT employment_record_pkey PRIMARY KEY (applicant_id),
   CONSTRAINT employment_record_applicant_id_fkey FOREIGN KEY (applicant_id) REFERENCES public.applicants(applicant_id)
+);
+CREATE TABLE public.inventory_fixed_asset (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  date character varying,
+  particular character varying,
+  quanitity integer,
+  amount numeric,
+  remarks character varying,
+  firearms_ammunitions character varying,
+  communications_equipment character varying,
+  furniture_and_fixtures character varying,
+  office_equipments_sec_equipments character varying,
+  sec_equipments character varying,
+  vehicle_and_motorcycle character varying,
+  total_amount numeric,
+  grand_total numeric,
+  CONSTRAINT inventory_fixed_asset_pkey PRIMARY KEY (id)
 );
 CREATE TABLE public.job_titles (
   title_id uuid NOT NULL DEFAULT gen_random_uuid(),
@@ -235,9 +229,21 @@ CREATE TABLE public.notification_preferences (
   include_driver_license boolean NOT NULL DEFAULT false,
   include_security_license boolean NOT NULL DEFAULT true,
   include_insurance boolean NOT NULL DEFAULT false,
+  use_scheduled_send boolean NOT NULL DEFAULT true,
   send_time_local time without time zone NOT NULL DEFAULT '08:00:00'::time without time zone,
   timezone text NOT NULL DEFAULT 'Asia/Manila'::text,
   CONSTRAINT notification_preferences_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.contracts (
+  contract_id uuid NOT NULL DEFAULT gen_random_uuid(),
+  applicant_id uuid,
+  contract_no text,
+  start_date date,
+  end_date date,
+  status text DEFAULT 'ACTIVE'::text,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT contracts_pkey PRIMARY KEY (contract_id),
+  CONSTRAINT contracts_applicant_id_fkey FOREIGN KEY (applicant_id) REFERENCES public.applicants(applicant_id)
 );
 CREATE TABLE public.paraphernalia (
   id_paraphernalia uuid NOT NULL DEFAULT gen_random_uuid(),
@@ -247,34 +253,25 @@ CREATE TABLE public.paraphernalia (
   price numeric,
   date character varying,
   timestamp timestamp without time zone NOT NULL DEFAULT now(),
-  item_id uuid,
-  inventory_id uuid,
-  contract_id uuid,
-  action text NOT NULL DEFAULT 'ISSUE'::text CHECK (action = ANY (ARRAY['ISSUE'::text, 'RETURN'::text, 'ADJUSTMENT'::text])),
-  CONSTRAINT paraphernalia_pkey PRIMARY KEY (id_paraphernalia),
-  CONSTRAINT paraphernalia_item_id_fkey FOREIGN KEY (item_id) REFERENCES public.paraphernalia_items(item_id),
-  CONSTRAINT paraphernalia_inventory_id_fkey FOREIGN KEY (inventory_id) REFERENCES public.paraphernalia_inventory(id_paraphernalia_inventory),
-  CONSTRAINT paraphernalia_contract_id_fkey FOREIGN KEY (contract_id) REFERENCES public.contracts(contract_id)
+  CONSTRAINT paraphernalia_pkey PRIMARY KEY (id_paraphernalia)
 );
 CREATE TABLE public.paraphernalia_inventory (
-  id_paraphernalia_inventory uuid NOT NULL,
+  id_paraphernalia_inventory uuid NOT NULL DEFAULT gen_random_uuid(),
+  id_paraphernalia uuid,
+  contract_id uuid,
   items text,
   stock_balance numeric,
   stock_in numeric,
   stock_out numeric,
-  item_id uuid,
-  created_at timestamp with time zone NOT NULL DEFAULT now(),
-  updated_at timestamp with time zone NOT NULL DEFAULT now(),
   CONSTRAINT paraphernalia_inventory_pkey PRIMARY KEY (id_paraphernalia_inventory),
-  CONSTRAINT paraphernalia_inventory_item_id_fkey FOREIGN KEY (item_id) REFERENCES public.paraphernalia_items(item_id)
-);
-CREATE TABLE public.paraphernalia_items (
-  item_id uuid NOT NULL DEFAULT gen_random_uuid(),
-  item_name text NOT NULL UNIQUE,
-  created_at timestamp with time zone NOT NULL DEFAULT now(),
-  CONSTRAINT paraphernalia_items_pkey PRIMARY KEY (item_id)
+  CONSTRAINT paraphernalia_inventory_id_paraphernalia_fkey FOREIGN KEY (id_paraphernalia) REFERENCES public.paraphernalia(id_paraphernalia),
+  CONSTRAINT paraphernalia_inventory_contract_id_fkey FOREIGN KEY (contract_id) REFERENCES public.contracts(contract_id)
 );
 CREATE TABLE public.resigned (
+  resigned_id uuid NOT NULL DEFAULT gen_random_uuid(),
+  applicant_id uuid,
+  contract_id uuid,
+  id_paraphernalia_inventory uuid,
   last_name character varying,
   first_name character varying,
   middle_name character varying,
@@ -283,29 +280,25 @@ CREATE TABLE public.resigned (
   remarks text,
   last_duty character varying,
   timestamp timestamp without time zone NOT NULL DEFAULT now(),
-  resigned_id uuid NOT NULL DEFAULT gen_random_uuid(),
-  applicant_id uuid,
-  contract_id uuid,
-  resigned_at timestamp with time zone NOT NULL DEFAULT now(),
   CONSTRAINT resigned_pkey PRIMARY KEY (resigned_id),
   CONSTRAINT resigned_applicant_id_fkey FOREIGN KEY (applicant_id) REFERENCES public.applicants(applicant_id),
-  CONSTRAINT resigned_contract_id_fkey FOREIGN KEY (contract_id) REFERENCES public.contracts(contract_id)
+  CONSTRAINT resigned_contract_id_fkey FOREIGN KEY (contract_id) REFERENCES public.contracts(contract_id),
+  CONSTRAINT resigned_inventory_fkey FOREIGN KEY (id_paraphernalia_inventory) REFERENCES public.paraphernalia_inventory(id_paraphernalia_inventory)
 );
 CREATE TABLE public.restock (
-  id_restock uuid NOT NULL,
+  id_restock uuid NOT NULL DEFAULT gen_random_uuid(),
+  id_paraphernalia uuid,
+  id_paraphernalia_inventory uuid,
+  contract_id uuid,
   date character varying,
   status text,
   item text,
   quanitity character varying,
   timestamptz timestamp without time zone NOT NULL DEFAULT now(),
-  item_id uuid,
-  inventory_id uuid,
-  contract_id uuid,
-  quantity numeric,
   CONSTRAINT restock_pkey PRIMARY KEY (id_restock),
-  CONSTRAINT restock_item_id_fkey FOREIGN KEY (item_id) REFERENCES public.paraphernalia_items(item_id),
-  CONSTRAINT restock_inventory_id_fkey FOREIGN KEY (inventory_id) REFERENCES public.paraphernalia_inventory(id_paraphernalia_inventory),
-  CONSTRAINT restock_contract_id_fkey FOREIGN KEY (contract_id) REFERENCES public.contracts(contract_id)
+  CONSTRAINT restock_paraphernalia_fkey FOREIGN KEY (id_paraphernalia) REFERENCES public.paraphernalia(id_paraphernalia),
+  CONSTRAINT restock_inventory_fkey FOREIGN KEY (id_paraphernalia_inventory) REFERENCES public.paraphernalia_inventory(id_paraphernalia_inventory),
+  CONSTRAINT restock_contract_fkey FOREIGN KEY (contract_id) REFERENCES public.contracts(contract_id)
 );
 CREATE TABLE public.role_module_access (
   role_id uuid NOT NULL,
@@ -315,4 +308,4 @@ CREATE TABLE public.role_module_access (
   CONSTRAINT role_module_access_pkey PRIMARY KEY (role_id, module_key),
   CONSTRAINT role_module_access_role_id_fkey FOREIGN KEY (role_id) REFERENCES public.app_roles(role_id),
   CONSTRAINT role_module_access_module_key_fkey FOREIGN KEY (module_key) REFERENCES public.modules(module_key)
-);make the popup close when clicking the dark background area (outside the modal card)
+);

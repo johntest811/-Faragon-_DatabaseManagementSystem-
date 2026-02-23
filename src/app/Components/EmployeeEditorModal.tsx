@@ -13,7 +13,7 @@ export type EmployeeEditorModalProps = {
   title?: string;
   subtitle?: string;
   onClose: () => void;
-  onSaved?: (applicantId: string) => void;
+  onSaved?: (applicantId: string, status: string) => void;
 };
 
 type ApplicantDraft = {
@@ -315,6 +315,18 @@ function toNullableInt(value: string) {
   if (!v) return null;
   const num = Number(v);
   return Number.isFinite(num) ? Math.trunc(num) : null;
+}
+
+function getLegacyAdminId(): string | null {
+  try {
+    const raw = localStorage.getItem("adminSession");
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { id?: unknown };
+    const id = String(parsed?.id ?? "").trim();
+    return id || null;
+  } catch {
+    return null;
+  }
 }
 
 function sectionButton(active: boolean) {
@@ -759,6 +771,13 @@ export default function EmployeeEditorModal({
     setSaving(true);
 
     try {
+      const nextStatus = normalizeStatus(app.status);
+      const isRetired = nextStatus === "RETIRED";
+      const legacyAdminId = getLegacyAdminId();
+      const retiredAt = isRetired ? new Date().toISOString() : null;
+      const retiredDate = isRetired ? new Date().toISOString().slice(0, 10) : null;
+      const retiredReason = isRetired ? "N/A" : null;
+
       if (mode === "create") {
         if (!app.first_name.trim() || !app.last_name.trim()) {
           setError("First Name and Last Name are required");
@@ -788,7 +807,12 @@ export default function EmployeeEditorModal({
           date_hired_fsai: toNullableText(app.date_hired_fsai),
           client_position: toNullableText(app.client_position),
           detachment: toNullableText(app.detachment),
-          status: normalizeStatus(app.status),
+          status: nextStatus,
+
+          retired_date: retiredDate,
+          retired_reason: retiredReason,
+          retired_at: retiredAt,
+          retired_by: isRetired ? legacyAdminId : null,
 
           security_licensed_num: toNullableText(app.security_licensed_num),
           sss_number: toNullableText(app.sss_number),
@@ -860,8 +884,7 @@ export default function EmployeeEditorModal({
           await supabase.from("employment_history").insert(cleanJobs);
         }
 
-        const nextStatus = normalizeStatus(app.status);
-        onSaved?.(newId);
+        onSaved?.(newId, nextStatus);
         onClose();
 
         if (nextStatus === "REASSIGN") {
@@ -898,7 +921,12 @@ export default function EmployeeEditorModal({
           date_hired_fsai: toNullableText(app.date_hired_fsai),
           client_position: toNullableText(app.client_position),
           detachment: toNullableText(app.detachment),
-          status: normalizeStatus(app.status),
+          status: nextStatus,
+
+          retired_date: retiredDate,
+          retired_reason: retiredReason,
+          retired_at: retiredAt,
+          retired_by: isRetired ? legacyAdminId : null,
 
           security_licensed_num: toNullableText(app.security_licensed_num),
           sss_number: toNullableText(app.sss_number),
@@ -972,8 +1000,7 @@ export default function EmployeeEditorModal({
         }
       }
 
-      const nextStatus = normalizeStatus(app.status);
-      onSaved?.(effectiveId);
+      onSaved?.(effectiveId, nextStatus);
       onClose();
 
       if (nextStatus === "REASSIGN") {
@@ -982,7 +1009,13 @@ export default function EmployeeEditorModal({
         router.push("/Main_Modules/Retired/");
       }
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Save failed");
+      const message =
+        e instanceof Error
+          ? e.message
+          : typeof e === "object" && e && "message" in e
+            ? String((e as { message?: unknown }).message ?? "Save failed")
+            : "Save failed";
+      setError(message);
     } finally {
       setSaving(false);
     }
