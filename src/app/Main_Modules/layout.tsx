@@ -631,7 +631,10 @@ export default function MainModulesLayout({ children }: LayoutProps) {
               }
 
               supabase.auth.signOut().finally(() => {
-                window.location.href = "/Login/";
+                // Force a clean navigation to the Login route.
+                // Avoid querystring cache-busters here because they can trigger extra refresh/hydration work in
+                // Electron + static export, which has caused the login inputs to become non-interactive.
+                window.location.replace("/Login/");
               });
             }}
             className="w-full flex items-center gap-3 px-4 py-3 rounded-xl

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '../Client/SupabaseClients';
 
@@ -10,6 +10,21 @@ export default function Login() {
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const router = useRouter();
+
+  useEffect(() => {
+    setUsername('');
+    setPassword('');
+    setError('');
+    setIsLoading(false);
+
+    // Ensure legacy session is cleared when visiting Login.
+    // (Logout clears it too, but this keeps Login resilient.)
+    try {
+      localStorage.removeItem('adminSession');
+    } catch {
+      // ignore
+    }
+  }, [router]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -64,7 +79,7 @@ export default function Login() {
       };
       localStorage.setItem('adminSession', JSON.stringify(sessionData));
 
-      router.push('/Main_Modules/Dashboard/');
+      router.replace('/Main_Modules/Dashboard/');
     } catch (err: unknown) {
       console.error('Login error', err);
       setError('An unexpected error occurred. Try again.');

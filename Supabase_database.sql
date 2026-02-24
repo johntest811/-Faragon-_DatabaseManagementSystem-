@@ -194,6 +194,13 @@ CREATE TABLE public.inventory_fixed_asset (
   sec_price numeric DEFAULT 0,
   vehicle_qty numeric DEFAULT 0,
   vehicle_price numeric DEFAULT 0,
+  firearms_name text,
+  communications_name text,
+  furniture_name text,
+  office_name text,
+  sec_name text,
+  vehicle_name text,
+  last_updated_at timestamp with time zone,
   CONSTRAINT inventory_fixed_asset_pkey PRIMARY KEY (id)
 );
 CREATE TABLE public.job_titles (
