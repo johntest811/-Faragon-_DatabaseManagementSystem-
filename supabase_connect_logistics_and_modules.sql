@@ -156,3 +156,46 @@ ON CONFLICT (role_id, module_key) DO UPDATE
 SET
   can_read = EXCLUDED.can_read,
   can_write = EXCLUDED.can_write;
+
+-- 4) Inventory fixed asset: per-category quantity + price fields
+ALTER TABLE public.inventory_fixed_asset
+  ADD COLUMN IF NOT EXISTS firearms_name text,
+  ADD COLUMN IF NOT EXISTS firearms_qty numeric DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS firearms_price numeric DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS communications_name text,
+  ADD COLUMN IF NOT EXISTS communications_qty numeric DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS communications_price numeric DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS furniture_name text,
+  ADD COLUMN IF NOT EXISTS furniture_qty numeric DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS furniture_price numeric DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS office_name text,
+  ADD COLUMN IF NOT EXISTS office_qty numeric DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS office_price numeric DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS sec_name text,
+  ADD COLUMN IF NOT EXISTS sec_qty numeric DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS sec_price numeric DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS vehicle_name text,
+  ADD COLUMN IF NOT EXISTS vehicle_qty numeric DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS vehicle_price numeric DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS last_updated_at timestamptz;
+
+UPDATE public.inventory_fixed_asset
+SET
+  firearms_name = COALESCE(NULLIF(firearms_name, ''), NULLIF(firearms_ammunitions, '')),
+  communications_name = COALESCE(NULLIF(communications_name, ''), NULLIF(communications_equipment, '')),
+  furniture_name = COALESCE(NULLIF(furniture_name, ''), NULLIF(furniture_and_fixtures, '')),
+  office_name = COALESCE(NULLIF(office_name, ''), NULLIF(office_equipments_sec_equipments, '')),
+  sec_name = COALESCE(NULLIF(sec_name, ''), NULLIF(sec_equipments, '')),
+  vehicle_name = COALESCE(NULLIF(vehicle_name, ''), NULLIF(vehicle_and_motorcycle, ''))
+WHERE true;
+
+UPDATE public.inventory_fixed_asset
+SET
+  total_amount =
+    COALESCE(firearms_price, 0) +
+    COALESCE(communications_price, 0) +
+    COALESCE(furniture_price, 0) +
+    COALESCE(office_price, 0) +
+    COALESCE(sec_price, 0) +
+    COALESCE(vehicle_price, 0)
+WHERE true;

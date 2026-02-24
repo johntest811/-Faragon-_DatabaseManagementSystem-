@@ -74,67 +74,75 @@ export default function Login() {
   };
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center bg-gray-100 p-4">
-      <div className="bg-white p-8 rounded-lg shadow-lg w-full max-w-md">
-        <h1 className="text-2xl font-bold text-center text-gray-800 mb-6">Admin Login</h1>
+    <div className="min-h-screen flex items-center justify-center bg-gray-100 p-4">
+      <div className="w-full max-w-md">
+        <div className="mb-5 flex items-center justify-center gap-3 animate-pulse">
+          <span className="h-3 w-3 rounded-full bg-[#FFDA03]" />
+          <span className="text-sm font-medium text-gray-600">Secure Admin Access</span>
+        </div>
 
-        {error && (
-          <div className="bg-red-100 border-l-4 border-red-500 text-red-700 p-4 mb-6 rounded">
-            <p className="font-medium">{error}</p>
-          </div>
-        )}
+        <div className="bg-white p-8 rounded-2xl border shadow-sm">
+          <h1 className="text-2xl font-bold text-center text-gray-800 mb-2">Admin Login</h1>
+          <p className="text-sm text-gray-500 text-center mb-6">Sign in to continue to the dashboard.</p>
 
-        <form onSubmit={handleSubmit} className="space-y-6">
-          <div>
-            <label htmlFor="username" className="block text-sm font-medium text-gray-700 mb-1">
-              Username
-            </label>
-            <input
-              id="username"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              className="block w-full px-3 py-2 border rounded-md text-black"
-              placeholder="Enter your username"
-              required
-              autoComplete="username"
-            />
-          </div>
+          {error && (
+            <div className="bg-red-50 border border-red-200 text-red-700 p-3 mb-6 rounded-lg">
+              <p className="text-sm font-medium">{error}</p>
+            </div>
+          )}
 
-          <div>
-            <label htmlFor="password" className="block text-sm font-medium text-gray-700 mb-1">
-              Password
-            </label>
-            <input
-              id="password"
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="block w-full px-3 py-2 border rounded-md text-black"
-              placeholder="Enter your password"
-              required
-              autoComplete="current-password"
-            />
-          </div>
+          <form onSubmit={handleSubmit} className="space-y-5">
+            <div>
+              <label htmlFor="username" className="block text-sm font-medium text-gray-700 mb-1">
+                Username
+              </label>
+              <input
+                id="username"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                className="block w-full px-3 py-2.5 border rounded-lg text-black outline-none focus:ring-2 focus:ring-[#FFDA03]"
+                placeholder="Enter your username"
+                required
+                autoComplete="username"
+              />
+            </div>
 
-          <div>
-            <button
-              type="submit"
-              disabled={isLoading}
-              className={`w-full py-2 px-4 rounded-md text-white bg-yellow-500 ${
-                isLoading ? 'opacity-70 cursor-not-allowed' : ''
-              }`}
-            >
-              {isLoading ? 'Signing in...' : 'Sign in'}
-            </button>
-          </div>
-        </form>
+            <div>
+              <label htmlFor="password" className="block text-sm font-medium text-gray-700 mb-1">
+                Password
+              </label>
+              <input
+                id="password"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="block w-full px-3 py-2.5 border rounded-lg text-black outline-none focus:ring-2 focus:ring-[#FFDA03]"
+                placeholder="Enter your password"
+                required
+                autoComplete="current-password"
+              />
+            </div>
 
-        <p className="mt-6 text-xs text-gray-500 text-center">Authorized access only</p>
+            <div>
+              <button
+                type="submit"
+                disabled={isLoading}
+                className={`w-full py-2.5 px-4 rounded-lg text-black font-semibold bg-[#FFDA03] transition-opacity ${
+                  isLoading ? 'opacity-70 cursor-not-allowed' : 'hover:opacity-90'
+                }`}
+              >
+                {isLoading ? 'Signing in...' : 'Sign in'}
+              </button>
+            </div>
+          </form>
+
+          <p className="mt-6 text-xs text-gray-500 text-center">Authorized access only</p>
+        </div>
+
+        <p className="mt-6 text-center text-xs text-gray-500">
+          &copy; {new Date().getFullYear()} Database Management
+        </p>
       </div>
-
-      <p className="mt-8 text-center text-sm text-gray-600">
-        &copy; {new Date().getFullYear()} Database Management. All rights reserved.
-      </p>
     </div>
   );
 }

@@ -4,14 +4,15 @@ import { useEffect, useState } from "react";
 
 type SplashScreenProps = {
   onFinish?: () => void;
+  fadingOut?: boolean;
 };
 
-export default function SplashScreen({ onFinish }: SplashScreenProps) {
+export default function SplashScreen({ onFinish, fadingOut = false }: SplashScreenProps) {
   const [bgBlack, setBgBlack] = useState(false);
 
   useEffect(() => {
-    const bgTimer = setTimeout(() => setBgBlack(true), 2500);
-    const finishTimer = setTimeout(() => onFinish?.(), 5000);
+    const bgTimer = setTimeout(() => setBgBlack(true), 1200);
+    const finishTimer = setTimeout(() => onFinish?.(), 2300);
 
     return () => {
       clearTimeout(bgTimer);
@@ -21,8 +22,10 @@ export default function SplashScreen({ onFinish }: SplashScreenProps) {
 
   return (
     <div
-      className={`fixed inset-0 flex flex-col items-center justify-center transition-all duration-1000 ${
+      className={`fixed inset-0 z-50 flex flex-col items-center justify-center transition-all duration-500 ${
         bgBlack ? "bg-black" : "bg-white"
+      } ${
+        fadingOut ? "opacity-0 pointer-events-none" : "opacity-100"
       }`}
     >
       {/* LOGO */}
