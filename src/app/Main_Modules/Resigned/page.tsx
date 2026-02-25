@@ -25,6 +25,8 @@ type Applicant = {
   profile_image_path: string | null;
   is_archived: boolean | null;
   is_trashed?: boolean | null;
+  date_resigned: string | null;
+  last_duty: string | null;
 };
 
 type LicensureRow = {
@@ -139,13 +141,13 @@ function nextLicenseExpiryFromLicensureRow(r: LicensureRow | null) {
   return { ymd: next, days: daysUntil(next) };
 }
 
-export default function RetiredPage() {
+export default function ResignedPage() {
   const router = useRouter();
   const { role: sessionRole } = useAuthRole();
 
   const [viewMode, setViewMode] = useState<"grid" | "table">(() => {
     if (typeof window !== "undefined") {
-      return (localStorage.getItem("retired:viewMode") as "grid" | "table") || "grid";
+      return (localStorage.getItem("resigned:viewMode") as "grid" | "table") || "grid";
     }
     return "grid";
   });
@@ -177,7 +179,7 @@ export default function RetiredPage() {
       const { data, error: fetchError } = await supabase
         .from("applicants")
         .select(
-          "applicant_id, created_at, date_hired_fsai, first_name, middle_name, last_name, client_position, detachment, status, gender, birth_date, age, client_contact_num, client_email, profile_image_path, is_archived, is_trashed"
+          "applicant_id, created_at, date_hired_fsai, first_name, middle_name, last_name, client_position, detachment, status, gender, birth_date, age, client_contact_num, client_email, profile_image_path, is_archived, is_trashed, date_resigned, last_duty"
         )
         .eq("is_archived", false)
         .eq("is_trashed", false)
@@ -186,7 +188,7 @@ export default function RetiredPage() {
 
       if (fetchError) {
         console.error(fetchError);
-        setError(fetchError.message || "Failed to load Retired list");
+        setError(fetchError.message || "Failed to load Resigned list");
         setEmployees([]);
         setLicensureByApplicantId({});
       } else {
@@ -225,7 +227,7 @@ export default function RetiredPage() {
 
   useEffect(() => {
     try {
-      const saved = window.localStorage.getItem("retired:viewMode");
+      const saved = window.localStorage.getItem("resigned:viewMode");
       if (saved === "grid" || saved === "table") setViewMode(saved);
     } catch {
       // ignore
@@ -234,7 +236,7 @@ export default function RetiredPage() {
     fetchEmployees();
 
     const channel = supabase
-      .channel("realtime:applicants-retired")
+      .channel("realtime:applicants-resigned")
       .on("postgres_changes", { event: "*", schema: "public", table: "applicants" }, () => fetchEmployees())
       .subscribe();
 
@@ -245,7 +247,7 @@ export default function RetiredPage() {
 
   useEffect(() => {
     try {
-      window.localStorage.setItem("retired:viewMode", viewMode);
+      window.localStorage.setItem("resigned:viewMode", viewMode);
     } catch {
       // ignore
     }
@@ -254,11 +256,11 @@ export default function RetiredPage() {
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
 
-    let list = employees.filter((e) => normalizeStatus(e.status) === "RETIRED");
+    let list = employees.filter((e) => normalizeStatus(e.status) === "RESIGNED");
 
     if (genderFilter !== "ALL") {
       const gf = genderFilter.trim().toUpperCase();
-      list = list.filter((e) => (e.gender ?? "").trim().toUpperCase() === gf);
+      list = list.filter((e) => String(e.gender ?? "").toUpperCase() === gf);
     }
 
     if (detachmentFilter !== "ALL") {
@@ -270,10 +272,8 @@ export default function RetiredPage() {
     }
 
     if (hasPhotoFilter !== "ALL") {
-      list = list.filter((e) => {
-        const has = Boolean((e.profile_image_path ?? "").trim());
-        return hasPhotoFilter === "YES" ? has : !has;
-      });
+      const wantPhoto = hasPhotoFilter === "YES";
+      list = list.filter((e) => (e.profile_image_path ? true : false) === wantPhoto);
     }
 
     if (hiredMonthFilter !== "ALL") {
@@ -281,8 +281,8 @@ export default function RetiredPage() {
         if (!e.date_hired_fsai) return false;
         const hired = new Date(e.date_hired_fsai);
         if (Number.isNaN(hired.getTime())) return false;
-        const month = String(hired.getMonth() + 1).padStart(2, "0");
-        return month === hiredMonthFilter;
+        const m = String(hired.getMonth() + 1).padStart(2, "0");
+        return m === hiredMonthFilter;
       });
     }
 
@@ -299,131 +299,110 @@ export default function RetiredPage() {
 
     if (q) {
       list = list.filter((e) => {
-        const haystack = [
-          e.applicant_id,
-          shortCode(e.applicant_id),
-          getFullName(e),
-          e.client_position,
-          e.detachment,
-          normalizeStatus(e.status),
-          e.gender,
-          e.client_contact_num,
-          e.client_email,
-          e.birth_date,
-          e.age != null ? String(e.age) : "",
-        ]
-          .filter(Boolean)
-          .join(" ")
-          .toLowerCase();
-        return haystack.includes(q);
+        const name = getFullName(e).toLowerCase();
+        const det = String(e.detachment ?? "").toLowerCase();
+        const pos = String(e.client_position ?? "").toLowerCase();
+        const code = shortCode(e.applicant_id).toLowerCase();
+        return name.includes(q) || det.includes(q) || pos.includes(q) || code.includes(q);
       });
     }
 
-    const sorted = [...list].sort((a, b) => {
-      if (sortBy === "last_name") {
-        const al = (a.last_name ?? "").trim().toLowerCase();
-        const bl = (b.last_name ?? "").trim().toLowerCase();
-        const d = al.localeCompare(bl);
-        return d !== 0 ? d : getFullName(a).localeCompare(getFullName(b));
-      }
-      if (sortBy === "letter") {
-        const al = (a.last_name ?? "").trim().toLowerCase();
-        const bl = (b.last_name ?? "").trim().toLowerCase();
-        const ai = al ? al[0] : "~";
-        const bi = bl ? bl[0] : "~";
-        const d = ai.localeCompare(bi);
-        return d !== 0 ? d : getFullName(a).localeCompare(getFullName(b));
-      }
-      if (sortBy === "created_at") {
-        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
-      }
-      if (sortBy === "category") {
-        const ac = (a.client_position ?? "").toLowerCase();
-        const bc = (b.client_position ?? "").toLowerCase();
-        const d = ac.localeCompare(bc);
-        return d !== 0 ? d : getFullName(a).localeCompare(getFullName(b));
-      }
-      if (sortBy === "service") {
-        const ay = serviceYearsExact(a.date_hired_fsai, new Date());
-        const by = serviceYearsExact(b.date_hired_fsai, new Date());
-        const score = (v: number | null) => (v == null ? -1 : v);
-        const d = score(by) - score(ay);
-        return d !== 0 ? d : getFullName(a).localeCompare(getFullName(b));
-      }
-      return getFullName(a).localeCompare(getFullName(b));
-    });
+    const sorted = [...list];
+    if (sortBy === "name") {
+      sorted.sort((a, b) => getFullName(a).localeCompare(getFullName(b)));
+    } else if (sortBy === "last_name") {
+      sorted.sort((a, b) => String(a.last_name ?? "").localeCompare(String(b.last_name ?? "")));
+    } else if (sortBy === "letter") {
+      sorted.sort((a, b) => getFullName(a).localeCompare(getFullName(b)));
+    } else if (sortBy === "created_at") {
+      sorted.sort((a, b) => String(b.created_at ?? "").localeCompare(String(a.created_at ?? "")));
+    } else if (sortBy === "category") {
+      sorted.sort((a, b) => String(a.detachment ?? "").localeCompare(String(b.detachment ?? "")));
+    } else if (sortBy === "service") {
+      sorted.sort((a, b) => {
+        const ay = serviceYearsExact(a.date_hired_fsai, new Date()) ?? -1;
+        const by = serviceYearsExact(b.date_hired_fsai, new Date()) ?? -1;
+        return by - ay;
+      });
+    }
 
     return sorted;
-  }, [employees, search, sortBy, genderFilter, detachmentFilter, positionFilter, hasPhotoFilter, hiredMonthFilter, yearsServiceFilter]);
+  }, [
+    employees,
+    search,
+    sortBy,
+    genderFilter,
+    detachmentFilter,
+    positionFilter,
+    hasPhotoFilter,
+    hiredMonthFilter,
+    yearsServiceFilter,
+  ]);
 
-  const filterOptions = useMemo(() => {
-    const det = new Set<string>();
-    const pos = new Set<string>();
-    const gen = new Set<string>();
+  const detachmentOptions = useMemo(() => {
+    const set = new Set<string>();
     for (const e of employees) {
-      if (e.detachment) det.add(e.detachment);
-      if (e.client_position) pos.add(e.client_position);
-      if (e.gender) gen.add(e.gender.trim().toUpperCase());
+      const v = (e.detachment ?? "").trim();
+      if (v) set.add(v);
     }
-    return {
-      detachments: Array.from(det).sort((a, b) => a.localeCompare(b)),
-      positions: Array.from(pos).sort((a, b) => a.localeCompare(b)),
-      genders: Array.from(gen).sort((a, b) => a.localeCompare(b)),
-    };
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
   }, [employees]);
 
-  function clearFilters() {
-    setGenderFilter("ALL");
-    setDetachmentFilter("ALL");
-    setPositionFilter("ALL");
-    setHasPhotoFilter("ALL");
-		setHiredMonthFilter("ALL");
-		setYearsServiceFilter("ALL");
-  }
+  const positionOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const e of employees) {
+      const v = (e.client_position ?? "").trim();
+      if (v) set.add(v);
+    }
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [employees]);
 
-  function openEdit(employee: Applicant) {
-    setEditorApplicantId(employee.applicant_id);
+  function openEdit(e: Applicant) {
+    setEditorApplicantId(e.applicant_id);
     setEditorOpen(true);
   }
 
   return (
-    <div className="space-y-5">
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-        <div className="flex items-center gap-3 text-black">
-      <div className="relative w-full md:w-[360px]">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
-        <input
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search retired employees"
-          className="bg-white border rounded-full pl-10 pr-4 py-2 shadow-sm w-full"
-        />
-      </div>
-      <button
-        type="button"
-        onClick={() => setFiltersOpen(true)}
-        className="h-10 w-10 rounded-xl border bg-white flex items-center justify-center"
-        aria-label="Filters"
-      >
-        <SlidersHorizontal className="w-5 h-5 text-gray-700" />
-      </button>
+    <div className="p-6 space-y-4">
+      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div>
+          <div className="text-2xl font-bold text-black">Resigned</div>
+          <div className="text-sm text-gray-500">Employees with status RESIGNED.</div>
         </div>
 
-        <div className="flex items-center gap-3 justify-between md:justify-end">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative">
+            <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search name, detachment, position..."
+              className="h-10 w-64 max-w-full border rounded-xl pl-9 pr-3"
+            />
+          </div>
+
+          <button
+            onClick={() => setFiltersOpen(true)}
+            className="h-10 px-3 rounded-xl border bg-white flex items-center gap-2"
+            type="button"
+          >
+            <SlidersHorizontal className="w-4 h-4" />
+            Filters
+          </button>
+
           <div className="flex items-center gap-2">
-            <div className="text-xs text-gray-500">Sort By:</div>
-			<select
-				value={sortBy}
-        onChange={(e) => setSortBy(e.target.value as "name" | "last_name" | "letter" | "created_at" | "category" | "service")}
-				className="px-4 py-2 rounded-full bg-white text-black font-medium border border-gray-300"
-			>
-				<option value="name">Name</option>
-        <option value="last_name">Last Name</option>
-        <option value="letter">Letter (A-Z)</option>
-				<option value="created_at">Newest Date</option>
-				<option value="category">Category</option>
-				<option value="service">Years of Service</option>
-			</select>
+            <select
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value as any)}
+              className="h-10 border rounded-xl px-3 bg-white"
+            >
+              <option value="name">Name</option>
+              <option value="last_name">Last Name</option>
+              <option value="letter">Letter (A-Z)</option>
+              <option value="created_at">Newest Date</option>
+              <option value="category">Category</option>
+              <option value="service">Years of Service</option>
+            </select>
           </div>
 
           <div className="flex items-center gap-2 ml-2">
@@ -456,112 +435,102 @@ export default function RetiredPage() {
       {loading ? (
         <div className="bg-white rounded-2xl border shadow-sm p-8 text-center text-gray-500">Loading...</div>
       ) : filtered.length === 0 ? (
-        <div className="bg-white rounded-2xl border shadow-sm p-8 text-center text-gray-500">No employees in Retired.</div>
+        <div className="bg-white rounded-2xl border shadow-sm p-8 text-center text-gray-500">No employees in Resigned.</div>
       ) : viewMode === "table" ? (
-    <div className="relative overflow-x-auto rounded-2xl border bg-white">
-      <table className="w-full text-sm text-black border-separate border-spacing-y-2">
-        <thead className="sticky top-0 z-10">
-          <tr className="bg-[#FFDA03]">
-            <th className="px-4 py-3 text-left font-semibold text-black first:rounded-l-xl">Photo</th>
-            <th className="px-4 py-3 text-left font-semibold text-black">Name</th>
-            <th className="px-4 py-3 text-left font-semibold text-black">Position</th>
-            <th className="px-4 py-3 text-left font-semibold text-black">Gender</th>
-            <th className="px-4 py-3 text-left font-semibold text-black">Birth Date</th>
-            <th className="px-4 py-3 text-left font-semibold text-black">Age</th>
-            <th className="px-4 py-3 text-left font-semibold text-black">Hired Date</th>
-            <th className="px-4 py-3 text-left font-semibold text-black">Detachment</th>
-            <th className="px-4 py-3 text-left font-semibold text-black">Next License Expiry</th>
-            <th className="px-4 py-3 text-left font-semibold text-black">Status</th>
-            {sessionRole !== "employee" ? (
-              <th className="px-4 py-3 text-center font-semibold text-black last:rounded-r-xl">Actions</th>
-            ) : null}
-          </tr>
-        </thead>
-        <tbody>
-          {filtered.map((e) => {
-            const profileUrl = getProfileUrl(e.profile_image_path);
-            const next = licensureByApplicantId[e.applicant_id] || { nextYmd: null, nextDays: null };
-            const canClick = sessionRole !== "employee";
-            const detailsHref = `/Main_Modules/Employees/details/?id=${encodeURIComponent(
-              e.applicant_id
-            )}&from=${encodeURIComponent("/Main_Modules/Retired/")}`;
-
-            return (
-              <tr
-                key={e.applicant_id}
-                role={canClick ? "button" : undefined}
-                tabIndex={canClick ? 0 : -1}
-                onKeyDown={(ev) => {
-                  if (!canClick) return;
-                  if (ev.key === "Enter" || ev.key === " ") {
-                    ev.preventDefault();
-                    router.push(detailsHref);
-                  }
-                }}
-                onClick={() => {
-                  if (!canClick) return;
-                  router.push(detailsHref);
-                }}
-                className={`bg-white shadow-sm transition ${canClick ? "hover:shadow-md cursor-pointer" : ""}`}
-              >
-                <td className="px-4 py-3 rounded-l-xl">
-                  <div className="h-10 w-10 rounded-full bg-gray-100 overflow-hidden">
-                    {profileUrl ? <img src={profileUrl} alt="" className="h-full w-full object-cover" /> : null}
-                  </div>
-                </td>
-                <td className="px-4 py-3 font-semibold">{getFullName(e)}</td>
-                <td className="px-4 py-3">{e.client_position ?? "—"}</td>
-                <td className="px-4 py-3">{e.gender ?? "—"}</td>
-                <td className="px-4 py-3">{e.birth_date ?? "—"}</td>
-                <td className="px-4 py-3">{e.age ?? "—"}</td>
-                <td className="px-4 py-3">
-                  {e.date_hired_fsai ? (
-                    <div className="leading-tight">{new Date(e.date_hired_fsai).toLocaleDateString()}</div>
-                  ) : (
-                    "—"
-                  )}
-                </td>
-                <td className="px-4 py-3">{e.detachment ?? "—"}</td>
-                <td className="px-4 py-3">
-                  {next.nextYmd ? (
-                    <div className="leading-tight">
-                      <div>{next.nextYmd}</div>
-                      <div className="text-xs text-gray-500">{next.nextDays == null ? "—" : `${next.nextDays} day(s)`}</div>
-                    </div>
-                  ) : (
-                    "—"
-                  )}
-                </td>
-                <td className="px-4 py-3">
-                  <span className="px-3 py-1 rounded-full text-xs font-bold bg-gray-700 text-white">RETIRED</span>
-                </td>
+        <div className="relative overflow-x-auto rounded-2xl border bg-white">
+          <table className="w-full text-sm text-black border-separate border-spacing-y-2">
+            <thead className="sticky top-0 z-10">
+              <tr className="bg-[#FFDA03]">
+                <th className="px-4 py-3 text-left font-semibold text-black first:rounded-l-xl">Photo</th>
+                <th className="px-4 py-3 text-left font-semibold text-black">Name</th>
+                <th className="px-4 py-3 text-left font-semibold text-black">Position</th>
+                <th className="px-4 py-3 text-left font-semibold text-black">Detachment</th>
+                <th className="px-4 py-3 text-left font-semibold text-black">Date Resigned</th>
+                <th className="px-4 py-3 text-left font-semibold text-black">Last Duty</th>
+                <th className="px-4 py-3 text-left font-semibold text-black">Next License Expiry</th>
+                <th className="px-4 py-3 text-left font-semibold text-black">Status</th>
                 {sessionRole !== "employee" ? (
-                  <td className="px-4 py-3 text-center rounded-r-xl">
-                    <button
-                      onClick={(ev) => {
-                        ev.stopPropagation();
-                        openEdit(e);
-                      }}
-                      className="p-2 rounded-lg hover:bg-gray-100"
-                      title="Edit"
-                    >
-                      <Pencil className="w-5 h-5 text-gray-700" />
-                    </button>
-                  </td>
+                  <th className="px-4 py-3 text-center font-semibold text-black last:rounded-r-xl">Actions</th>
                 ) : null}
               </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
+            </thead>
+            <tbody>
+              {filtered.map((e) => {
+                const profileUrl = getProfileUrl(e.profile_image_path);
+                const next = licensureByApplicantId[e.applicant_id] || { nextYmd: null, nextDays: null };
+                const canClick = sessionRole !== "employee";
+                const detailsHref = `/Main_Modules/Employees/details/?id=${encodeURIComponent(
+                  e.applicant_id
+                )}&from=${encodeURIComponent("/Main_Modules/Resigned/")}`;
+
+                return (
+                  <tr
+                    key={e.applicant_id}
+                    role={canClick ? "button" : undefined}
+                    tabIndex={canClick ? 0 : -1}
+                    onKeyDown={(ev) => {
+                      if (!canClick) return;
+                      if (ev.key === "Enter" || ev.key === " ") {
+                        ev.preventDefault();
+                        router.push(detailsHref);
+                      }
+                    }}
+                    onClick={() => {
+                      if (!canClick) return;
+                      router.push(detailsHref);
+                    }}
+                    className={`bg-white shadow-sm transition ${canClick ? "hover:shadow-md cursor-pointer" : ""}`}
+                  >
+                    <td className="px-4 py-3 rounded-l-xl">
+                      <div className="h-10 w-10 rounded-full bg-gray-100 overflow-hidden">
+                        {profileUrl ? <img src={profileUrl} alt="" className="h-full w-full object-cover" /> : null}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 font-semibold">{getFullName(e)}</td>
+                    <td className="px-4 py-3">{e.client_position ?? "—"}</td>
+                    <td className="px-4 py-3">{e.detachment ?? "—"}</td>
+                    <td className="px-4 py-3">{e.date_resigned ? new Date(e.date_resigned).toLocaleDateString() : "—"}</td>
+                    <td className="px-4 py-3">{e.last_duty ?? "—"}</td>
+                    <td className="px-4 py-3">
+                      {next.nextYmd ? (
+                        <div className="leading-tight">
+                          <div>{next.nextYmd}</div>
+                          <div className="text-xs text-gray-500">{next.nextDays == null ? "—" : `${next.nextDays} day(s)`}</div>
+                        </div>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className="px-3 py-1 rounded-full text-xs font-bold bg-gray-700 text-white">RESIGNED</span>
+                    </td>
+                    {sessionRole !== "employee" ? (
+                      <td className="px-4 py-3 text-center rounded-r-xl">
+                        <button
+                          onClick={(ev) => {
+                            ev.stopPropagation();
+                            openEdit(e);
+                          }}
+                          className="p-2 rounded-lg hover:bg-gray-100"
+                          title="Edit"
+                        >
+                          <Pencil className="w-5 h-5 text-gray-700" />
+                        </button>
+                      </td>
+                    ) : null}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
           {filtered.map((e) => {
             const name = getFullName(e);
             const profileUrl = getProfileUrl(e.profile_image_path);
             const detailsHref = `/Main_Modules/Employees/details/?id=${encodeURIComponent(e.applicant_id)}&from=${encodeURIComponent(
-              "/Main_Modules/Retired/"
+              "/Main_Modules/Resigned/"
             )}`;
 
             return (
@@ -601,11 +570,17 @@ export default function RetiredPage() {
                     <div className="text-xs text-gray-500 truncate">
                       <span className="text-gray-500">Detachment:</span> {e.detachment ?? "—"}
                     </div>
+                    <div className="text-xs text-gray-500 truncate">
+                      <span className="text-gray-500">Date Resigned:</span> {e.date_resigned ? ymd(e.date_resigned) : "—"}
+                    </div>
+                    <div className="text-xs text-gray-500 truncate">
+                      <span className="text-gray-500">Last Duty:</span> {e.last_duty ?? "—"}
+                    </div>
                   </div>
                 </div>
 
                 <div className="mt-4 flex items-center justify-between gap-3">
-                  <span className="px-3 py-1 rounded-full text-xs font-bold bg-gray-700 text-white">RETIRED</span>
+                  <span className="px-3 py-1 rounded-full text-xs font-bold bg-gray-700 text-white">RESIGNED</span>
 
                   <div className="flex items-center gap-2">
                     {sessionRole !== "employee" ? (
@@ -629,80 +604,31 @@ export default function RetiredPage() {
         </div>
       )}
 
-    {filtersOpen ? (
-      <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
-        <div className="bg-white rounded-3xl shadow-xl max-w-lg w-full overflow-hidden">
-          <div className="px-6 py-4 border-b flex items-center justify-between">
-            <div className="text-lg font-bold text-black">Filters</div>
-            <button
-              onClick={() => setFiltersOpen(false)}
-              className="px-3 py-2 rounded-xl border bg-white"
-            >
-              Close
-            </button>
-          </div>
+      {filtersOpen ? (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl shadow-xl max-w-lg w-full overflow-hidden">
+            <div className="px-6 py-4 border-b flex items-center justify-between">
+              <div className="text-lg font-bold text-black">Filters</div>
+              <button onClick={() => setFiltersOpen(false)} className="px-3 py-2 rounded-xl border bg-white">
+                Close
+              </button>
+            </div>
 
-          <div className="p-6 space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <label className="text-sm text-black">
-                <div className="text-gray-600 mb-1">Has Photo</div>
-                <select
-                  value={hasPhotoFilter}
-                  onChange={(e) => setHasPhotoFilter(e.target.value as "ALL" | "YES" | "NO")}
-                  className="w-full border rounded-xl px-3 py-2 bg-white"
-                >
+            <div className="p-6 space-y-4">
+              <label className="text-sm text-black block">
+                <div className="text-gray-600 mb-1">Gender</div>
+                <select value={genderFilter} onChange={(e) => setGenderFilter(e.target.value)} className="w-full border rounded-xl px-3 py-2 bg-white">
                   <option value="ALL">All</option>
-                  <option value="YES">Yes</option>
-                  <option value="NO">No</option>
+                  <option value="MALE">Male</option>
+                  <option value="FEMALE">Female</option>
                 </select>
               </label>
 
-        <label className="text-sm text-black">
-          <div className="text-gray-600 mb-1">Hired Month</div>
-          <select
-            value={hiredMonthFilter}
-            onChange={(e) => setHiredMonthFilter(e.target.value)}
-            className="w-full border rounded-xl px-3 py-2 bg-white"
-          >
-            <option value="ALL">All</option>
-            <option value="01">January</option>
-            <option value="02">February</option>
-            <option value="03">March</option>
-            <option value="04">April</option>
-            <option value="05">May</option>
-            <option value="06">June</option>
-            <option value="07">July</option>
-            <option value="08">August</option>
-            <option value="09">September</option>
-            <option value="10">October</option>
-            <option value="11">November</option>
-            <option value="12">December</option>
-          </select>
-        </label>
-
-        <label className="text-sm text-black">
-          <div className="text-gray-600 mb-1">Years of Service</div>
-          <select
-            value={yearsServiceFilter}
-            onChange={(e) => setYearsServiceFilter(e.target.value as "ALL" | "<1" | "1-5" | ">5")}
-            className="w-full border rounded-xl px-3 py-2 bg-white"
-          >
-            <option value="ALL">All</option>
-            <option value="<1">&lt; 1 year</option>
-            <option value="1-5">1 – 5 years</option>
-            <option value=">5">&gt; 5 years</option>
-          </select>
-        </label>
-
-              <label className="text-sm text-black">
+              <label className="text-sm text-black block">
                 <div className="text-gray-600 mb-1">Detachment</div>
-                <select
-                  value={detachmentFilter}
-                  onChange={(e) => setDetachmentFilter(e.target.value)}
-                  className="w-full border rounded-xl px-3 py-2 bg-white"
-                >
+                <select value={detachmentFilter} onChange={(e) => setDetachmentFilter(e.target.value)} className="w-full border rounded-xl px-3 py-2 bg-white">
                   <option value="ALL">All</option>
-                  {filterOptions.detachments.map((d) => (
+                  {detachmentOptions.map((d) => (
                     <option key={d} value={d}>
                       {d}
                     </option>
@@ -710,15 +636,11 @@ export default function RetiredPage() {
                 </select>
               </label>
 
-              <label className="text-sm text-black md:col-span-2">
+              <label className="text-sm text-black block">
                 <div className="text-gray-600 mb-1">Job Title</div>
-                <select
-                  value={positionFilter}
-                  onChange={(e) => setPositionFilter(e.target.value)}
-                  className="w-full border rounded-xl px-3 py-2 bg-white"
-                >
+                <select value={positionFilter} onChange={(e) => setPositionFilter(e.target.value)} className="w-full border rounded-xl px-3 py-2 bg-white">
                   <option value="ALL">All</option>
-                  {filterOptions.positions.map((p) => (
+                  {positionOptions.map((p) => (
                     <option key={p} value={p}>
                       {p}
                     </option>
@@ -726,47 +648,75 @@ export default function RetiredPage() {
                 </select>
               </label>
 
-              <label className="text-sm text-black md:col-span-2">
-                <div className="text-gray-600 mb-1">Gender</div>
-                <select
-                  value={genderFilter}
-                  onChange={(e) => setGenderFilter(e.target.value)}
-                  className="w-full border rounded-xl px-3 py-2 bg-white"
-                >
+              <label className="text-sm text-black block">
+                <div className="text-gray-600 mb-1">Has Photo</div>
+                <select value={hasPhotoFilter} onChange={(e) => setHasPhotoFilter(e.target.value as any)} className="w-full border rounded-xl px-3 py-2 bg-white">
                   <option value="ALL">All</option>
-                  {filterOptions.genders.map((g) => (
-                    <option key={g} value={g}>
-                      {g}
-                    </option>
-                  ))}
+                  <option value="YES">Yes</option>
+                  <option value="NO">No</option>
                 </select>
               </label>
+
+              <label className="text-sm text-black block">
+                <div className="text-gray-600 mb-1">Hire Month</div>
+                <select value={hiredMonthFilter} onChange={(e) => setHiredMonthFilter(e.target.value)} className="w-full border rounded-xl px-3 py-2 bg-white">
+                  <option value="ALL">All</option>
+                  {Array.from({ length: 12 }).map((_, i) => {
+                    const mm = String(i + 1).padStart(2, "0");
+                    return (
+                      <option key={mm} value={mm}>
+                        {mm}
+                      </option>
+                    );
+                  })}
+                </select>
+              </label>
+
+              <label className="text-sm text-black block">
+                <div className="text-gray-600 mb-1">Years of Service</div>
+                <select value={yearsServiceFilter} onChange={(e) => setYearsServiceFilter(e.target.value as any)} className="w-full border rounded-xl px-3 py-2 bg-white">
+                  <option value="ALL">All</option>
+                  <option value="<1">&lt; 1</option>
+                  <option value="1-5">1 - 5</option>
+                  <option value=">5">&gt; 5</option>
+                </select>
+              </label>
+
+              <div className="flex items-center justify-between gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setGenderFilter("ALL");
+                    setDetachmentFilter("ALL");
+                    setPositionFilter("ALL");
+                    setHasPhotoFilter("ALL");
+                    setHiredMonthFilter("ALL");
+                    setYearsServiceFilter("ALL");
+                  }}
+                  className="px-4 py-2 rounded-xl border bg-white"
+                >
+                  Reset
+                </button>
+                <button type="button" onClick={() => setFiltersOpen(false)} className="px-4 py-2 rounded-xl bg-[#FFDA03] text-black font-semibold">
+                  Apply
+                </button>
+              </div>
             </div>
           </div>
-
-          <div className="px-6 pb-6 flex items-center justify-between gap-2">
-            <button onClick={clearFilters} className="px-4 py-2 rounded-xl border bg-white">
-              Clear
-            </button>
-            <button
-              onClick={() => setFiltersOpen(false)}
-              className="px-4 py-2 rounded-xl bg-[#FFDA03] text-black font-semibold"
-            >
-              Apply
-            </button>
-          </div>
         </div>
-      </div>
-    ) : null}
+      ) : null}
 
       <EmployeeEditorModal
         open={editorOpen}
         mode="edit"
         applicantId={editorApplicantId}
-        onClose={() => setEditorOpen(false)}
-        onSaved={() => {
-          // realtime subscription will refresh
+        title="Edit Employee"
+        subtitle="Update employee details, including Date Resigned and Last Duty."
+        onClose={() => {
+          setEditorOpen(false);
+          setEditorApplicantId(null);
         }}
+        onSaved={() => fetchEmployees()}
       />
     </div>
   );

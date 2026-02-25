@@ -40,7 +40,7 @@ function emailBadge(email: string | null) {
 const ALL_MENU = [
   { key: "dashboard", name: "Dashboard", href: "/Main_Modules/Dashboard/", icon: LayoutGrid },
   { key: "employees", name: "Employees", href: "/Main_Modules/Employees/", icon: Users },
-  { key: "reassign", name: "Reassign", href: "/Main_Modules/Reassign/", icon: Repeat2 },
+  { key: "reassign", name: "Resigned", href: "/Main_Modules/Resigned/", icon: Repeat2 },
   { key: "retired", name: "Retired", href: "/Main_Modules/Retired/", icon: UserX },
   { key: "archive", name: "Archive", href: "/Main_Modules/Archive/", icon: Archive },
   { key: "logistics", name: "Logistics", href: "/Main_Modules/Logistics/", icon: Truck },
@@ -285,11 +285,11 @@ export default function MainModulesLayout({ children }: LayoutProps) {
       if (hasLegacySession()) return;
 
       const { data } = await supabase.auth.getSession();
-      if (!cancelled && !data.session) window.location.href = "/Login/";
+      if (!cancelled && !data.session) window.location.href = "Components/SplashScreen.tsx";
     }
     ensureSession();
     const { data: sub } = supabase.auth.onAuthStateChange((_evt, session) => {
-      if (!session && !hasLegacySession()) window.location.href = "/Login/";
+      if (!session && !hasLegacySession()) window.location.href = "Components/SplashScreen.tsx";
     });
 
     const onStorage = (e: StorageEvent) => {
@@ -341,6 +341,7 @@ export default function MainModulesLayout({ children }: LayoutProps) {
       [
         "/Main_Modules/Client/",
         "/Main_Modules/Inventory/",
+        "/Main_Modules/Paraphernalia/",
         "/Main_Modules/Reports/",
         "/Main_Modules/Requests/",
       ].some((prefix) => pathname === prefix || pathname.startsWith(prefix));
@@ -360,6 +361,7 @@ export default function MainModulesLayout({ children }: LayoutProps) {
       [
         { key: "logistics_client", name: "Client", href: "/Main_Modules/Client/", icon: CreditCard },
         { key: "logistics_inventory", name: "Inventory", href: "/Main_Modules/Inventory/", icon: Package },
+        { key: "logistics_paraphernalia", name: "Paraphernalia", href: "/Main_Modules/Paraphernalia/", icon: Package },
         { key: "logistics_reports", name: "Reports", href: "/Main_Modules/Reports/", icon: FileText },
         { key: "logistics_requests", name: "Requests", href: "/Main_Modules/Requests/", icon: ClipboardCheck },
       ] as const,
@@ -404,6 +406,7 @@ export default function MainModulesLayout({ children }: LayoutProps) {
       "/Main_Modules/Logistics/",
       "/Main_Modules/Client/",
       "/Main_Modules/Inventory/",
+      "/Main_Modules/Paraphernalia/",
       "/Main_Modules/Reports/",
       "/Main_Modules/Requests/",
     ].some((prefix) => pathname === prefix || pathname.startsWith(prefix));
@@ -630,12 +633,13 @@ export default function MainModulesLayout({ children }: LayoutProps) {
                 // ignore
               }
 
-              supabase.auth.signOut().finally(() => {
-                // Force a clean navigation to the Login route.
-                // Avoid querystring cache-busters here because they can trigger extra refresh/hydration work in
-                // Electron + static export, which has caused the login inputs to become non-interactive.
-                window.location.replace("/Login/");
-              });
+              try {
+                sessionStorage.setItem("showLogoutSplash", "1");
+              } catch {
+                // ignore
+              }
+
+              router.replace("/Login/");
             }}
             className="w-full flex items-center gap-3 px-4 py-3 rounded-xl
               text-red-600 hover:bg-red-50 transition-all"

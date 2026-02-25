@@ -1546,10 +1546,13 @@ protocol.registerSchemesAsPrivileged([
 
 const isDev = (!app.isPackaged && process.env.ELECTRON_FORCE_PROD !== '1') || process.env.ELECTRON_DEV === '1';
 
+let mainWindow = null;
+
 function createWindow(url) {
   const win = new BrowserWindow({
     width: 1024,
     height: 768,
+    show: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -1557,10 +1560,42 @@ function createWindow(url) {
     },
   });
 
+  mainWindow = win;
+  win.on('closed', () => {
+    if (mainWindow === win) mainWindow = null;
+  });
+
+  win.once('ready-to-show', () => {
+    try {
+      win.show();
+      win.focus();
+    } catch {
+      // ignore
+    }
+  });
+
+  win.on('show', () => {
+    try {
+      win.focus();
+    } catch {
+      // ignore
+    }
+  });
+
   console.log('[electron] isDev:', isDev, 'url:', url);
   win.loadURL(url);
 
+  win.webContents.on('did-finish-load', () => {
+    try {
+      win.focus();
+    } catch {
+      // ignore
+    }
+  });
+
   // if (isDev) win.webContents.openDevTools(); //It runs with Inspect Element opened if enabled.
+
+  return win;
 }
 
 function registerAppProtocol() {

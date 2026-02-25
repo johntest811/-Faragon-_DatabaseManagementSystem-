@@ -135,7 +135,14 @@ export default function DashboardPage() {
     } catch {
       // ignore
     }
-    router.push('/Login');
+
+    try {
+      sessionStorage.setItem('showLogoutSplash', '1');
+    } catch {
+      // ignore
+    }
+
+    router.replace('/Login/');
   }
 
   return (

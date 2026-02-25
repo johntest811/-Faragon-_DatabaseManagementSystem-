@@ -70,6 +70,8 @@ CREATE TABLE public.applicants (
   retired_at timestamp with time zone,
   retired_by uuid,
   custom_id text,
+  date_resigned date,
+  last_duty text,
   CONSTRAINT applicants_pkey PRIMARY KEY (applicant_id),
   CONSTRAINT applicants_archived_by_fkey FOREIGN KEY (archived_by) REFERENCES public.admins(id),
   CONSTRAINT applicants_trashed_by_fkey FOREIGN KEY (trashed_by) REFERENCES public.admins(id),
@@ -122,6 +124,16 @@ CREATE TABLE public.contracts (
   CONSTRAINT contracts_pkey PRIMARY KEY (contract_id),
   CONSTRAINT contracts_applicant_id_fkey FOREIGN KEY (applicant_id) REFERENCES public.applicants(applicant_id)
 );
+
+  -- Assign multiple applicants to a contract.
+  CREATE TABLE public.contract_employees (
+    contract_id uuid NOT NULL,
+    applicant_id uuid NOT NULL,
+    created_at timestamp with time zone NOT NULL DEFAULT now(),
+    CONSTRAINT contract_employees_pkey PRIMARY KEY (contract_id, applicant_id),
+    CONSTRAINT contract_employees_contract_id_fkey FOREIGN KEY (contract_id) REFERENCES public.contracts(contract_id),
+    CONSTRAINT contract_employees_applicant_id_fkey FOREIGN KEY (applicant_id) REFERENCES public.applicants(applicant_id)
+  );
 CREATE TABLE public.deployment_history (
   history_id uuid NOT NULL DEFAULT gen_random_uuid(),
   deployment_id uuid NOT NULL,

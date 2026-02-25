@@ -151,6 +151,7 @@ function normalizeStatus(value: unknown) {
   if (v === "INACTIVE") return "INACTIVE";
   if (v === "REASSIGN") return "REASSIGN";
   if (v === "RETIRED") return "RETIRED";
+  if (v === "RESIGNED") return "RESIGNED";
   if (v === "ACTIVE") return "ACTIVE";
   return "ACTIVE";
 }

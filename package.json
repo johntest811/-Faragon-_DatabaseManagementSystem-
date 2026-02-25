@@ -5,7 +5,7 @@
   "author": "JOHN",
   "private": true,
   "scripts": {
-    "dev": "concurrently \"cross-env NODE_ENV=development next dev\" \"wait-on http://localhost:3000 && cross-env ELECTRON_DEV=1 NODE_ENV=development electron .\"",
+    "dev": "node ./scripts/clean-next-dev-lock.mjs && concurrently \"cross-env NODE_ENV=development next dev -p 3000\" \"wait-on http://localhost:3000 && cross-env ELECTRON_DEV=1 NODE_ENV=development electron .\"",
     "build": "node ./node_modules/next/dist/bin/next build",
     "start": "node ./node_modules/next/dist/bin/next start",
     "lint": "eslint",

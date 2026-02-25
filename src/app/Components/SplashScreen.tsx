@@ -9,14 +9,25 @@ type SplashScreenProps = {
 
 export default function SplashScreen({ onFinish, fadingOut = false }: SplashScreenProps) {
   const [bgBlack, setBgBlack] = useState(false);
+  const [progress, setProgress] = useState(0);
 
   useEffect(() => {
+    const started = Date.now();
+    const totalMs = 2300;
     const bgTimer = setTimeout(() => setBgBlack(true), 1200);
-    const finishTimer = setTimeout(() => onFinish?.(), 2300);
+
+    const interval = setInterval(() => {
+      const elapsed = Date.now() - started;
+      const pct = Math.max(0, Math.min(100, (elapsed / totalMs) * 100));
+      setProgress(pct);
+    }, 30);
+
+    const finishTimer = setTimeout(() => onFinish?.(), totalMs);
 
     return () => {
       clearTimeout(bgTimer);
       clearTimeout(finishTimer);
+      clearInterval(interval);
     };
   }, [onFinish]);
 
@@ -24,60 +35,50 @@ export default function SplashScreen({ onFinish, fadingOut = false }: SplashScre
     <div
       className={`fixed inset-0 z-50 flex flex-col items-center justify-center transition-all duration-500 ${
         bgBlack ? "bg-black" : "bg-white"
-      } ${
-        fadingOut ? "opacity-0 pointer-events-none" : "opacity-100"
-      }`}
+      } ${fadingOut ? "opacity-0 pointer-events-none" : "opacity-100"}`}
     >
-      {/* LOGO */}
-      <img
-        src="/logo.png"
-        alt="Faragon Logo"
-        className={`w-44 mb-8 transition-transform duration-700 ease-out ${
-          bgBlack ? "animate-logo-bounce" : "scale-95"
-        }`}
-      />
+      <div className="mb-7 relative h-40 w-40 md:h-48 md:w-48 overflow-hidden">
+        <img
+          src="/logo.png"
+          alt="Faragon Logo Base"
+          className="absolute inset-0 h-full w-full object-contain opacity-20"
+        />
+        <div
+          className="absolute inset-0 overflow-hidden transition-all duration-75"
+          style={{ clipPath: `inset(${100 - progress}% 0 0 0)` }}
+        >
+          <img
+            src="/logo.png"
+            alt="Faragon Logo"
+            className="h-full w-full object-contain"
+          />
+        </div>
+      </div>
 
-      {/* APP NAME */}
       <h1
-        className={`text-1xl uppercase tracking-[0.3em] mb-4 font-faragon transition-colors duration-700 ${
-          bgBlack ? "text-white" : "text-red-600"
-        }`}
+        className="text-center text-sm md:text-base uppercase tracking-[0.28em] font-faragon px-4"
+        style={{
+          backgroundImage: bgBlack
+            ? `linear-gradient(to right, #ffffff ${progress}%, rgba(255,255,255,0.25) ${progress}%)`
+            : `linear-gradient(to right, #b91c1c ${progress}%, rgba(185,28,28,0.30) ${progress}%)`,
+          WebkitBackgroundClip: "text",
+          color: "transparent",
+          transition: "background-image 120ms linear",
+        }}
       >
         FARAGON SECURITY AGENCY INC.
       </h1>
 
-      {/* DOT LOADER */}
-      <div className="flex gap-3 mt-2">
-        {Array.from({ length: 5 }).map((_, i) => (
-          <span
-            key={i}
-            className={`h-3 w-3 rounded-full transition-colors duration-700 ${
-              bgBlack ? "bg-white" : "bg-red-500"
-            } animate-pulse`}
-            style={{ animationDelay: `${i * 0.2}s` }}
-          />
-        ))}
+      <div className="mt-5 w-64 max-w-[85vw] h-2 rounded-full bg-white/20 overflow-hidden">
+        <div
+          className={`h-full transition-all duration-75 ${bgBlack ? "bg-white" : "bg-red-600"}`}
+          style={{ width: `${progress}%` }}
+        />
       </div>
 
       <style jsx>{`
-        @keyframes logo-bounce {
-          0% {
-            transform: scale(0.9);
-          }
-          60% {
-            transform: scale(1.18);
-          }
-          80% {
-            transform: scale(0.98);
-          }
-          100% {
-            transform: scale(1);
-          }
-        }
-
-        .animate-logo-bounce {
-          animation: logo-bounce 0.8s cubic-bezier(0.34, 1.56, 0.64, 1);
-          filter: drop-shadow(0 0 30px rgba(255, 255, 255, 0.6));
+        :global(body) {
+          overflow: hidden;
         }
       `}</style>
     </div>

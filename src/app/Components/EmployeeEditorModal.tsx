@@ -36,6 +36,9 @@ type ApplicantDraft = {
   detachment: string;
   status: string;
 
+  date_resigned: string;
+  last_duty: string;
+
   security_licensed_num: string;
   sss_number: string;
   pagibig_number: string;
@@ -107,6 +110,8 @@ type ApplicantRow = {
   client_position: string | null;
   detachment: string | null;
   status: string | null;
+  date_resigned: string | null;
+  last_duty: string | null;
   security_licensed_num: string | null;
   sss_number: string | null;
   pagibig_number: string | null;
@@ -194,6 +199,9 @@ function emptyApplicantDraft(): ApplicantDraft {
     detachment: "",
     status: "ACTIVE",
 
+    date_resigned: "",
+    last_duty: "",
+
     security_licensed_num: "",
     sss_number: "",
     pagibig_number: "",
@@ -260,6 +268,7 @@ function normalizeStatus(value: string | null | undefined) {
   if (v === "INACTIVE") return "INACTIVE";
   if (v === "REASSIGN") return "REASSIGN";
   if (v === "RETIRED") return "RETIRED";
+  if (v === "RESIGNED") return "RESIGNED";
   return "ACTIVE";
 }
 
@@ -536,7 +545,7 @@ export default function EmployeeEditorModal({
         const aRes = await supabase
           .from("applicants")
           .select(
-            "applicant_id, custom_id, first_name, middle_name, last_name, gender, birth_date, age, client_contact_num, client_email, present_address, province_address, emergency_contact_person, emergency_contact_num, education_attainment, date_hired_fsai, client_position, detachment, status, security_licensed_num, sss_number, pagibig_number, philhealth_number, tin_number, profile_image_path, sss_certain_path, tin_id_path, pag_ibig_id_path, philhealth_id_path, security_license_path"
+            "applicant_id, custom_id, first_name, middle_name, last_name, gender, birth_date, age, client_contact_num, client_email, present_address, province_address, emergency_contact_person, emergency_contact_num, education_attainment, date_hired_fsai, client_position, detachment, status, date_resigned, last_duty, security_licensed_num, sss_number, pagibig_number, philhealth_number, tin_number, profile_image_path, sss_certain_path, tin_id_path, pag_ibig_id_path, philhealth_id_path, security_license_path"
           )
           .eq("applicant_id", idToLoad)
           .maybeSingle();
@@ -625,6 +634,9 @@ export default function EmployeeEditorModal({
           client_position: a?.client_position ?? "",
           detachment: a?.detachment ?? "",
           status: normalizeStatus(a?.status),
+
+          date_resigned: normalizeDateInput(a?.date_resigned ?? null),
+          last_duty: a?.last_duty ?? "",
 
           security_licensed_num: a?.security_licensed_num ?? "",
           sss_number: a?.sss_number ?? "",
@@ -809,6 +821,9 @@ export default function EmployeeEditorModal({
           detachment: toNullableText(app.detachment),
           status: nextStatus,
 
+          date_resigned: toNullableText(app.date_resigned),
+          last_duty: toNullableText(app.last_duty),
+
           retired_date: retiredDate,
           retired_reason: retiredReason,
           retired_at: retiredAt,
@@ -889,6 +904,8 @@ export default function EmployeeEditorModal({
 
         if (nextStatus === "REASSIGN") {
           router.push("/Main_Modules/Reassign/");
+        } else if (nextStatus === "RESIGNED") {
+          router.push("/Main_Modules/Resigned/");
         } else if (nextStatus === "RETIRED") {
           router.push("/Main_Modules/Retired/");
         }
@@ -922,6 +939,9 @@ export default function EmployeeEditorModal({
           client_position: toNullableText(app.client_position),
           detachment: toNullableText(app.detachment),
           status: nextStatus,
+
+          date_resigned: toNullableText(app.date_resigned),
+          last_duty: toNullableText(app.last_duty),
 
           retired_date: retiredDate,
           retired_reason: retiredReason,
@@ -1005,6 +1025,8 @@ export default function EmployeeEditorModal({
 
       if (nextStatus === "REASSIGN") {
         router.push("/Main_Modules/Reassign/");
+      } else if (nextStatus === "RESIGNED") {
+        router.push("/Main_Modules/Resigned/");
       } else if (nextStatus === "RETIRED") {
         router.push("/Main_Modules/Retired/");
       }
@@ -1315,12 +1337,15 @@ export default function EmployeeEditorModal({
                           ? "border-red-300"
                           : normalizeStatus(app.status) === "REASSIGN"
                           ? "border-orange-300"
+                          : normalizeStatus(app.status) === "RESIGNED"
+                          ? "border-orange-300"
                           : "border-gray-300"
                       }`}
                     >
                       <option value="ACTIVE">ACTIVE</option>
                       <option value="INACTIVE">INACTIVE</option>
                       <option value="REASSIGN">REASSIGN</option>
+                      <option value="RESIGNED">RESIGNED</option>
                       <option value="RETIRED">RETIRED</option>
                     </select>
                     <span
@@ -1331,10 +1356,32 @@ export default function EmployeeEditorModal({
                           ? "bg-red-500"
                           : normalizeStatus(app.status) === "REASSIGN"
                           ? "bg-orange-500"
+                          : normalizeStatus(app.status) === "RESIGNED"
+                          ? "bg-orange-500"
                           : "bg-gray-500"
                       }`}
                     />
                   </div>
+                </label>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <label className="text-sm text-black">
+                  <div className="text-gray-600 mb-1">Date Resigned</div>
+                  <input
+                    type="date"
+                    value={app.date_resigned}
+                    onChange={(e) => setApp((d) => ({ ...d, date_resigned: e.target.value }))}
+                    className="w-full border rounded-xl px-3 py-2"
+                  />
+                </label>
+                <label className="text-sm text-black">
+                  <div className="text-gray-600 mb-1">Last Duty</div>
+                  <input
+                    value={app.last_duty}
+                    onChange={(e) => setApp((d) => ({ ...d, last_duty: e.target.value }))}
+                    className="w-full border rounded-xl px-3 py-2"
+                  />
                 </label>
               </div>
 

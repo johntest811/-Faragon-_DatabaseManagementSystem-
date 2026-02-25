@@ -8,7 +8,7 @@ export default function RootPage() {
 
   useEffect(() => {
     // Redirect to home page
-    router.push("/Login");
+    router.replace("/Login/");
   }, [router]);
 
   return (
