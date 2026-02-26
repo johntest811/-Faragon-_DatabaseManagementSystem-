@@ -122,6 +122,13 @@ function ymd(d: string | null) {
   return dt.toISOString().slice(0, 10);
 }
 
+function displayMaybeDate(value: string | null) {
+  if (!value) return "—";
+  const dt = new Date(value);
+  if (!Number.isNaN(dt.getTime())) return dt.toLocaleDateString();
+  return value;
+}
+
 function daysUntil(dateYmd: string | null) {
   if (!dateYmd) return null;
   const today = new Date();
@@ -363,38 +370,39 @@ export default function ResignedPage() {
   }
 
   return (
-    <div className="p-6 space-y-4">
-      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-        <div>
-          <div className="text-2xl font-bold text-black">Resigned</div>
-          <div className="text-sm text-gray-500">Employees with status RESIGNED.</div>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="relative">
-            <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
+    <div className="space-y-5">
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+        <div className="flex items-center gap-3 text-black">
+          <div className="relative w-full md:w-[360px]">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
             <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search name, detachment, position..."
-              className="h-10 w-64 max-w-full border rounded-xl pl-9 pr-3"
+              placeholder="Search resigned employees"
+              className="bg-white border rounded-full pl-10 pr-4 py-2 shadow-sm w-full"
             />
           </div>
-
           <button
-            onClick={() => setFiltersOpen(true)}
-            className="h-10 px-3 rounded-xl border bg-white flex items-center gap-2"
             type="button"
+            onClick={() => setFiltersOpen(true)}
+            className="h-10 w-10 rounded-xl border bg-white flex items-center justify-center"
+            aria-label="Filters"
           >
-            <SlidersHorizontal className="w-4 h-4" />
-            Filters
+            <SlidersHorizontal className="w-5 h-5 text-gray-700" />
           </button>
+        </div>
 
+        <div className="flex items-center gap-3 justify-between md:justify-end">
           <div className="flex items-center gap-2">
+            <div className="text-xs text-gray-500">Sort By:</div>
             <select
               value={sortBy}
-              onChange={(e) => setSortBy(e.target.value as any)}
-              className="h-10 border rounded-xl px-3 bg-white"
+              onChange={(e) =>
+                setSortBy(
+                  e.target.value as "name" | "last_name" | "letter" | "created_at" | "category" | "service"
+                )
+              }
+              className="px-4 py-2 rounded-full bg-white text-black font-medium border border-gray-300"
             >
               <option value="name">Name</option>
               <option value="last_name">Last Name</option>
@@ -490,7 +498,7 @@ export default function ResignedPage() {
                     <td className="px-4 py-3">{e.client_position ?? "—"}</td>
                     <td className="px-4 py-3">{e.detachment ?? "—"}</td>
                     <td className="px-4 py-3">{e.date_resigned ? new Date(e.date_resigned).toLocaleDateString() : "—"}</td>
-                    <td className="px-4 py-3">{e.last_duty ?? "—"}</td>
+                    <td className="px-4 py-3">{displayMaybeDate(e.last_duty)}</td>
                     <td className="px-4 py-3">
                       {next.nextYmd ? (
                         <div className="leading-tight">
@@ -574,7 +582,7 @@ export default function ResignedPage() {
                       <span className="text-gray-500">Date Resigned:</span> {e.date_resigned ? ymd(e.date_resigned) : "—"}
                     </div>
                     <div className="text-xs text-gray-500 truncate">
-                      <span className="text-gray-500">Last Duty:</span> {e.last_duty ?? "—"}
+                      <span className="text-gray-500">Last Duty:</span> {displayMaybeDate(e.last_duty)}
                     </div>
                   </div>
                 </div>

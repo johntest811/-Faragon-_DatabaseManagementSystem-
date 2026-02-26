@@ -32,6 +32,27 @@ type LocalNotificationPrefs = {
 	expiredWithinDays: number;
 };
 
+type RecipientRow = {
+	id: number;
+	email: string;
+	is_active: boolean;
+	notes: string | null;
+	created_at: string;
+};
+
+type OtherExpirationType = "CAR_OCR" | "CAR_REGISTRATION" | "DRIVERS_LICENSE";
+
+type OtherExpirationRow = {
+	id: number;
+	item_name: string;
+	expiration_type: OtherExpirationType;
+	expires_on: string;
+	recipient_email: string | null;
+	notes: string | null;
+	is_active: boolean;
+	created_at: string;
+};
+
 type ExpiringRow = {
 	applicant_id: string;
 	last_name: string | null;
@@ -40,7 +61,7 @@ type ExpiringRow = {
 	client_email: string | null;
 	client_contact_num: string | null;
 	expires_on: string;
-	license_type: "DRIVER_LICENSE" | "SECURITY_LICENSE" | "INSURANCE";
+	license_type: string;
 	days_until_expiry: number;
 };
 
@@ -101,6 +122,7 @@ function getElectronAPI() {
 				loadNotificationConfig?: () => Promise<{
 					email: EmailSettingsRow | null;
 					preferences: PreferencesRow | null;
+					recipients?: string[];
 					localPrefs?: LocalNotificationPrefs;
 					env?: { hasGmailUser?: boolean; hasGmailPass?: boolean; gmailUser?: string | null };
 				}>;
@@ -169,6 +191,9 @@ function buildTemplateNotes(subject: string, bodyHtml: string) {
 	if (!sub && !body) return null;
 	return JSON.stringify({ subject: sub || null, bodyHtml: body || null });
 }
+
+const DEFAULT_NOTICE_SUBJECT = "NOTICE: LICENSE EXPIRATION ALERT ({count})";
+const DEFAULT_NOTICE_BODY = `<div><b>To all concerned,</b></div><div>This serves as a notice that the records listed below are nearing expiration. Please coordinate renewal processing immediately.</div>`;
 
 function errorMessage(e: unknown) {
 	if (e instanceof Error) return e.message;
@@ -435,6 +460,17 @@ export default function SettingsPage() {
 	const [runSummary, setRunSummary] = useState<string>("");
 	const [envHasGmailUser, setEnvHasGmailUser] = useState<boolean | null>(null);
 	const [envHasGmailPass, setEnvHasGmailPass] = useState<boolean | null>(null);
+	const [recipientRows, setRecipientRows] = useState<RecipientRow[]>([]);
+	const [recipientEmail, setRecipientEmail] = useState("");
+	const [recipientNotes, setRecipientNotes] = useState("");
+	const [recipientSaving, setRecipientSaving] = useState(false);
+	const [otherRows, setOtherRows] = useState<OtherExpirationRow[]>([]);
+	const [otherSaving, setOtherSaving] = useState(false);
+	const [otherItemName, setOtherItemName] = useState("");
+	const [otherType, setOtherType] = useState<OtherExpirationType>("CAR_OCR");
+	const [otherExpiresOn, setOtherExpiresOn] = useState("");
+	const [otherRecipientEmail, setOtherRecipientEmail] = useState("");
+	const [otherNotes, setOtherNotes] = useState("");
 
 	// Local-only notification prefs (desktop)
 	const [includeExpired, setIncludeExpired] = useState(false);
@@ -456,8 +492,8 @@ export default function SettingsPage() {
 			setGmailUser(email.gmail_user ?? safeText((cfg as any)?.env?.gmailUser) ?? "");
 			setIsActive(Boolean(email.is_active));
 			const tpl = parseTemplateNotes(email.notes);
-			setEmailSubject(tpl.subject);
-			setEmailBodyHtml(tpl.bodyHtml);
+			setEmailSubject(tpl.subject || DEFAULT_NOTICE_SUBJECT);
+			setEmailBodyHtml(tpl.bodyHtml || DEFAULT_NOTICE_BODY);
 			setDbHasStoredPassword(Boolean(email.gmail_app_password));
 			setDbStoredPasswordCache(email.gmail_app_password ?? "");
 			setGmailAppPassword("");
@@ -468,8 +504,8 @@ export default function SettingsPage() {
 			setDbHasStoredPassword(false);
 			setDbStoredPasswordCache("");
 			setGmailUser(safeText((cfg as any)?.env?.gmailUser) || "");
-			setEmailSubject("");
-			setEmailBodyHtml("");
+			setEmailSubject(DEFAULT_NOTICE_SUBJECT);
+			setEmailBodyHtml(DEFAULT_NOTICE_BODY);
 			setTestToEmail(safeText((cfg as any)?.env?.gmailUser) || "");
 		}
 
@@ -494,6 +530,132 @@ export default function SettingsPage() {
 			setLogs(res?.rows ?? []);
 		} finally {
 			setLogsLoading(false);
+		}
+	}
+
+	async function loadRecipientRows() {
+		try {
+			const res = await supabase
+				.from("notification_recipients")
+				.select("id, email, is_active, notes, created_at")
+				.order("created_at", { ascending: true });
+			if (res.error) throw res.error;
+			setRecipientRows((res.data as RecipientRow[]) ?? []);
+		} catch (e: unknown) {
+			setError(errorMessage(e));
+		}
+	}
+
+	async function loadOtherExpirationRows() {
+		try {
+			const res = await supabase
+				.from("other_expiration_items")
+				.select("id, item_name, expiration_type, expires_on, recipient_email, notes, is_active, created_at")
+				.order("expires_on", { ascending: true })
+				.limit(300);
+			if (res.error) throw res.error;
+			setOtherRows((res.data as OtherExpirationRow[]) ?? []);
+		} catch (e: unknown) {
+			setError(errorMessage(e));
+		}
+	}
+
+	async function addRecipient() {
+		setRecipientSaving(true);
+		setError("");
+		setSuccess("");
+		try {
+			const email = safeText(recipientEmail).toLowerCase();
+			if (!email) throw new Error("Recipient email is required.");
+			const ins = await supabase.from("notification_recipients").insert({
+				email,
+				notes: safeText(recipientNotes) || null,
+				is_active: true,
+			});
+			if (ins.error) throw ins.error;
+			setRecipientEmail("");
+			setRecipientNotes("");
+			setSuccess("Recipient added.");
+			await loadRecipientRows();
+		} catch (e: unknown) {
+			setError(errorMessage(e));
+		} finally {
+			setRecipientSaving(false);
+		}
+	}
+
+	async function toggleRecipient(id: number, isActive: boolean) {
+		try {
+			const upd = await supabase.from("notification_recipients").update({ is_active: isActive }).eq("id", id);
+			if (upd.error) throw upd.error;
+			await loadRecipientRows();
+		} catch (e: unknown) {
+			setError(errorMessage(e));
+		}
+	}
+
+	async function removeRecipient(id: number) {
+		try {
+			const ok = window.confirm("Remove this recipient email?");
+			if (!ok) return;
+			const del = await supabase.from("notification_recipients").delete().eq("id", id);
+			if (del.error) throw del.error;
+			await loadRecipientRows();
+		} catch (e: unknown) {
+			setError(errorMessage(e));
+		}
+	}
+
+	async function addOtherExpiration() {
+		setOtherSaving(true);
+		setError("");
+		setSuccess("");
+		try {
+			const itemName = safeText(otherItemName);
+			const expiresOn = safeText(otherExpiresOn);
+			if (!itemName) throw new Error("Item name is required.");
+			if (!expiresOn) throw new Error("Expiration date is required.");
+			const ins = await supabase.from("other_expiration_items").insert({
+				item_name: itemName,
+				expiration_type: otherType,
+				expires_on: expiresOn,
+				recipient_email: safeText(otherRecipientEmail).toLowerCase() || null,
+				notes: safeText(otherNotes) || null,
+				is_active: true,
+			});
+			if (ins.error) throw ins.error;
+			setOtherItemName("");
+			setOtherExpiresOn("");
+			setOtherRecipientEmail("");
+			setOtherNotes("");
+			setSuccess("Other expiration item added.");
+			await loadOtherExpirationRows();
+		} catch (e: unknown) {
+			setError(errorMessage(e));
+		} finally {
+			setOtherSaving(false);
+		}
+	}
+
+	async function toggleOtherExpiration(id: number, isActive: boolean) {
+		try {
+			const upd = await supabase.from("other_expiration_items").update({ is_active: isActive }).eq("id", id);
+			if (upd.error) throw upd.error;
+			await loadOtherExpirationRows();
+		} catch (e: unknown) {
+			setError(errorMessage(e));
+		}
+	}
+
+	async function removeOtherExpiration(id: number) {
+		try {
+			const ok = window.confirm("Remove this expiration record?");
+			if (!ok) return;
+			const del = await supabase.from("other_expiration_items").delete().eq("id", id);
+			if (del.error) throw del.error;
+			await loadOtherExpirationRows();
+		} catch (e: unknown) {
+			setError(errorMessage(e));
 		}
 	}
 
@@ -559,8 +721,8 @@ export default function SettingsPage() {
 						setGmailUser(email.gmail_user ?? "");
 						setIsActive(Boolean(email.is_active));
 						const tpl = parseTemplateNotes(email.notes);
-						setEmailSubject(tpl.subject);
-						setEmailBodyHtml(tpl.bodyHtml);
+						setEmailSubject(tpl.subject || DEFAULT_NOTICE_SUBJECT);
+						setEmailBodyHtml(tpl.bodyHtml || DEFAULT_NOTICE_BODY);
 						setDbHasStoredPassword(Boolean(email.gmail_app_password));
 						setDbStoredPasswordCache(email.gmail_app_password ?? "");
 						setGmailAppPassword("");
@@ -569,8 +731,8 @@ export default function SettingsPage() {
 					} else {
 						setDbHasStoredPassword(false);
 						setDbStoredPasswordCache("");
-						setEmailSubject("");
-						setEmailBodyHtml("");
+						setEmailSubject(DEFAULT_NOTICE_SUBJECT);
+						setEmailBodyHtml(DEFAULT_NOTICE_BODY);
 					}
 
 					const pref = (prefRes.data as PreferencesRow | null) ?? null;
@@ -600,13 +762,71 @@ export default function SettingsPage() {
 		};
 	}, []);
 
+	useEffect(() => {
+		void loadRecipientRows();
+		void loadOtherExpirationRows();
+	}, []);
+
 	async function loadPreview() {
+		function daysUntilYmd(ymdValue: string) {
+			if (!ymdValue) return null;
+			const [y, m, d] = ymdValue.split("-").map((n) => Number(n));
+			const target = new Date(y, m - 1, d, 0, 0, 0, 0);
+			const today = new Date();
+			const t0 = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 0, 0, 0, 0);
+			return Math.round((target.getTime() - t0.getTime()) / (24 * 60 * 60 * 1000));
+		}
+
+		async function loadOtherPreviewRows(daysBeforeExpiry: number, allowExpired: boolean, expiredWindow: number) {
+			const out: ExpiringRow[] = [];
+			const res = await supabase
+				.from("other_expiration_items")
+				.select("id, item_name, expiration_type, expires_on, recipient_email, is_active")
+				.eq("is_active", true)
+				.limit(300);
+			if (res.error) throw res.error;
+
+			for (const row of (res.data as Array<{ id: number; item_name: string; expiration_type: string; expires_on: string; recipient_email: string | null }> | null) ?? []) {
+				const exp = safeText(row.expires_on);
+				const du = daysUntilYmd(exp);
+				if (
+					exp &&
+					du !== null &&
+					((du >= 0 && du <= daysBeforeExpiry) || (allowExpired && du < 0 && Math.abs(du) <= expiredWindow))
+				) {
+					out.push({
+						applicant_id: `other:${row.id}`,
+						last_name: null,
+						first_name: row.item_name,
+						middle_name: null,
+						client_email: row.recipient_email,
+						client_contact_num: null,
+						expires_on: exp,
+						license_type: row.expiration_type,
+						days_until_expiry: du,
+					});
+				}
+			}
+
+			return out;
+		}
+
 		setPreviewLoading(true);
 		setError("");
 		try {
+			const daysBeforeExpiry = Number(daysBeforeNum);
+			if (!Number.isFinite(daysBeforeExpiry)) throw new Error("Days before expiry must be a number.");
+			const allowExpired = Boolean(includeExpired);
+			const expiredWindow = Math.max(1, Math.min(365, Number(expiredWithinDays || 7)));
+			const otherRows = await loadOtherPreviewRows(daysBeforeExpiry, allowExpired, expiredWindow);
+
 			if (electronAPI?.notifications?.previewExpiring) {
 				const r = await electronAPI.notifications.previewExpiring({ limit: 25 });
-				setPreview((r?.rows as ExpiringRow[]) ?? []);
+				const merged = [
+					...((r?.rows as ExpiringRow[]) ?? []),
+					...otherRows,
+				].sort((a, b) => a.days_until_expiry - b.days_until_expiry);
+				setPreview(merged.slice(0, 25));
 				return;
 			}
 
@@ -634,8 +854,7 @@ export default function SettingsPage() {
 				}
 			}
 
-			const daysBeforeExpiry = Number(daysBeforeNum);
-			if (!Number.isFinite(daysBeforeExpiry)) throw new Error("Days before expiry must be a number.");
+
 			const include = {
 				driver: Boolean(includeDriver),
 				security: Boolean(includeSecurity),
@@ -648,18 +867,7 @@ export default function SettingsPage() {
 				return "";
 			}
 
-			function daysUntilYmd(ymd: string) {
-				if (!ymd) return null;
-				const [y, m, d] = ymd.split("-").map((n) => Number(n));
-				const target = new Date(y, m - 1, d, 0, 0, 0, 0);
-				const today = new Date();
-				const t0 = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 0, 0, 0, 0);
-				return Math.round((target.getTime() - t0.getTime()) / (24 * 60 * 60 * 1000));
-			}
-
 			const out: ExpiringRow[] = [];
-			const allowExpired = Boolean(includeExpired);
-			const expiredWindow = Math.max(1, Math.min(365, Number(expiredWithinDays || 7)));
 			for (const row of licRows) {
 				const a = applicantsById.get(row.applicant_id);
 				const base = {
@@ -706,8 +914,8 @@ export default function SettingsPage() {
 				}
 			}
 
-			out.sort((a, b) => a.days_until_expiry - b.days_until_expiry);
-			setPreview(out.slice(0, 25));
+			const merged = [...out, ...otherRows].sort((a, b) => a.days_until_expiry - b.days_until_expiry);
+			setPreview(merged.slice(0, 25));
 		} catch (e: unknown) {
 			setError(errorMessage(e));
 		} finally {
@@ -1107,7 +1315,7 @@ export default function SettingsPage() {
 							<input
 								value={emailSubject}
 								onChange={(e) => setEmailSubject(e.target.value)}
-								placeholder="Expiring Licensure Warning ({count})"
+								placeholder="NOTICE: LICENSE EXPIRATION ALERT ({count})"
 								className="w-full rounded-xl border px-3 py-2 text-black"
 							/>
 							<div className="text-xs text-gray-500 mt-1">
@@ -1353,6 +1561,129 @@ export default function SettingsPage() {
 								className="w-full rounded-xl border px-3 py-2 text-black"
 							/>
 							{runSummary ? <div className="text-xs text-gray-600 mt-2">Last run: {runSummary}</div> : null}
+						</div>
+
+						<div className="rounded-2xl border p-4 space-y-3">
+							<div className="font-semibold text-black">Notification recipients</div>
+							<div className="text-xs text-gray-500">
+								When recipient emails are listed here, all notification sends go to these emails.
+							</div>
+							<div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+								<input
+									value={recipientEmail}
+									onChange={(e) => setRecipientEmail(e.target.value)}
+									placeholder="notify-team@example.com"
+									className="rounded-xl border px-3 py-2 text-black"
+								/>
+								<input
+									value={recipientNotes}
+									onChange={(e) => setRecipientNotes(e.target.value)}
+									placeholder="Notes (optional)"
+									className="rounded-xl border px-3 py-2 text-black"
+								/>
+								<button
+									onClick={() => void addRecipient()}
+									disabled={recipientSaving}
+									className="rounded-xl bg-[#FFDA03] px-3 py-2 text-black font-medium disabled:opacity-50"
+								>
+									{recipientSaving ? "Adding..." : "Add recipient"}
+								</button>
+							</div>
+							<div className="overflow-auto rounded-xl border">
+								<table className="w-full text-sm text-black">
+									<thead>
+										<tr className="border-b text-left">
+											<th className="py-2 px-3">Email</th>
+											<th className="py-2 px-3">Active</th>
+											<th className="py-2 px-3">Action</th>
+										</tr>
+									</thead>
+									<tbody>
+										{recipientRows.length ? (
+											recipientRows.map((row) => (
+												<tr key={row.id} className="border-b">
+													<td className="py-2 px-3">{row.email}</td>
+													<td className="py-2 px-3">
+														<input
+															type="checkbox"
+															checked={row.is_active}
+															onChange={(e) => void toggleRecipient(row.id, e.target.checked)}
+														/>
+													</td>
+													<td className="py-2 px-3">
+														<button onClick={() => void removeRecipient(row.id)} className="rounded-lg border px-2 py-1">
+															Remove
+														</button>
+													</td>
+												</tr>
+											))
+										) : (
+											<tr>
+												<td colSpan={3} className="py-3 px-3 text-gray-500">No recipient emails configured.</td>
+											</tr>
+										)}
+									</tbody>
+								</table>
+							</div>
+						</div>
+
+						<div className="rounded-2xl border p-4 space-y-3">
+							<div className="font-semibold text-black">Other expiration records</div>
+							<div className="text-xs text-gray-500">Manage car OCR, car registration, and driver’s license expiration items.</div>
+							<div className="grid grid-cols-1 md:grid-cols-5 gap-2">
+								<input value={otherItemName} onChange={(e) => setOtherItemName(e.target.value)} placeholder="Item name" className="rounded-xl border px-3 py-2 text-black" />
+								<select value={otherType} onChange={(e) => setOtherType(e.target.value as OtherExpirationType)} className="rounded-xl border px-3 py-2 text-black">
+									<option value="CAR_OCR">Car OCR</option>
+									<option value="CAR_REGISTRATION">Car Registration</option>
+									<option value="DRIVERS_LICENSE">Driver&apos;s License</option>
+								</select>
+								<input type="date" value={otherExpiresOn} onChange={(e) => setOtherExpiresOn(e.target.value)} className="rounded-xl border px-3 py-2 text-black" />
+								<input value={otherRecipientEmail} onChange={(e) => setOtherRecipientEmail(e.target.value)} placeholder="Recipient email (optional)" className="rounded-xl border px-3 py-2 text-black" />
+								<button onClick={() => void addOtherExpiration()} disabled={otherSaving} className="rounded-xl bg-[#FFDA03] px-3 py-2 text-black font-medium disabled:opacity-50">
+									{otherSaving ? "Adding..." : "Add item"}
+								</button>
+							</div>
+							<input value={otherNotes} onChange={(e) => setOtherNotes(e.target.value)} placeholder="Notes (optional)" className="w-full rounded-xl border px-3 py-2 text-black" />
+							<div className="overflow-auto rounded-xl border">
+								<table className="w-full text-sm text-black">
+									<thead>
+										<tr className="border-b text-left">
+											<th className="py-2 px-3">Item</th>
+											<th className="py-2 px-3">Type</th>
+											<th className="py-2 px-3">Expires</th>
+											<th className="py-2 px-3">Active</th>
+											<th className="py-2 px-3">Action</th>
+										</tr>
+									</thead>
+									<tbody>
+										{otherRows.length ? (
+											otherRows.map((row) => (
+												<tr key={row.id} className="border-b">
+													<td className="py-2 px-3">{row.item_name}</td>
+													<td className="py-2 px-3">{row.expiration_type}</td>
+													<td className="py-2 px-3">{row.expires_on}</td>
+													<td className="py-2 px-3">
+														<input
+															type="checkbox"
+															checked={row.is_active}
+															onChange={(e) => void toggleOtherExpiration(row.id, e.target.checked)}
+														/>
+													</td>
+													<td className="py-2 px-3">
+														<button onClick={() => void removeOtherExpiration(row.id)} className="rounded-lg border px-2 py-1">
+															Remove
+														</button>
+													</td>
+												</tr>
+											))
+										) : (
+											<tr>
+												<td colSpan={5} className="py-3 px-3 text-gray-500">No additional expiration items yet.</td>
+											</tr>
+										)}
+									</tbody>
+								</table>
+							</div>
 						</div>
 
 						<div className="rounded-2xl border p-4">

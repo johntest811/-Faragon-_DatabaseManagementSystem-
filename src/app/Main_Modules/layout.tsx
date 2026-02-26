@@ -10,6 +10,7 @@ import {
   LayoutGrid,
   Users,
   Repeat2,
+  UserMinus,
   UserX,
   Archive,
   Shield,
@@ -40,7 +41,8 @@ function emailBadge(email: string | null) {
 const ALL_MENU = [
   { key: "dashboard", name: "Dashboard", href: "/Main_Modules/Dashboard/", icon: LayoutGrid },
   { key: "employees", name: "Employees", href: "/Main_Modules/Employees/", icon: Users },
-  { key: "reassign", name: "Resigned", href: "/Main_Modules/Resigned/", icon: Repeat2 },
+  { key: "reassign", name: "Reassigned", href: "/Main_Modules/Reassign/", icon: Repeat2 },
+  { key: "resigned", name: "Resigned", href: "/Main_Modules/Resigned/", icon: UserMinus },
   { key: "retired", name: "Retired", href: "/Main_Modules/Retired/", icon: UserX },
   { key: "archive", name: "Archive", href: "/Main_Modules/Archive/", icon: Archive },
   { key: "logistics", name: "Logistics", href: "/Main_Modules/Logistics/", icon: Truck },
@@ -62,6 +64,8 @@ function titleFromPath(pathname: string) {
 export default function MainModulesLayout({ children }: LayoutProps) {
   const router = useRouter();
   const pathname = usePathname() ?? "";
+  const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
+  const [logoutBusy, setLogoutBusy] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [workforceOpen, setWorkforceOpen] = useState(false);
   const [workforceFlyoutOpen, setWorkforceFlyoutOpen] = useState(false);
@@ -279,17 +283,45 @@ export default function MainModulesLayout({ children }: LayoutProps) {
     }
   }
 
+  function handleLogout() {
+    try {
+      localStorage.removeItem("adminSession");
+    } catch {
+      // ignore
+    }
+
+    try {
+      sessionStorage.setItem("showLogoutSplash", "1");
+    } catch {
+      // ignore
+    }
+
+    router.replace("/Login/");
+  }
+
+  function requestLogout() {
+    if (logoutBusy) return;
+    setLogoutConfirmOpen(true);
+  }
+
+  function confirmLogout() {
+    if (logoutBusy) return;
+    setLogoutBusy(true);
+    setLogoutConfirmOpen(false);
+    handleLogout();
+  }
+
   useEffect(() => {
     let cancelled = false;
     async function ensureSession() {
       if (hasLegacySession()) return;
 
       const { data } = await supabase.auth.getSession();
-      if (!cancelled && !data.session) window.location.href = "Components/SplashScreen.tsx";
+      if (!cancelled && !data.session) window.location.href = "/Login/";
     }
     ensureSession();
     const { data: sub } = supabase.auth.onAuthStateChange((_evt, session) => {
-      if (!session && !hasLegacySession()) window.location.href = "Components/SplashScreen.tsx";
+      if (!session && !hasLegacySession()) window.location.href = "/Login/";
     });
 
     const onStorage = (e: StorageEvent) => {
@@ -309,8 +341,13 @@ export default function MainModulesLayout({ children }: LayoutProps) {
   const allowedKeys = useMemo(() => {
     const fromDb = new Set(myModules.map((m) => m.module_key));
     if (fromDb.size) {
+      // Backwards-compatibility: older deployments used the `reassign` module key
+      // to grant access to the Resigned page.
+      if (fromDb.has("reassign") && !fromDb.has("resigned")) fromDb.add("resigned");
+
       if (sessionRole === "superadmin" || sessionRole === "admin") {
         fromDb.add("reassign");
+        fromDb.add("resigned");
         fromDb.add("retired");
         fromDb.add("audit");
       }
@@ -321,7 +358,7 @@ export default function MainModulesLayout({ children }: LayoutProps) {
     if (!sessionRole) return new Set<string>();
     if (sessionRole === "superadmin") return new Set(ALL_MENU.map((m) => m.key));
     if (sessionRole === "admin") {
-      return new Set(["dashboard", "employees", "reassign", "retired", "archive", "logistics", "trash", "settings", "roles", "audit"]);
+      return new Set(["dashboard", "employees", "reassign", "resigned", "retired", "archive", "logistics", "trash", "settings", "roles", "audit"]);
     }
     return new Set(["dashboard", "employees", "archive"]);
   }, [sessionRole, myModules]);
@@ -352,7 +389,7 @@ export default function MainModulesLayout({ children }: LayoutProps) {
   }, [pathname, sessionRole, allowedKeys, router]);
 
   const WORKFORCE_KEYS = useMemo(
-    () => new Set(["employees", "reassign", "retired", "archive"]),
+    () => new Set(["employees", "reassign", "resigned", "retired", "archive"]),
     []
   );
 
@@ -623,24 +660,7 @@ export default function MainModulesLayout({ children }: LayoutProps) {
           <div className="h-px bg-gray-200" />
 
           <button
-            onClick={() => {
-              const ok = window.confirm("Are you sure you want to log out?");
-              if (!ok) return;
-
-              try {
-                localStorage.removeItem("adminSession");
-              } catch {
-                // ignore
-              }
-
-              try {
-                sessionStorage.setItem("showLogoutSplash", "1");
-              } catch {
-                // ignore
-              }
-
-              router.replace("/Login/");
-            }}
+            onClick={requestLogout}
             className="w-full flex items-center gap-3 px-4 py-3 rounded-xl
               text-red-600 hover:bg-red-50 transition-all"
           >
@@ -984,6 +1004,35 @@ export default function MainModulesLayout({ children }: LayoutProps) {
 
         <main className="flex-1 min-h-0 px-6 pb-10 pt-6 overflow-y-auto overflow-x-hidden">{children}</main>
       </div>
+
+      {logoutConfirmOpen ? (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-md rounded-2xl border bg-white shadow-xl">
+            <div className="px-5 py-4 border-b">
+              <div className="text-base font-semibold text-black">Confirm Logout</div>
+              <div className="mt-1 text-sm text-gray-600">Are you sure you want to log out?</div>
+            </div>
+            <div className="px-5 py-4 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setLogoutConfirmOpen(false)}
+                disabled={logoutBusy}
+                className="px-4 py-2 rounded-xl border text-sm text-black hover:bg-gray-50 disabled:opacity-60"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmLogout}
+                disabled={logoutBusy}
+                className="px-4 py-2 rounded-xl text-sm font-medium text-white bg-red-600 hover:bg-red-700 disabled:opacity-60"
+              >
+                {logoutBusy ? "Logging out..." : "Log Out"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

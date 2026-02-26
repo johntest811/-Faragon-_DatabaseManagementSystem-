@@ -636,7 +636,7 @@ export default function EmployeeEditorModal({
           status: normalizeStatus(a?.status),
 
           date_resigned: normalizeDateInput(a?.date_resigned ?? null),
-          last_duty: a?.last_duty ?? "",
+          last_duty: normalizeDateInput(a?.last_duty ?? null),
 
           security_licensed_num: a?.security_licensed_num ?? "",
           sss_number: a?.sss_number ?? "",
@@ -785,6 +785,7 @@ export default function EmployeeEditorModal({
     try {
       const nextStatus = normalizeStatus(app.status);
       const isRetired = nextStatus === "RETIRED";
+      const shouldPersistResignedFields = nextStatus === "RESIGNED" || nextStatus === "RETIRED";
       const legacyAdminId = getLegacyAdminId();
       const retiredAt = isRetired ? new Date().toISOString() : null;
       const retiredDate = isRetired ? new Date().toISOString().slice(0, 10) : null;
@@ -821,8 +822,8 @@ export default function EmployeeEditorModal({
           detachment: toNullableText(app.detachment),
           status: nextStatus,
 
-          date_resigned: toNullableText(app.date_resigned),
-          last_duty: toNullableText(app.last_duty),
+          date_resigned: shouldPersistResignedFields ? toNullableText(app.date_resigned) : null,
+          last_duty: shouldPersistResignedFields ? toNullableText(app.last_duty) : null,
 
           retired_date: retiredDate,
           retired_reason: retiredReason,
@@ -940,8 +941,8 @@ export default function EmployeeEditorModal({
           detachment: toNullableText(app.detachment),
           status: nextStatus,
 
-          date_resigned: toNullableText(app.date_resigned),
-          last_duty: toNullableText(app.last_duty),
+          date_resigned: shouldPersistResignedFields ? toNullableText(app.date_resigned) : null,
+          last_duty: shouldPersistResignedFields ? toNullableText(app.last_duty) : null,
 
           retired_date: retiredDate,
           retired_reason: retiredReason,
@@ -1365,25 +1366,28 @@ export default function EmployeeEditorModal({
                 </label>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <label className="text-sm text-black">
-                  <div className="text-gray-600 mb-1">Date Resigned</div>
-                  <input
-                    type="date"
-                    value={app.date_resigned}
-                    onChange={(e) => setApp((d) => ({ ...d, date_resigned: e.target.value }))}
-                    className="w-full border rounded-xl px-3 py-2"
-                  />
-                </label>
-                <label className="text-sm text-black">
-                  <div className="text-gray-600 mb-1">Last Duty</div>
-                  <input
-                    value={app.last_duty}
-                    onChange={(e) => setApp((d) => ({ ...d, last_duty: e.target.value }))}
-                    className="w-full border rounded-xl px-3 py-2"
-                  />
-                </label>
-              </div>
+              {normalizeStatus(app.status) === "RESIGNED" || normalizeStatus(app.status) === "RETIRED" ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <label className="text-sm text-black">
+                    <div className="text-gray-600 mb-1">Date Resigned</div>
+                    <input
+                      type="date"
+                      value={app.date_resigned}
+                      onChange={(e) => setApp((d) => ({ ...d, date_resigned: e.target.value }))}
+                      className="w-full border rounded-xl px-3 py-2"
+                    />
+                  </label>
+                  <label className="text-sm text-black">
+                    <div className="text-gray-600 mb-1">Last Duty</div>
+                    <input
+                      type="date"
+                      value={app.last_duty}
+                      onChange={(e) => setApp((d) => ({ ...d, last_duty: e.target.value }))}
+                      className="w-full border rounded-xl px-3 py-2"
+                    />
+                  </label>
+                </div>
+              ) : null}
 
               <div className="rounded-2xl border p-4">
                 <div className="text-sm font-semibold text-black">Application Form Image</div>

@@ -51,7 +51,7 @@ CREATE TABLE public.applicants (
   province_address character varying,
   emergency_contact_person character varying,
   emergency_contact_num character varying,
-  status character varying DEFAULT 'ACTIVE'::character varying CHECK (NULLIF(btrim(status::text), ''::text) IS NULL OR (upper(NULLIF(btrim(status::text), ''::text)) = ANY (ARRAY['ACTIVE'::text, 'INACTIVE'::text, 'REASSIGN'::text, 'RETIRED'::text]))),
+  status character varying DEFAULT 'ACTIVE'::character varying CHECK (NULLIF(btrim(status::text), ''::text) IS NULL OR (upper(NULLIF(btrim(status::text), ''::text)) = ANY (ARRAY['ACTIVE'::text, 'INACTIVE'::text, 'REASSIGN'::text, 'RETIRED'::text, 'RESIGNED'::text]))),
   profile_image_path text,
   sss_certain_path text,
   tin_id_path text,
@@ -113,6 +113,14 @@ CREATE TABLE public.certificates (
   CONSTRAINT certificates_pkey PRIMARY KEY (applicant_id),
   CONSTRAINT certificates_applicant_id_fkey FOREIGN KEY (applicant_id) REFERENCES public.applicants(applicant_id)
 );
+CREATE TABLE public.contract_employees (
+  contract_id uuid NOT NULL,
+  applicant_id uuid NOT NULL,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT contract_employees_pkey PRIMARY KEY (contract_id, applicant_id),
+  CONSTRAINT contract_employees_contract_id_fkey FOREIGN KEY (contract_id) REFERENCES public.contracts(contract_id),
+  CONSTRAINT contract_employees_applicant_id_fkey FOREIGN KEY (applicant_id) REFERENCES public.applicants(applicant_id)
+);
 CREATE TABLE public.contracts (
   contract_id uuid NOT NULL DEFAULT gen_random_uuid(),
   applicant_id uuid,
@@ -121,19 +129,19 @@ CREATE TABLE public.contracts (
   end_date date,
   status text DEFAULT 'ACTIVE'::text,
   created_at timestamp with time zone NOT NULL DEFAULT now(),
+  contract_no_date date,
+  cluster text,
+  client_name text,
+  specific_area text,
+  project_name text,
+  contract_start date,
+  contract_end date,
+  contracted_manpower integer,
+  deployed_guards integer,
+  remarks text,
   CONSTRAINT contracts_pkey PRIMARY KEY (contract_id),
   CONSTRAINT contracts_applicant_id_fkey FOREIGN KEY (applicant_id) REFERENCES public.applicants(applicant_id)
 );
-
-  -- Assign multiple applicants to a contract.
-  CREATE TABLE public.contract_employees (
-    contract_id uuid NOT NULL,
-    applicant_id uuid NOT NULL,
-    created_at timestamp with time zone NOT NULL DEFAULT now(),
-    CONSTRAINT contract_employees_pkey PRIMARY KEY (contract_id, applicant_id),
-    CONSTRAINT contract_employees_contract_id_fkey FOREIGN KEY (contract_id) REFERENCES public.contracts(contract_id),
-    CONSTRAINT contract_employees_applicant_id_fkey FOREIGN KEY (applicant_id) REFERENCES public.applicants(applicant_id)
-  );
 CREATE TABLE public.deployment_history (
   history_id uuid NOT NULL DEFAULT gen_random_uuid(),
   deployment_id uuid NOT NULL,
@@ -276,6 +284,27 @@ CREATE TABLE public.notification_preferences (
   use_scheduled_send boolean NOT NULL DEFAULT true,
   CONSTRAINT notification_preferences_pkey PRIMARY KEY (id)
 );
+CREATE TABLE public.notification_recipients (
+  id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
+  email text NOT NULL UNIQUE,
+  is_active boolean NOT NULL DEFAULT true,
+  notes text,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT notification_recipients_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.other_expiration_items (
+  id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
+  item_name text NOT NULL,
+  expiration_type text NOT NULL CHECK (expiration_type = ANY (ARRAY['CAR_OCR'::text, 'CAR_REGISTRATION'::text, 'DRIVERS_LICENSE'::text])),
+  expires_on date NOT NULL,
+  recipient_email text,
+  notes text,
+  is_active boolean NOT NULL DEFAULT true,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT other_expiration_items_pkey PRIMARY KEY (id)
+);
 CREATE TABLE public.paraphernalia (
   id_paraphernalia uuid NOT NULL,
   names text,
@@ -298,24 +327,6 @@ CREATE TABLE public.paraphernalia_inventory (
   CONSTRAINT paraphernalia_inventory_pkey PRIMARY KEY (id_paraphernalia_inventory),
   CONSTRAINT paraphernalia_inventory_id_paraphernalia_fkey FOREIGN KEY (id_paraphernalia) REFERENCES public.paraphernalia(id_paraphernalia),
   CONSTRAINT paraphernalia_inventory_contract_id_fkey FOREIGN KEY (contract_id) REFERENCES public.contracts(contract_id)
-);
-CREATE TABLE public.resigned (
-  last_name character varying,
-  first_name character varying,
-  middle_name character varying,
-  date_resigned character varying,
-  detachment character varying,
-  remarks text,
-  last_duty character varying,
-  timestamp timestamp without time zone NOT NULL DEFAULT now(),
-  resigned_id uuid NOT NULL,
-  applicant_id uuid,
-  contract_id uuid,
-  id_paraphernalia_inventory uuid,
-  CONSTRAINT resigned_pkey PRIMARY KEY (resigned_id),
-  CONSTRAINT resigned_applicant_id_fkey FOREIGN KEY (applicant_id) REFERENCES public.applicants(applicant_id),
-  CONSTRAINT resigned_contract_id_fkey FOREIGN KEY (contract_id) REFERENCES public.contracts(contract_id),
-  CONSTRAINT resigned_inventory_fkey FOREIGN KEY (id_paraphernalia_inventory) REFERENCES public.paraphernalia_inventory(id_paraphernalia_inventory)
 );
 CREATE TABLE public.restock (
   id_restock uuid NOT NULL,

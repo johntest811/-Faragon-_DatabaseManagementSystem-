@@ -338,9 +338,29 @@ function daysUntil(dateYmd) {
   return Math.round((target.getTime() - today.getTime()) / (24 * 60 * 60 * 1000));
 }
 
+async function loadConfiguredRecipientEmails(admin) {
+  try {
+    const res = await admin
+      .from('notification_recipients')
+      .select('email')
+      .eq('is_active', true)
+      .order('created_at', { ascending: true })
+      .limit(500);
+    if (res.error) throw res.error;
+    const emails = (res.data ?? [])
+      .map((r) => safeText(r.email).toLowerCase())
+      .filter(Boolean);
+    return Array.from(new Set(emails));
+  } catch (e) {
+    // Backward compatibility: older DBs may not have this table yet.
+    console.warn('[notifications] loadConfiguredRecipientEmails skipped:', e?.message ?? e);
+    return [];
+  }
+}
+
 async function loadNotificationConfig(admin) {
   const localPrefs = loadLocalNotificationPrefs();
-  const [emailRes, prefRes] = await Promise.all([
+  const [emailRes, prefRes, recipientEmails] = await Promise.all([
     admin
       .from('notification_email_settings')
       .select('id, provider, gmail_user, from_email, gmail_app_password, is_active, notes')
@@ -356,6 +376,7 @@ async function loadNotificationConfig(admin) {
       .order('updated_at', { ascending: false })
       .limit(1)
       .maybeSingle(),
+    loadConfiguredRecipientEmails(admin),
   ]);
 
   if (emailRes.error) throw emailRes.error;
@@ -364,6 +385,7 @@ async function loadNotificationConfig(admin) {
   return {
     email: emailRes.data ?? null,
     preferences: prefRes.data ?? null,
+    recipients: recipientEmails,
     localPrefs,
     env: {
       hasGmailUser: Boolean(process.env.GMAIL_USER),
@@ -599,7 +621,7 @@ function computeEmailSubject(templateSubject, itemsCount) {
 function renderEmailHtml({ subject, recipientName, items, daysBefore, bodyHtml, legacyMessage }) {
   const msg = safeText(legacyMessage);
   const safeBody = safeText(bodyHtml) ? sanitizeEmailBodyHtml(bodyHtml) : '';
-  const heading = safeText(subject) || 'Licensure Expiration Warning';
+  const heading = safeText(subject) || 'NOTICE: LICENSE EXPIRATION ALERT';
 
   function fmtDays(d) {
     const n = Number(d);
@@ -621,26 +643,32 @@ function renderEmailHtml({ subject, recipientName, items, daysBefore, bodyHtml, 
     .join('');
 
   return `
-  <div style="font-family:Arial,Helvetica,sans-serif;line-height:1.4;color:#111">
-    <h2 style="margin:0 0 8px 0;">${escapeHtml(heading)}</h2>
-    <div style="color:#444;margin-bottom:16px;">This is an automated reminder for licensures expiring within ${escapeHtml(
-      String(daysBefore)
-    )} days.</div>
-    ${safeBody ? `<div style="margin:0 0 12px 0;">${safeBody}</div>` : ''}
-    ${!safeBody && msg ? `<div style="margin:0 0 12px 0;padding:10px 12px;border:1px solid #eee;background:#fafafa;border-radius:8px;">${escapeHtml(msg)}</div>` : ''}
-    <table style="border-collapse:collapse;width:100%;max-width:640px;">
-      <thead>
-        <tr>
-          <th align="left" style="padding:8px 6px;border-bottom:2px solid #ddd;">Type</th>
-          <th align="left" style="padding:8px 6px;border-bottom:2px solid #ddd;">Expires On</th>
-          <th align="left" style="padding:8px 6px;border-bottom:2px solid #ddd;">Days</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${rows}
-      </tbody>
-    </table>
-    <div style="margin-top:16px;color:#666;font-size:12px;">Please coordinate renewal as soon as possible.</div>
+  <div style="font-family:Arial,Helvetica,sans-serif;line-height:1.45;color:#111;background:#f7f7f7;padding:20px;">
+    <div style="max-width:760px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden;">
+      <div style="background:#facc15;color:#111;padding:14px 18px;font-weight:700;font-size:16px;">${escapeHtml(heading)}</div>
+      <div style="padding:18px;">
+        <div style="margin:0 0 10px 0;">Dear Sir/Ma'am${recipientName ? ` (${escapeHtml(recipientName)})` : ''},</div>
+        <div style="margin:0 0 12px 0;color:#374151;">This is to formally notify you of licenses and related records nearing expiration within ${escapeHtml(
+          String(daysBefore)
+        )} days.</div>
+        ${safeBody ? `<div style="margin:0 0 12px 0;">${safeBody}</div>` : ''}
+        ${!safeBody && msg ? `<div style="margin:0 0 12px 0;padding:10px 12px;border:1px solid #eee;background:#fafafa;border-radius:8px;">${escapeHtml(msg)}</div>` : ''}
+        <table style="border-collapse:collapse;width:100%;max-width:100%;font-size:13px;">
+          <thead>
+            <tr>
+              <th align="left" style="padding:10px 8px;border-bottom:2px solid #ddd;background:#fafafa;">Type</th>
+              <th align="left" style="padding:10px 8px;border-bottom:2px solid #ddd;background:#fafafa;">Expires On</th>
+              <th align="left" style="padding:10px 8px;border-bottom:2px solid #ddd;background:#fafafa;">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows}
+          </tbody>
+        </table>
+        <div style="margin-top:14px;color:#374151;">Please process the renewal before expiration to avoid service disruptions.</div>
+        <div style="margin-top:16px;color:#6b7280;font-size:12px;">This is a system-generated notice from Database Management App.</div>
+      </div>
+    </div>
   </div>`;
 }
 
@@ -780,17 +808,21 @@ function isDueToSendNow(expiresOnYmd, daysBefore, sendTimeLocal) {
   return true;
 }
 
-async function hasSentLicensureNotice(admin, item) {
+async function hasSentLicensureNotice(admin, item, recipientEmail = null) {
   try {
-    const res = await admin
+    let q = admin
       .from('licensure_notification_log')
       .select('id')
       .eq('status', 'SENT')
       .eq('applicant_id', item.applicant_id)
       .eq('license_type', item.license_type)
-      .eq('expires_on', item.expires_on)
-      .limit(1)
-      .maybeSingle();
+      .eq('expires_on', item.expires_on);
+
+    if (safeText(recipientEmail)) {
+      q = q.eq('recipient_email', safeText(recipientEmail));
+    }
+
+    const res = await q.limit(1).maybeSingle();
     if (res.error) throw res.error;
     return Boolean(res.data?.id);
   } catch (e) {
@@ -801,7 +833,7 @@ async function hasSentLicensureNotice(admin, item) {
 }
 
 async function runNotificationSend(admin) {
-  const { email, preferences } = await loadNotificationConfig(admin);
+  const { email, preferences, recipients } = await loadNotificationConfig(admin);
   if (!preferences?.is_enabled) {
     return { ok: true, summary: { sent: 0, failed: 0, skipped: 0 }, message: 'Notifications are disabled.' };
   }
@@ -816,28 +848,41 @@ async function runNotificationSend(admin) {
   const daysBefore = Number(preferences.days_before_expiry ?? 30);
   const useScheduledSend = preferences?.use_scheduled_send !== false;
   const sendTimeLocal = useScheduledSend ? preferences.send_time_local : null;
+  const configuredRecipients = Array.isArray(recipients) ? recipients.map((x) => safeText(x).toLowerCase()).filter(Boolean) : [];
+  const useConfiguredRecipients = configuredRecipients.length > 0;
 
-  // Group email by recipient (client_email) to reduce spam.
+  // Group email by recipient to reduce spam.
   const byRecipient = new Map();
   for (const item of expiring) {
     if (!isDueToSendNow(item.expires_on, daysBefore, sendTimeLocal)) continue;
 
-    const alreadySent = await hasSentLicensureNotice(admin, item);
-    if (alreadySent) continue;
+    if (useConfiguredRecipients) {
+      for (const to of configuredRecipients) {
+        const alreadySent = await hasSentLicensureNotice(admin, item, to);
+        if (alreadySent) continue;
+        const arr = byRecipient.get(to) || [];
+        arr.push(item);
+        byRecipient.set(to, arr);
+      }
+      continue;
+    }
 
     const to = safeText(item.client_email);
     if (!to) {
-      // Log skipped.
       await admin.from('licensure_notification_log').insert({
         applicant_id: item.applicant_id,
         license_type: item.license_type,
         expires_on: item.expires_on,
         recipient_email: null,
         status: 'SKIPPED',
-        error_message: 'Missing recipient email (client_email).',
+        error_message: 'Missing recipient email (client_email) and no active notification recipient configured.',
       });
       continue;
     }
+
+    const alreadySent = await hasSentLicensureNotice(admin, item, to);
+    if (alreadySent) continue;
+
     const arr = byRecipient.get(to) || [];
     arr.push(item);
     byRecipient.set(to, arr);
@@ -1436,13 +1481,15 @@ ipcMain.handle('notifications:runNow', async () => {
 
 ipcMain.handle('notifications:resendAllExpiring', async (_event, payload) => {
   const admin = getAdminSupabase();
-  const { email, preferences } = await loadNotificationConfig(admin);
+  const { email, preferences, recipients } = await loadNotificationConfig(admin);
 
   if (!preferences?.is_enabled) throw new Error('Notifications are disabled.');
   if (email && !email.is_active) throw new Error('Gmail sender is not active.');
 
   const localPrefs = loadLocalNotificationPrefs();
   const expiring = await fetchExpiringRows(admin, preferences ?? {}, localPrefs);
+  const configuredRecipients = Array.isArray(recipients) ? recipients.map((x) => safeText(x).toLowerCase()).filter(Boolean) : [];
+  const useConfiguredRecipients = configuredRecipients.length > 0;
 
   const maxRecipients = clampInt(payload?.maxRecipients, { min: 1, max: 2000, fallback: 0 });
 
@@ -1452,16 +1499,27 @@ ipcMain.handle('notifications:resendAllExpiring', async (_event, payload) => {
   let skipped = 0;
 
   for (const item of expiring) {
+    if (useConfiguredRecipients) {
+      for (const to of configuredRecipients) {
+        if (maxRecipients && !byRecipient.has(to) && byRecipient.size >= maxRecipients) {
+          continue;
+        }
+        const arr = byRecipient.get(to) || [];
+        arr.push(item);
+        byRecipient.set(to, arr);
+      }
+      continue;
+    }
+
     const to = safeText(item.client_email);
     if (!to) {
-      // Log skipped.
       await admin.from('licensure_notification_log').insert({
         applicant_id: item.applicant_id,
         license_type: item.license_type,
         expires_on: item.expires_on,
         recipient_email: null,
         status: 'SKIPPED',
-        error_message: 'Missing recipient email (client_email).',
+        error_message: 'Missing recipient email (client_email) and no active notification recipient configured.',
       });
       skipped += 1;
       continue;

@@ -341,7 +341,7 @@ export default function EmployeesPage() {
 		if (statusFilter === "ALL") {
 			list = list.filter((e) => {
 				const s = normalizeStatus(e.status);
-				return s !== "REASSIGN" && s !== "RETIRED";
+				return s !== "REASSIGN" && s !== "RETIRED" && s !== "RESIGNED";
 			});
 		}
 
@@ -592,6 +592,10 @@ if (hiredMonthFilter !== "ALL") {
 	async function onSaved(applicantId: string, savedStatus: string) {
 		await fetchEmployees();
 		const normalized = normalizeStatus(savedStatus);
+		if (normalized === "RESIGNED") {
+			router.push("/Main_Modules/Resigned/");
+			return;
+		}
 		if (editorMode === "create" && normalized !== "RETIRED" && normalized !== "REASSIGN") {
 			router.push(
 				`/Main_Modules/Employees/details/?id=${encodeURIComponent(applicantId)}&from=${encodeURIComponent(
