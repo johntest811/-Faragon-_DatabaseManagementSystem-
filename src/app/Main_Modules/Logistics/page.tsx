@@ -24,6 +24,11 @@ export default function LogisticsPage() {
       description: "Manage client information and details.",
       href: "/Main_Modules/Logistics/Client/",
     },
+    {
+      title: "Permission",
+      description: "Manage user permissions and access control.",
+      href: "/Main_Modules/Logistics/Permission/",
+    },
   ];
 
   return (
