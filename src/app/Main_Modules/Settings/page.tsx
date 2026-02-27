@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/app/Client/SupabaseClients";
 import { useAuthRole } from "@/app/Client/useRbac";
+import LoadingCircle from "@/app/Components/LoadingCircle";
 
 type EmailSettingsRow = {
 	id: string;
@@ -22,6 +23,7 @@ type PreferencesRow = {
 	include_driver_license: boolean;
 	include_security_license: boolean;
 	include_insurance: boolean;
+	send_to_employees?: boolean;
 	use_scheduled_send: boolean;
 	send_time_local: string | null;
 	timezone: string | null;
@@ -436,6 +438,7 @@ export default function SettingsPage() {
 
 	// Preferences
 	const [enabled, setEnabled] = useState(true);
+	const [sendToEmployees, setSendToEmployees] = useState(true);
 	const [daysBeforeInput, setDaysBeforeInput] = useState("30");
 	const [includeDriver, setIncludeDriver] = useState(false);
 	const [includeSecurity, setIncludeSecurity] = useState(true);
@@ -464,8 +467,10 @@ export default function SettingsPage() {
 	const [recipientEmail, setRecipientEmail] = useState("");
 	const [recipientNotes, setRecipientNotes] = useState("");
 	const [recipientSaving, setRecipientSaving] = useState(false);
+	const [addRecipientOpen, setAddRecipientOpen] = useState(false);
 	const [otherRows, setOtherRows] = useState<OtherExpirationRow[]>([]);
 	const [otherSaving, setOtherSaving] = useState(false);
+	const [addOtherOpen, setAddOtherOpen] = useState(false);
 	const [otherItemName, setOtherItemName] = useState("");
 	const [otherType, setOtherType] = useState<OtherExpirationType>("CAR_OCR");
 	const [otherExpiresOn, setOtherExpiresOn] = useState("");
@@ -512,6 +517,7 @@ export default function SettingsPage() {
 		const pref = (((cfg as any)?.preferences as PreferencesRow) || null) as PreferencesRow | null;
 		if (pref) {
 			setEnabled(Boolean(pref.is_enabled));
+			setSendToEmployees((pref as any)?.send_to_employees !== false);
 			setDaysBeforeInput(String(pref.days_before_expiry ?? 30));
 			setIncludeDriver(Boolean(pref.include_driver_license));
 			setIncludeSecurity(Boolean(pref.include_security_license));
@@ -575,6 +581,7 @@ export default function SettingsPage() {
 			if (ins.error) throw ins.error;
 			setRecipientEmail("");
 			setRecipientNotes("");
+			setAddRecipientOpen(false);
 			setSuccess("Recipient added.");
 			await loadRecipientRows();
 		} catch (e: unknown) {
@@ -628,6 +635,7 @@ export default function SettingsPage() {
 			setOtherExpiresOn("");
 			setOtherRecipientEmail("");
 			setOtherNotes("");
+			setAddOtherOpen(false);
 			setSuccess("Other expiration item added.");
 			await loadOtherExpirationRows();
 		} catch (e: unknown) {
@@ -703,13 +711,26 @@ export default function SettingsPage() {
 							.eq("provider", "gmail")
 							.limit(1)
 							.maybeSingle(),
-						supabase
-							.from("notification_preferences")
-							.select(
-								"id, is_enabled, days_before_expiry, include_driver_license, include_security_license, include_insurance, use_scheduled_send, send_time_local, timezone"
-							)
-							.limit(1)
-							.maybeSingle(),
+						(async () => {
+							// Backward-compatible: older DBs may not have send_to_employees yet.
+							const wide = await supabase
+								.from("notification_preferences")
+								.select(
+									"id, is_enabled, send_to_employees, days_before_expiry, include_driver_license, include_security_license, include_insurance, use_scheduled_send, send_time_local, timezone"
+								)
+								.limit(1)
+								.maybeSingle();
+							if (!wide.error) return wide;
+							const msg = safeText((wide.error as any)?.message || wide.error);
+							if (!/send_to_employees/i.test(msg)) return wide;
+							return await supabase
+								.from("notification_preferences")
+								.select(
+									"id, is_enabled, days_before_expiry, include_driver_license, include_security_license, include_insurance, use_scheduled_send, send_time_local, timezone"
+								)
+								.limit(1)
+								.maybeSingle();
+						})(),
 					]);
 
 					if (emailRes.error) throw emailRes.error;
@@ -738,6 +759,7 @@ export default function SettingsPage() {
 					const pref = (prefRes.data as PreferencesRow | null) ?? null;
 					if (pref) {
 						setEnabled(Boolean(pref.is_enabled));
+						setSendToEmployees((pref as any)?.send_to_employees !== false);
 						setDaysBeforeInput(String(pref.days_before_expiry ?? 30));
 						setIncludeDriver(Boolean(pref.include_driver_license));
 						setIncludeSecurity(Boolean(pref.include_security_license));
@@ -959,6 +981,7 @@ export default function SettingsPage() {
 					},
 					preferences: {
 						is_enabled: Boolean(enabled),
+							send_to_employees: Boolean(sendToEmployees),
 						days_before_expiry: daysBeforeValue,
 						include_driver_license: Boolean(includeDriver),
 						include_security_license: Boolean(includeSecurity),
@@ -975,6 +998,7 @@ export default function SettingsPage() {
 					await electronAPI.settings.saveLocalNotificationPrefs({
 						includeExpired: Boolean(includeExpired),
 						expiredWithinDays: Math.max(1, Math.min(365, Number(expiredWithinDays || 7))),
+						sendToEmployees: Boolean(sendToEmployees),
 					});
 				}
 			} else {
@@ -991,6 +1015,7 @@ export default function SettingsPage() {
 						.from("notification_preferences")
 						.update({
 							is_enabled: Boolean(enabled),
+								send_to_employees: Boolean(sendToEmployees),
 							days_before_expiry: daysBeforeValue,
 							include_driver_license: Boolean(includeDriver),
 							include_security_license: Boolean(includeSecurity),
@@ -1004,6 +1029,7 @@ export default function SettingsPage() {
 				} else {
 					const ins = await supabase.from("notification_preferences").insert({
 						is_enabled: Boolean(enabled),
+							send_to_employees: Boolean(sendToEmployees),
 						days_before_expiry: daysBeforeValue,
 						include_driver_license: Boolean(includeDriver),
 						include_security_license: Boolean(includeSecurity),
@@ -1128,7 +1154,9 @@ export default function SettingsPage() {
 			</div>
 
 			{loading ? (
-				<div className="text-gray-600">Loading settings…</div>
+				<div className="rounded-2xl border bg-white p-8">
+					<LoadingCircle label="Loading settings..." />
+				</div>
 			) : (
 				<div className="space-y-6">
 					{error ? (
@@ -1344,6 +1372,32 @@ export default function SettingsPage() {
 								</label>
 							</div>
 
+							<div className="mt-3 rounded-xl border p-3">
+								<div className="flex items-center justify-between gap-3">
+									<div>
+										<div className="text-sm font-semibold text-black">Send Gmail to employees</div>
+										<div className="text-xs text-gray-500">Controls sending to employee email addresses (applicants.client_email) and the Expiring Licenses “Resend” button.</div>
+									</div>
+									<button
+										type="button"
+										onClick={() => setSendToEmployees((v) => !v)}
+										className={`relative inline-flex h-7 w-12 items-center rounded-full border ${sendToEmployees ? "bg-black" : "bg-gray-200"}`}
+										aria-label="Toggle send Gmail to employees"
+										aria-pressed={sendToEmployees}
+									>
+										<span
+											className={`inline-block h-5 w-5 transform rounded-full bg-white transition ${sendToEmployees ? "translate-x-6" : "translate-x-1"}`}
+										/>
+									</button>
+								</div>
+
+								{!sendToEmployees ? (
+									<div className="text-xs text-gray-600 mt-2">
+										Employee sending is disabled. Notification Recipients will still receive the expiring list.
+									</div>
+								) : null}
+							</div>
+
 							<label className="block text-sm mt-3 mb-1 text-black">Days before expiry</label>
 							<input
 								type="text"
@@ -1505,6 +1559,9 @@ export default function SettingsPage() {
 									if (!electronAPI?.notifications?.resendAllExpiring) {
 										throw new Error("Resend all is only available in the Electron desktop app.");
 									}
+									if (!sendToEmployees) {
+										throw new Error("Sending to employee emails is disabled. Enable it to use Resend all.");
+									}
 									const ok = window.confirm(
 										"This will resend emails for ALL currently expiring licenses. Continue?"
 									);
@@ -1568,25 +1625,17 @@ export default function SettingsPage() {
 							<div className="text-xs text-gray-500">
 								When recipient emails are listed here, all notification sends go to these emails.
 							</div>
-							<div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-								<input
-									value={recipientEmail}
-									onChange={(e) => setRecipientEmail(e.target.value)}
-									placeholder="notify-team@example.com"
-									className="rounded-xl border px-3 py-2 text-black"
-								/>
-								<input
-									value={recipientNotes}
-									onChange={(e) => setRecipientNotes(e.target.value)}
-									placeholder="Notes (optional)"
-									className="rounded-xl border px-3 py-2 text-black"
-								/>
+							<div className="flex items-center justify-end">
 								<button
-									onClick={() => void addRecipient()}
-									disabled={recipientSaving}
-									className="rounded-xl bg-[#FFDA03] px-3 py-2 text-black font-medium disabled:opacity-50"
+									type="button"
+									onClick={() => {
+										setAddRecipientOpen(true);
+										setError("");
+										setSuccess("");
+									}}
+									className="rounded-xl bg-[#FFDA03] px-3 py-2 text-black font-medium"
 								>
-									{recipientSaving ? "Adding..." : "Add recipient"}
+									Add recipient
 								</button>
 							</div>
 							<div className="overflow-auto rounded-xl border">
@@ -1630,20 +1679,19 @@ export default function SettingsPage() {
 						<div className="rounded-2xl border p-4 space-y-3">
 							<div className="font-semibold text-black">Other expiration records</div>
 							<div className="text-xs text-gray-500">Manage car OCR, car registration, and driver’s license expiration items.</div>
-							<div className="grid grid-cols-1 md:grid-cols-5 gap-2">
-								<input value={otherItemName} onChange={(e) => setOtherItemName(e.target.value)} placeholder="Item name" className="rounded-xl border px-3 py-2 text-black" />
-								<select value={otherType} onChange={(e) => setOtherType(e.target.value as OtherExpirationType)} className="rounded-xl border px-3 py-2 text-black">
-									<option value="CAR_OCR">Car OCR</option>
-									<option value="CAR_REGISTRATION">Car Registration</option>
-									<option value="DRIVERS_LICENSE">Driver&apos;s License</option>
-								</select>
-								<input type="date" value={otherExpiresOn} onChange={(e) => setOtherExpiresOn(e.target.value)} className="rounded-xl border px-3 py-2 text-black" />
-								<input value={otherRecipientEmail} onChange={(e) => setOtherRecipientEmail(e.target.value)} placeholder="Recipient email (optional)" className="rounded-xl border px-3 py-2 text-black" />
-								<button onClick={() => void addOtherExpiration()} disabled={otherSaving} className="rounded-xl bg-[#FFDA03] px-3 py-2 text-black font-medium disabled:opacity-50">
-									{otherSaving ? "Adding..." : "Add item"}
+							<div className="flex items-center justify-end">
+								<button
+									type="button"
+									onClick={() => {
+										setAddOtherOpen(true);
+										setError("");
+										setSuccess("");
+									}}
+									className="rounded-xl bg-[#FFDA03] px-3 py-2 text-black font-medium"
+								>
+									Add item
 								</button>
 							</div>
-							<input value={otherNotes} onChange={(e) => setOtherNotes(e.target.value)} placeholder="Notes (optional)" className="w-full rounded-xl border px-3 py-2 text-black" />
 							<div className="overflow-auto rounded-xl border">
 								<table className="w-full text-sm text-black">
 									<thead>
@@ -1739,6 +1787,110 @@ export default function SettingsPage() {
 								)}
 							</div>
 						</div>
+
+						{addRecipientOpen ? (
+							<div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={() => setAddRecipientOpen(false)}>
+								<div className="w-full max-w-lg rounded-2xl border bg-white p-5" onClick={(e) => e.stopPropagation()}>
+									<div className="flex items-center justify-between gap-3 mb-4">
+										<div>
+											<div className="text-lg font-semibold text-black">Add recipient</div>
+											<div className="text-sm text-gray-500">Receives all expiring-license notifications.</div>
+										</div>
+										<button type="button" className="px-3 py-2 rounded-xl border bg-white text-sm" onClick={() => setAddRecipientOpen(false)}>
+											Cancel
+										</button>
+									</div>
+
+									<label className="block text-sm mb-1 text-black">Email</label>
+									<input
+										value={recipientEmail}
+										onChange={(e) => setRecipientEmail(e.target.value)}
+										placeholder="notify-team@example.com"
+										className="w-full rounded-xl border px-3 py-2 text-black"
+									/>
+
+									<label className="block text-sm mt-3 mb-1 text-black">Notes (optional)</label>
+									<input
+										value={recipientNotes}
+										onChange={(e) => setRecipientNotes(e.target.value)}
+										placeholder="Department / purpose"
+										className="w-full rounded-xl border px-3 py-2 text-black"
+									/>
+
+									<div className="mt-4 flex items-center justify-end gap-2">
+										<button type="button" className="px-4 py-2 rounded-xl border bg-white text-black" onClick={() => setAddRecipientOpen(false)}>
+											Close
+										</button>
+										<button
+											type="button"
+											onClick={() => void addRecipient()}
+											disabled={recipientSaving}
+											className="px-4 py-2 rounded-xl bg-black text-white disabled:opacity-50"
+										>
+											{recipientSaving ? "Adding…" : "Add"}
+										</button>
+									</div>
+								</div>
+							</div>
+						) : null}
+
+						{addOtherOpen ? (
+							<div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={() => setAddOtherOpen(false)}>
+								<div className="w-full max-w-2xl rounded-2xl border bg-white p-5" onClick={(e) => e.stopPropagation()}>
+									<div className="flex items-center justify-between gap-3 mb-4">
+										<div>
+											<div className="text-lg font-semibold text-black">Add expiration item</div>
+											<div className="text-sm text-gray-500">Tracks additional expiring records like OCR and registration.</div>
+										</div>
+										<button type="button" className="px-3 py-2 rounded-xl border bg-white text-sm" onClick={() => setAddOtherOpen(false)}>
+											Cancel
+									</button>
+									</div>
+
+									<div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+										<div>
+											<label className="block text-sm mb-1 text-black">Item name</label>
+											<input value={otherItemName} onChange={(e) => setOtherItemName(e.target.value)} placeholder="Item name" className="w-full rounded-xl border px-3 py-2 text-black" />
+										</div>
+										<div>
+											<label className="block text-sm mb-1 text-black">Type</label>
+											<select value={otherType} onChange={(e) => setOtherType(e.target.value as OtherExpirationType)} className="w-full rounded-xl border px-3 py-2 text-black">
+												<option value="CAR_OCR">Car OCR</option>
+												<option value="CAR_REGISTRATION">Car Registration</option>
+												<option value="DRIVERS_LICENSE">Driver&apos;s License</option>
+											</select>
+										</div>
+										<div>
+											<label className="block text-sm mb-1 text-black">Expiration date</label>
+											<input type="date" value={otherExpiresOn} onChange={(e) => setOtherExpiresOn(e.target.value)} className="w-full rounded-xl border px-3 py-2 text-black" />
+										</div>
+										<div>
+											<label className="block text-sm mb-1 text-black">Recipient email (optional)</label>
+											<input value={otherRecipientEmail} onChange={(e) => setOtherRecipientEmail(e.target.value)} placeholder="recipient@example.com" className="w-full rounded-xl border px-3 py-2 text-black" />
+										</div>
+									</div>
+
+									<div className="mt-3">
+										<label className="block text-sm mb-1 text-black">Notes (optional)</label>
+										<input value={otherNotes} onChange={(e) => setOtherNotes(e.target.value)} placeholder="Notes" className="w-full rounded-xl border px-3 py-2 text-black" />
+									</div>
+
+									<div className="mt-4 flex items-center justify-end gap-2">
+										<button type="button" className="px-4 py-2 rounded-xl border bg-white text-black" onClick={() => setAddOtherOpen(false)}>
+											Close
+										</button>
+										<button
+											type="button"
+											onClick={() => void addOtherExpiration()}
+											disabled={otherSaving}
+											className="px-4 py-2 rounded-xl bg-black text-white disabled:opacity-50"
+										>
+											{otherSaving ? "Adding…" : "Add"}
+										</button>
+									</div>
+								</div>
+							</div>
+						) : null}
 					</div>
 
 					<div className="rounded-2xl border p-4">

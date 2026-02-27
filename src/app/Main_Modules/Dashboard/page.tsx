@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '../../Client/SupabaseClients';
 import { useAuthRole } from '../../Client/useRbac';
+import LoadingCircle from '../../Components/LoadingCircle';
 
 type AdminRow = {
   id: string;
@@ -219,7 +220,9 @@ export default function DashboardPage() {
         </div>
 
         {loading ? (
-          <div className="py-10 text-center text-gray-500">Loading admins...</div>
+          <div className="py-10">
+            <LoadingCircle label="Loading admins..." />
+          </div>
         ) : error ? (
           <div className="py-4 text-red-600">{error}</div>
         ) : admins.length === 0 ? (

@@ -282,6 +282,7 @@ CREATE TABLE public.notification_preferences (
   send_time_local time without time zone NOT NULL DEFAULT '08:00:00'::time without time zone,
   timezone text NOT NULL DEFAULT 'Asia/Manila'::text,
   use_scheduled_send boolean NOT NULL DEFAULT true,
+  send_to_employees boolean NOT NULL DEFAULT true,
   CONSTRAINT notification_preferences_pkey PRIMARY KEY (id)
 );
 CREATE TABLE public.notification_recipients (

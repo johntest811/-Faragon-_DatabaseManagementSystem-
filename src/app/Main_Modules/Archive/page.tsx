@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../Client/SupabaseClients";
 import { RotateCcw, LayoutGrid, Table, SlidersHorizontal, Search } from "lucide-react";
+import LoadingCircle from "../../Components/LoadingCircle";
 
 type Applicant = {
   applicant_id: string;
@@ -443,7 +444,9 @@ export default function ArchivePage() {
       {error ? <div className="text-red-600 text-sm">{error}</div> : null}
 
       {loading ? (
-        <div className="bg-white rounded-2xl border shadow-sm p-8 text-center text-gray-500">Loading archive...</div>
+        <div className="bg-white rounded-2xl border shadow-sm p-8">
+          <LoadingCircle label="Loading archive..." />
+        </div>
       ) : filtered.length === 0 ? (
         <div className="bg-white rounded-2xl border shadow-sm p-8 text-center text-gray-500">No archived employees.</div>
       ) : viewMode === "table" ? (

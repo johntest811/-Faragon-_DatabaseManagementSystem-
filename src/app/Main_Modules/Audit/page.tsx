@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Activity, AlertTriangle, ClipboardList, RefreshCw } from "lucide-react";
+import LoadingCircle from "../../Components/LoadingCircle";
 
 type AuditRow = {
   id: string;
@@ -177,7 +178,7 @@ export default function AuditPage() {
         </div>
       ) : null}
 
-      <div className="relative overflow-x-auto rounded-2xl border bg-white">
+      <div className="relative overflow-auto max-h-[70vh] rounded-2xl border bg-white">
         <table className="w-full text-sm text-black">
           <thead className="bg-gray-50 border-b sticky top-0 z-10">
             <tr>
@@ -192,15 +193,11 @@ export default function AuditPage() {
 
           <tbody>
             {loading ? (
-              Array.from({ length: 8 }).map((_, i) => (
-                <tr key={i} className="animate-pulse border-b">
-                  {Array.from({ length: 6 }).map((__, j) => (
-                    <td key={j} className="px-4 py-3">
-                      <div className="h-4 bg-gray-200 rounded w-full" />
-                    </td>
-                  ))}
-                </tr>
-              ))
+              <tr>
+                <td colSpan={6} className="px-4 py-10 text-center text-gray-500">
+                  <LoadingCircle label="Loading audit log..." />
+                </td>
+              </tr>
             ) : rows.length ? (
               rows.map((r) => (
                 <tr key={r.id} className="border-b hover:bg-gray-50 align-top">

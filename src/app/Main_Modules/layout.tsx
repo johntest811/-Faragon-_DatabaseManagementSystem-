@@ -47,7 +47,7 @@ const ALL_MENU = [
   { key: "archive", name: "Archive", href: "/Main_Modules/Archive/", icon: Archive },
   { key: "logistics", name: "Logistics", href: "/Main_Modules/Logistics/", icon: Truck },
   { key: "trash", name: "Trash", href: "/Main_Modules/Trash/", icon: Trash2 },
-  { key: "roles", name: "Roles", href: "/Main_Modules/Roles/", icon: Shield },
+  { key: "access", name: "Admin Accounts", href: "/Main_Modules/AdminAccounts/", icon: Shield },
   { key: "audit", name: "Audit", href: "/Main_Modules/Audit/", icon: ClipboardList },
   { key: "settings", name: "Settings", href: "/Main_Modules/Settings/", icon: Settings },
 ] as const;
@@ -72,19 +72,76 @@ export default function MainModulesLayout({ children }: LayoutProps) {
   const [logisticsOpen, setLogisticsOpen] = useState(false);
   const [logisticsFlyoutOpen, setLogisticsFlyoutOpen] = useState(false);
   const [activityOpen, setActivityOpen] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
   const [expiringOpen, setExpiringOpen] = useState(false);
   const [adminAlertOpen, setAdminAlertOpen] = useState(false);
   const [activityCount, setActivityCount] = useState(0);
   const [activityMissingTable, setActivityMissingTable] = useState(false);
   const [resendingKey, setResendingKey] = useState<string | null>(null);
+  const [sendToEmployees, setSendToEmployees] = useState(true);
   const [recentActivity, setRecentActivity] = useState<
     Array<{ id: string; created_at: string; actor_email: string | null; action: string; page: string | null }>
   >([]);
   const [expiringCount, setExpiringCount] = useState(0);
+  const [previewCount, setPreviewCount] = useState(0);
   function badgeText(n: number) {
     if (!Number.isFinite(n) || n <= 0) return "";
     return n > 9 ? "9+" : String(n);
   }
+  function badgeTextWide(n: number) {
+    if (!Number.isFinite(n) || n <= 0) return "";
+    return n > 99 ? "99+" : String(n);
+  }
+
+  function fullName(first: string | null, last: string | null) {
+    const value = `${first ?? ""} ${last ?? ""}`.trim();
+    return value || "—";
+  }
+
+  function serviceYearsExact(hiredAt: string | null, now: Date) {
+    if (!hiredAt) return null;
+    const hired = new Date(hiredAt);
+    const h = hired.getTime();
+    if (!Number.isFinite(h)) return null;
+    const diffMs = now.getTime() - h;
+    if (!Number.isFinite(diffMs) || diffMs < 0) return null;
+    const yearMs = 365.25 * 24 * 60 * 60 * 1000;
+    return diffMs / yearMs;
+  }
+
+  function formatServiceLengthShort(hiredAt: string | null) {
+    const now = new Date();
+    const years = serviceYearsExact(hiredAt, now);
+    if (years == null) return "—";
+    const wholeYears = Math.floor(years);
+    const months = Math.floor((years - wholeYears) * 12);
+    if (wholeYears <= 0) return `${Math.max(0, months)}m`;
+    if (months <= 0) return `${wholeYears}y`;
+    return `${wholeYears}y ${months}m`;
+  }
+
+  const [previewRows, setPreviewRows] = useState<
+    Array<{
+      applicant_id: string;
+      first_name: string | null;
+      last_name: string | null;
+      client_position: string | null;
+      detachment: string | null;
+      date_hired_fsai: string | null;
+    }>
+  >([]);
+
+  type ApplicantPreviewDbRow = {
+    applicant_id: string;
+    first_name: string | null;
+    last_name: string | null;
+    client_position: string | null;
+    detachment: string | null;
+    date_hired_fsai: string | null;
+    status: string | null;
+    is_archived: boolean | null;
+    is_trashed: boolean | null;
+  };
   const [expiringRows, setExpiringRows] = useState<
     Array<{
       applicant_id: string;
@@ -103,6 +160,20 @@ export default function MainModulesLayout({ children }: LayoutProps) {
   useRealtimeRefresh(["applicants"]);
 
   const api = (globalThis as unknown as { electronAPI?: any }).electronAPI;
+
+  async function refreshNotificationPrefs() {
+    try {
+      if (!api?.settings?.loadNotificationConfig) {
+        setSendToEmployees(true);
+        return;
+      }
+      const cfg = await api.settings.loadNotificationConfig();
+      const pref = (cfg as any)?.preferences;
+      setSendToEmployees(pref?.send_to_employees !== false);
+    } catch {
+      setSendToEmployees(true);
+    }
+  }
 
   useEffect(() => {
     // Initialize "last seen" timestamp for activity notifications.
@@ -145,14 +216,78 @@ export default function MainModulesLayout({ children }: LayoutProps) {
     function onDocDown(e: MouseEvent) {
       const t = e.target as HTMLElement | null;
       if (!t) return;
-      if (t.closest?.("[data-activity-menu]") || t.closest?.("[data-expiring-menu]") || t.closest?.("[data-admin-alert-menu]")) return;
+      if (
+        t.closest?.("[data-activity-menu]") ||
+        t.closest?.("[data-preview-menu]") ||
+        t.closest?.("[data-expiring-menu]") ||
+        t.closest?.("[data-admin-alert-menu]")
+      ) return;
       setActivityOpen(false);
+      setPreviewOpen(false);
       setExpiringOpen(false);
       setAdminAlertOpen(false);
     }
     document.addEventListener("mousedown", onDocDown);
     return () => document.removeEventListener("mousedown", onDocDown);
   }, []);
+
+  async function refreshPreview() {
+    try {
+      const now = new Date();
+      const threshold = new Date(now);
+      threshold.setFullYear(threshold.getFullYear() - 1);
+
+      const res = await supabase
+        .from("applicants")
+        .select(
+          "applicant_id, first_name, last_name, client_position, detachment, date_hired_fsai, status, is_archived, is_trashed",
+          { count: "exact" }
+        )
+        .eq("is_archived", false)
+        .eq("is_trashed", false)
+        .lte("date_hired_fsai", threshold.toISOString())
+        .order("date_hired_fsai", { ascending: true })
+        .limit(200);
+
+      if (res.error) {
+        setPreviewRows([]);
+        setPreviewCount(0);
+        return;
+      }
+
+      const data = ((res.data ?? []) as unknown) as ApplicantPreviewDbRow[];
+      const rows: Array<{
+        applicant_id: string;
+        first_name: string | null;
+        last_name: string | null;
+        client_position: string | null;
+        detachment: string | null;
+        date_hired_fsai: string | null;
+      }> = [];
+
+      for (const r of data) {
+        const years = serviceYearsExact(r.date_hired_fsai, now);
+        const s = String(r.status ?? "").trim().toUpperCase();
+        const excluded = s === "REASSIGN" || s === "RETIRED" || s === "RESIGNED";
+        if (excluded) continue;
+        if (years == null || years < 1) continue;
+        rows.push({
+          applicant_id: String(r.applicant_id ?? ""),
+          first_name: r.first_name ?? null,
+          last_name: r.last_name ?? null,
+          client_position: r.client_position ?? null,
+          detachment: r.detachment ?? null,
+          date_hired_fsai: r.date_hired_fsai ?? null,
+        });
+      }
+
+      setPreviewRows(rows);
+      setPreviewCount(Number.isFinite(Number(res.count)) ? Number(res.count) : rows.length);
+    } catch {
+      setPreviewRows([]);
+      setPreviewCount(0);
+    }
+  }
 
   async function refreshActivity() {
     if (!api?.audit?.getRecent) return;
@@ -180,6 +315,7 @@ export default function MainModulesLayout({ children }: LayoutProps) {
   async function refreshExpiring() {
     if (!api?.notifications?.getExpiringSummary) return;
     try {
+      await refreshNotificationPrefs();
       const res = await api.notifications.getExpiringSummary({ limit: 50 });
       setExpiringCount(Number((res as any)?.pendingCount ?? res?.count ?? 0));
       const sortedRows = ([...((res?.rows ?? []) as any[])]).sort((a, b) => {
@@ -350,6 +486,9 @@ export default function MainModulesLayout({ children }: LayoutProps) {
         fromDb.add("resigned");
         fromDb.add("retired");
         fromDb.add("audit");
+        // Backwards-compatibility: allow access-management section even if
+        // the module row hasn't been added yet.
+        fromDb.add("access");
       }
       return fromDb;
     }
@@ -358,7 +497,7 @@ export default function MainModulesLayout({ children }: LayoutProps) {
     if (!sessionRole) return new Set<string>();
     if (sessionRole === "superadmin") return new Set(ALL_MENU.map((m) => m.key));
     if (sessionRole === "admin") {
-      return new Set(["dashboard", "employees", "reassign", "resigned", "retired", "archive", "logistics", "trash", "settings", "roles", "audit"]);
+      return new Set(["dashboard", "employees", "reassign", "resigned", "retired", "archive", "logistics", "trash", "settings", "access", "audit"]);
     }
     return new Set(["dashboard", "employees", "archive"]);
   }, [sessionRole, myModules]);
@@ -380,9 +519,15 @@ export default function MainModulesLayout({ children }: LayoutProps) {
         "/Main_Modules/Inventory/",
         "/Main_Modules/Paraphernalia/",
         "/Main_Modules/Reports/",
-        "/Main_Modules/Requests/",
       ].some((prefix) => pathname === prefix || pathname.startsWith(prefix));
-    const allowed = baseAllowed || logisticsChildAllowed;
+    const accessChildAllowed =
+      allowedKeys.has("access") &&
+      [
+        "/Main_Modules/AdminAccounts/",
+        "/Main_Modules/Roles/",
+        "/Main_Modules/Permissions/",
+      ].some((prefix) => pathname === prefix || pathname.startsWith(prefix));
+    const allowed = baseAllowed || logisticsChildAllowed || accessChildAllowed;
     if (!allowed) {
       router.replace("/Main_Modules/Dashboard/");
     }
@@ -400,7 +545,6 @@ export default function MainModulesLayout({ children }: LayoutProps) {
         { key: "logistics_inventory", name: "Inventory", href: "/Main_Modules/Inventory/", icon: Package },
         { key: "logistics_paraphernalia", name: "Paraphernalia", href: "/Main_Modules/Paraphernalia/", icon: Package },
         { key: "logistics_reports", name: "Reports", href: "/Main_Modules/Reports/", icon: FileText },
-        { key: "logistics_requests", name: "Requests", href: "/Main_Modules/Requests/", icon: ClipboardCheck },
       ] as const,
     []
   );
@@ -445,7 +589,6 @@ export default function MainModulesLayout({ children }: LayoutProps) {
       "/Main_Modules/Inventory/",
       "/Main_Modules/Paraphernalia/",
       "/Main_Modules/Reports/",
-      "/Main_Modules/Requests/",
     ].some((prefix) => pathname === prefix || pathname.startsWith(prefix));
   }, [logisticsAllowed, pathname]);
 
@@ -688,6 +831,7 @@ export default function MainModulesLayout({ children }: LayoutProps) {
                     type="button"
                     onClick={() => {
                       setActivityOpen((v) => !v);
+                      setPreviewOpen(false);
                       setExpiringOpen(false);
                       setAdminAlertOpen(false);
                       refreshActivity();
@@ -767,6 +911,7 @@ export default function MainModulesLayout({ children }: LayoutProps) {
                     onClick={() => {
                       setExpiringOpen((v) => !v);
                       setActivityOpen(false);
+                      setPreviewOpen(false);
                       setAdminAlertOpen(false);
                       refreshExpiring();
                     }}
@@ -855,31 +1000,33 @@ export default function MainModulesLayout({ children }: LayoutProps) {
                                     {(Number(r.sent_count ?? 0) > 0) ? `Sent ${r.sent_count}x` : "Not sent"}
                                   </span>
 
-                                  <button
-                                    type="button"
-                                    disabled={!api?.notifications?.resendLicensureNotice || resendingKey === `${r.applicant_id}:${r.license_type}:${r.expires_on}`}
-                                    className="text-[11px] px-2 py-0.5 rounded-full border bg-white text-gray-800 hover:bg-gray-50 disabled:opacity-50"
-                                    onClick={async (ev) => {
-                                      ev.stopPropagation();
-                                      const k = `${r.applicant_id}:${r.license_type}:${r.expires_on}`;
-                                      if (!api?.notifications?.resendLicensureNotice) return;
-                                      try {
-                                        setResendingKey(k);
-                                        await api.notifications.resendLicensureNotice({
-                                          applicant_id: r.applicant_id,
-                                          license_type: r.license_type,
-                                          expires_on: r.expires_on,
-                                        });
-                                        await refreshExpiring();
-                                      } catch {
-                                        // ignore (Electron main logs failures)
-                                      } finally {
-                                        setResendingKey(null);
-                                      }
-                                    }}
-                                  >
-                                    Resend
-                                  </button>
+                                  {sendToEmployees ? (
+                                    <button
+                                      type="button"
+                                      disabled={!api?.notifications?.resendLicensureNotice || resendingKey === `${r.applicant_id}:${r.license_type}:${r.expires_on}`}
+                                      className="text-[11px] px-2 py-0.5 rounded-full border bg-white text-gray-800 hover:bg-gray-50 disabled:opacity-50"
+                                      onClick={async (ev) => {
+                                        ev.stopPropagation();
+                                        const k = `${r.applicant_id}:${r.license_type}:${r.expires_on}`;
+                                        if (!api?.notifications?.resendLicensureNotice) return;
+                                        try {
+                                          setResendingKey(k);
+                                          await api.notifications.resendLicensureNotice({
+                                            applicant_id: r.applicant_id,
+                                            license_type: r.license_type,
+                                            expires_on: r.expires_on,
+                                          });
+                                          await refreshExpiring();
+                                        } catch {
+                                          // ignore (Electron main logs failures)
+                                        } finally {
+                                          setResendingKey(null);
+                                        }
+                                      }}
+                                    >
+                                      Resend
+                                    </button>
+                                  ) : null}
                                 </div>
                               </div>
                               {r.last_sent_at ? (
@@ -889,6 +1036,88 @@ export default function MainModulesLayout({ children }: LayoutProps) {
                           ))
                         ) : (
                           <div className="px-4 py-6 text-sm text-gray-500">No expiring licenses found.</div>
+                        )}
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+
+                <div className="relative" data-preview-menu>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPreviewOpen((v) => !v);
+                      setActivityOpen(false);
+                      setExpiringOpen(false);
+                      setAdminAlertOpen(false);
+                      refreshPreview();
+                    }}
+                    className="relative h-10 w-10 rounded-xl bg-[#FFDA03] text-black flex items-center justify-center"
+                    aria-label="Preview (1+ year of service)"
+                    title="Preview (1+ year of service)"
+                  >
+                    <Users className="w-5 h-5" />
+                    {previewCount > 0 ? (
+                      <span
+                        className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-red-600 text-white text-[10px] font-bold leading-[18px] text-center shadow"
+                        aria-label={`Preview employees count ${previewCount}`}
+                      >
+                        {badgeTextWide(previewCount)}
+                      </span>
+                    ) : null}
+                  </button>
+
+                  {previewOpen ? (
+                    <div className="absolute right-0 mt-2 w-[520px] max-w-[92vw] rounded-2xl border bg-white shadow-lg overflow-hidden z-50">
+                      <div className="px-4 py-3 border-b flex items-center justify-between">
+                        <div className="text-sm font-semibold text-black">Preview (1+ year of service)</div>
+                        <div className="text-xs text-gray-500">Hire date-based</div>
+                      </div>
+
+                      <div className="max-h-[360px] overflow-auto">
+                        {previewRows.length ? (
+                          previewRows.map((e) => (
+                            <div
+                              key={e.applicant_id}
+                              role="button"
+                              tabIndex={0}
+                              onKeyDown={(ev) => {
+                                if (ev.key !== "Enter" && ev.key !== " ") return;
+                                ev.preventDefault();
+                                router.push(
+                                  `/Main_Modules/Employees/details/?id=${encodeURIComponent(
+                                    e.applicant_id
+                                  )}&from=${encodeURIComponent("/Main_Modules/Employees/")}`
+                                );
+                                setPreviewOpen(false);
+                              }}
+                              onClick={() => {
+                                router.push(
+                                  `/Main_Modules/Employees/details/?id=${encodeURIComponent(
+                                    e.applicant_id
+                                  )}&from=${encodeURIComponent("/Main_Modules/Employees/")}`
+                                );
+                                setPreviewOpen(false);
+                              }}
+                              className="px-4 py-3 border-b last:border-b-0 cursor-pointer hover:bg-gray-50"
+                              title="Open employee details"
+                            >
+                              <div className="flex items-center justify-between gap-3">
+                                <div className="text-sm font-medium text-black truncate">
+                                  {fullName(e.first_name, e.last_name)}
+                                </div>
+                                <div className="text-xs text-gray-600 whitespace-nowrap">
+                                  {e.date_hired_fsai ? new Date(e.date_hired_fsai).toLocaleDateString() : "—"}
+                                </div>
+                              </div>
+                              <div className="text-xs text-gray-600 truncate">
+                                {(e.client_position ?? "—")} • {(e.detachment ?? "—")}
+                              </div>
+                              <div className="mt-1 text-[11px] text-gray-500">Service: {formatServiceLengthShort(e.date_hired_fsai)}</div>
+                            </div>
+                          ))
+                        ) : (
+                          <div className="px-4 py-6 text-sm text-gray-500">No employees match the 1+ year of service criteria.</div>
                         )}
                       </div>
                     </div>
@@ -909,6 +1138,7 @@ export default function MainModulesLayout({ children }: LayoutProps) {
                     onClick={() => {
                       setAdminAlertOpen((v) => !v);
                       setActivityOpen(false);
+                      setPreviewOpen(false);
                       setExpiringOpen(false);
                     }}
                     className="relative h-10 w-10 rounded-xl bg-[#FFDA03] text-black flex items-center justify-center"
@@ -977,16 +1207,6 @@ export default function MainModulesLayout({ children }: LayoutProps) {
                             }}
                           >
                             Inventory
-                          </button>
-                          <button
-                            type="button"
-                            className="text-xs px-3 py-2 rounded-lg border bg-white hover:bg-gray-50"
-                            onClick={() => {
-                              setAdminAlertOpen(false);
-                              router.push("/Main_Modules/Requests/");
-                            }}
-                          >
-                            Requests
                           </button>
                         </div>
                       </div>

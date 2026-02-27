@@ -5,6 +5,7 @@ import Link from "next/link";
 import { supabase } from "../../Client/SupabaseClients";
 import { RotateCcw, Trash2, Skull } from "lucide-react";
 import { useAuthRole } from "../../Client/useRbac";
+import LoadingCircle from "../../Components/LoadingCircle";
 
 type Applicant = {
   applicant_id: string;
@@ -187,7 +188,9 @@ export default function TrashPage() {
       {error ? <div className="text-red-600 text-sm">{error}</div> : null}
 
       {loading ? (
-        <div className="bg-white rounded-2xl border shadow-sm p-8 text-center text-gray-500">Loading trash...</div>
+        <div className="bg-white rounded-2xl border shadow-sm p-8">
+          <LoadingCircle label="Loading trash..." />
+        </div>
       ) : filtered.length === 0 ? (
         <div className="bg-white rounded-2xl border shadow-sm p-8 text-center text-gray-500">Trash is empty.</div>
       ) : (

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Pencil, Plus, Search, Trash2 } from "lucide-react";
 import { supabase } from "@/app/Client/SupabaseClients";
+import LoadingCircle from "@/app/Components/LoadingCircle";
 
 type ParaphernaliaRow = {
   id_paraphernalia: string;
@@ -586,7 +587,9 @@ export default function ParaphernaliaPage() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={6} className="px-4 py-8 text-center text-gray-500">Loading paraphernalia...</td>
+                  <td colSpan={6} className="px-4 py-8 text-center text-gray-500">
+                    <LoadingCircle label="Loading paraphernalia..." className="py-2" />
+                  </td>
                 </tr>
               ) : filteredParaphernalia.length ? (
                 filteredParaphernalia.map((r) => (
@@ -645,7 +648,9 @@ export default function ParaphernaliaPage() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={6} className="px-4 py-8 text-center text-gray-500">Loading inventory...</td>
+                  <td colSpan={6} className="px-4 py-8 text-center text-gray-500">
+                    <LoadingCircle label="Loading inventory..." className="py-2" />
+                  </td>
                 </tr>
               ) : filteredInventory.length ? (
                 filteredInventory.map((r) => (
@@ -710,7 +715,9 @@ export default function ParaphernaliaPage() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={6} className="px-4 py-8 text-center text-gray-500">Loading restock history...</td>
+                  <td colSpan={6} className="px-4 py-8 text-center text-gray-500">
+                    <LoadingCircle label="Loading restock history..." className="py-2" />
+                  </td>
                 </tr>
               ) : filteredRestock.length ? (
                 filteredRestock.map((r) => (

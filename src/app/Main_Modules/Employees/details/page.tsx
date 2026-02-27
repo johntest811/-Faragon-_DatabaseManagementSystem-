@@ -21,6 +21,7 @@ import {
 import { supabase } from "../../../Client/SupabaseClients";
 import { useAuthRole } from "../../../Client/useRbac";
 import EmployeeEditorModal from "../../../Components/EmployeeEditorModal";
+import LoadingCircle from "../../../Components/LoadingCircle";
 
 type Applicant = {
   applicant_id: string;
@@ -546,8 +547,8 @@ function EmployeeDetailsInner() {
 
   if (loading) {
     return (
-      <div className="bg-white rounded-3xl border shadow-sm p-8 text-center text-gray-500">
-        Loading employee details...
+      <div className="bg-white rounded-3xl border shadow-sm p-8">
+        <LoadingCircle label="Loading employee details..." />
       </div>
     );
   }

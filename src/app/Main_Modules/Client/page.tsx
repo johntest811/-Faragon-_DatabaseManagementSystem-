@@ -10,8 +10,6 @@ type ClientRow = {
   contract_id: string;
   applicant_id: string | null;
   contract_no: string | null;
-  start_date: string | null;
-  end_date: string | null;
   status: string | null;
   created_at: string | null;
   contract_no_date: string | null;
@@ -49,8 +47,6 @@ type ContractForm = {
   project_name: string;
   specific_area: string;
   cluster: string;
-  start_date: string;
-  end_date: string;
   contract_start: string;
   contract_end: string;
   contracted_manpower: string;
@@ -67,8 +63,6 @@ const EMPTY_FORM: ContractForm = {
   project_name: "",
   specific_area: "",
   cluster: "",
-  start_date: "",
-  end_date: "",
   contract_start: "",
   contract_end: "",
   contracted_manpower: "",
@@ -193,9 +187,9 @@ export default function ClientsPage() {
     setError("");
 
     const wideSelect =
-      "contract_id, applicant_id, contract_no, start_date, end_date, status, created_at, contract_no_date, cluster, client_name, specific_area, project_name, contract_start, contract_end, contracted_manpower, deployed_guards, remarks";
+      "contract_id, applicant_id, contract_no, status, created_at, contract_no_date, cluster, client_name, specific_area, project_name, contract_start, contract_end, contracted_manpower, deployed_guards, remarks";
 
-    const narrowSelect = "contract_id, applicant_id, contract_no, start_date, end_date, status, created_at";
+    const narrowSelect = "contract_id, applicant_id, contract_no, status, created_at";
 
     const applicantNameSelect = "first_name, middle_name, last_name, extn_name";
     const directApplicantEmbed = `applicants!contracts_applicant_id_fkey(${applicantNameSelect})`;
@@ -299,8 +293,6 @@ export default function ClientsPage() {
         contract_id: String(contract.contract_id),
         applicant_id: contractApplicantId,
         contract_no: contract.contract_no == null ? null : String(contract.contract_no),
-        start_date: contract.start_date == null ? null : String(contract.start_date),
-        end_date: contract.end_date == null ? null : String(contract.end_date),
         status: contract.status == null ? null : String(contract.status),
         created_at: contract.created_at == null ? null : String(contract.created_at),
         contract_no_date: contract.contract_no_date == null ? null : String(contract.contract_no_date),
@@ -387,8 +379,6 @@ export default function ClientsPage() {
       project_name: toNullableText(contractForm.project_name),
       specific_area: toNullableText(contractForm.specific_area),
       cluster: toNullableText(contractForm.cluster),
-      start_date: toNullableText(contractForm.start_date),
-      end_date: toNullableText(contractForm.end_date),
       contract_start: toNullableText(contractForm.contract_start),
       contract_end: toNullableText(contractForm.contract_end),
       contracted_manpower: toNumberOrNull(contractForm.contracted_manpower),
@@ -504,8 +494,6 @@ export default function ClientsPage() {
       project_name: row.project_name ?? "",
       specific_area: row.specific_area ?? "",
       cluster: row.cluster ?? "",
-      start_date: row.start_date ?? "",
-      end_date: row.end_date ?? "",
       contract_start: row.contract_start ?? "",
       contract_end: row.contract_end ?? "",
       contracted_manpower: row.contracted_manpower == null ? "" : String(row.contracted_manpower),
@@ -529,6 +517,68 @@ export default function ClientsPage() {
       .filter((v): v is string => Boolean(v));
     const base = row.applicant_id ? [row.applicant_id] : [];
     setSelectedApplicantIds(Array.from(new Set([...base, ...joinIds])));
+  }
+
+  async function openDetails(row: ClientRow) {
+    setDetailsRow(row);
+
+    const contractId = row.contract_id;
+    const idSet = new Set<string>();
+    if (row.applicant_id) idSet.add(row.applicant_id);
+    for (const link of row.employeeLinks) {
+      if (link.applicant_id) idSet.add(link.applicant_id);
+    }
+
+    try {
+      const joinRes = await supabase
+        .from("contract_employees")
+        .select("applicant_id")
+        .eq("contract_id", contractId);
+
+      if (!joinRes.error) {
+        for (const jr of ((joinRes.data ?? []) as Array<{ applicant_id: string | null }>)) {
+          if (jr.applicant_id) idSet.add(String(jr.applicant_id));
+        }
+      }
+
+      const ids = Array.from(idSet);
+      if (!ids.length) return;
+
+      const appRes = await supabase
+        .from("applicants")
+        .select("applicant_id, first_name, middle_name, last_name, extn_name")
+        .in("applicant_id", ids);
+
+      if (appRes.error) return;
+
+      const links = ((appRes.data ?? []) as Array<Record<string, unknown>>)
+        .map((a) => {
+          const applicantId = a.applicant_id == null ? null : String(a.applicant_id);
+          const name = formatApplicantName({
+            first_name: a.first_name == null ? null : String(a.first_name),
+            middle_name: a.middle_name == null ? null : String(a.middle_name),
+            last_name: a.last_name == null ? null : String(a.last_name),
+            extn_name: a.extn_name == null ? null : String(a.extn_name),
+          });
+          if (!applicantId || !name || name === "—") return null;
+          return { applicant_id: applicantId, name };
+        })
+        .filter((v): v is { applicant_id: string; name: string } => Boolean(v))
+        .sort((a, b) => a.name.localeCompare(b.name));
+
+      setDetailsRow((prev) => {
+        if (!prev) return prev;
+        if (prev.contract_id !== contractId) return prev;
+        if (!links.length) return prev;
+        return {
+          ...prev,
+          employeeLinks: links,
+          employees: links.map((x) => x.name),
+        };
+      });
+    } catch {
+      // Ignore details hydration errors to avoid blocking the modal.
+    }
   }
 
   useEffect(() => {
@@ -562,8 +612,6 @@ export default function ClientsPage() {
           r.project_name,
           r.specific_area,
           r.cluster,
-          r.start_date,
-          r.end_date,
           r.contract_start,
           r.contract_end,
           r.status,
@@ -645,8 +693,8 @@ export default function ClientsPage() {
       ) : null}
 
       <div className="rounded-2xl border bg-white p-4 space-y-3">
-        <div className="font-semibold text-black">Create Logistics Records</div>
-        <div className="text-sm text-gray-500">Create a connected contracts record with full logistics fields.</div>
+        <div className="font-semibold text-black">Create Contracts</div>
+        <div className="text-sm text-gray-500">Create a connected contract record with full fields.</div>
         <button
           type="button"
           onClick={() => {
@@ -659,13 +707,13 @@ export default function ClientsPage() {
           }}
           className="rounded-xl bg-[#FFDA03] px-4 py-2 text-sm font-semibold text-black"
         >
-          Open Create Popup
+          Create Contract
         </button>
       </div>
 
       <ModalShell
         open={editorOpen}
-        title={editorMode === "edit" ? "Edit Logistics Record" : "Create Logistics Records"}
+        title={editorMode === "edit" ? "Edit Contract" : "Create Contract"}
         onClose={() => {
           setEditorOpen(false);
           setEditorMode("create");
@@ -718,14 +766,6 @@ export default function ClientsPage() {
           <div className="rounded-2xl border p-4 space-y-3">
             <div className="font-semibold text-black">Date Fields</div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              <div>
-                <label className={labelClass}>Start Date</label>
-                <input type="date" className={inputClass} value={contractForm.start_date} onChange={(e) => setContractForm((p) => ({ ...p, start_date: e.target.value }))} />
-              </div>
-              <div>
-                <label className={labelClass}>End Date</label>
-                <input type="date" className={inputClass} value={contractForm.end_date} onChange={(e) => setContractForm((p) => ({ ...p, end_date: e.target.value }))} />
-              </div>
               <div>
                 <label className={labelClass}>Created At</label>
                 <input type="datetime-local" className={inputClass} value={contractForm.created_at} onChange={(e) => setContractForm((p) => ({ ...p, created_at: e.target.value }))} />
@@ -820,8 +860,6 @@ export default function ClientsPage() {
                 "Project Name",
                 "Specific Area",
                 "Cluster",
-                "Start Date",
-                "End Date",
                 "Contract Start",
                 "Contract End",
                 "Contracted Manpower",
@@ -843,7 +881,7 @@ export default function ClientsPage() {
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan={15} className="px-4 py-8 text-center text-gray-500">
+                <td colSpan={13} className="px-4 py-8 text-center text-gray-500">
                   <LoadingCircle label="Loading contracts..." className="py-2" />
                 </td>
               </tr>
@@ -851,7 +889,7 @@ export default function ClientsPage() {
               paginated.map((row) => (
                 <tr
                   key={row.contract_id}
-                  onClick={() => setDetailsRow(row)}
+                  onClick={() => void openDetails(row)}
                   className="bg-white shadow-sm transition hover:shadow-md cursor-pointer"
                 >
                   <td className="px-4 py-3 rounded-l-xl">{fmt(row.contract_no)}</td>
@@ -860,8 +898,6 @@ export default function ClientsPage() {
                   <td className="px-4 py-3">{fmt(row.project_name)}</td>
                   <td className="px-4 py-3">{fmt(row.specific_area)}</td>
                   <td className="px-4 py-3">{fmt(row.cluster)}</td>
-                  <td className="px-4 py-3">{fmt(row.start_date)}</td>
-                  <td className="px-4 py-3">{fmt(row.end_date)}</td>
                   <td className="px-4 py-3">{fmt(row.contract_start)}</td>
                   <td className="px-4 py-3">{fmt(row.contract_end)}</td>
                   <td className="px-4 py-3">{fmt(row.contracted_manpower)}</td>
@@ -873,7 +909,7 @@ export default function ClientsPage() {
               ))
             ) : (
               <tr>
-                <td colSpan={15} className="px-4 py-8 text-center text-gray-500">No contracts found.</td>
+                <td colSpan={13} className="px-4 py-8 text-center text-gray-500">No contracts found.</td>
               </tr>
             )}
           </tbody>
@@ -902,7 +938,7 @@ export default function ClientsPage() {
 
       <ModalShell
         open={Boolean(detailsRow)}
-        title="Logistics Record Details"
+        title="Contract Details"
         onClose={() => setDetailsRow(null)}
       >
         {detailsRow ? (
@@ -920,44 +956,68 @@ export default function ClientsPage() {
                 Edit Contract
               </button>
             </div>
-            <div className="rounded-2xl border p-4 grid grid-cols-1 md:grid-cols-2 gap-3">
-              <div><span className="text-gray-500">Contract No:</span> {fmt(detailsRow.contract_no)}</div>
-              <div><span className="text-gray-500">Contract No Date:</span> {fmt(detailsRow.contract_no_date)}</div>
-              <div><span className="text-gray-500">Client Name:</span> {fmt(detailsRow.client_name)}</div>
-              <div><span className="text-gray-500">Project Name:</span> {fmt(detailsRow.project_name)}</div>
-              <div><span className="text-gray-500">Specific Area:</span> {fmt(detailsRow.specific_area)}</div>
-              <div><span className="text-gray-500">Cluster:</span> {fmt(detailsRow.cluster)}</div>
-              <div><span className="text-gray-500">Start Date:</span> {fmt(detailsRow.start_date)}</div>
-              <div><span className="text-gray-500">End Date:</span> {fmt(detailsRow.end_date)}</div>
-              <div><span className="text-gray-500">Contract Start:</span> {fmt(detailsRow.contract_start)}</div>
-              <div><span className="text-gray-500">Contract End:</span> {fmt(detailsRow.contract_end)}</div>
-              <div><span className="text-gray-500">Contracted Manpower:</span> {fmt(detailsRow.contracted_manpower)}</div>
-              <div><span className="text-gray-500">Deployed Guards:</span> {fmt(detailsRow.deployed_guards)}</div>
-              <div><span className="text-gray-500">Status:</span> {fmt(detailsRow.status)}</div>
-              <div><span className="text-gray-500">Created At:</span> {fmt(detailsRow.created_at)}</div>
-              <div className="md:col-span-2"><span className="text-gray-500">Remarks:</span> {fmt(detailsRow.remarks)}</div>
+            <div className="rounded-2xl border bg-white p-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {[
+                  { label: "Contract No", value: fmt(detailsRow.contract_no) },
+                  { label: "Contract No Date", value: fmt(detailsRow.contract_no_date) },
+                  { label: "Client Name", value: fmt(detailsRow.client_name) },
+                  { label: "Project Name", value: fmt(detailsRow.project_name) },
+                  { label: "Specific Area", value: fmt(detailsRow.specific_area) },
+                  { label: "Cluster", value: fmt(detailsRow.cluster) },
+                  { label: "Contract Start", value: fmt(detailsRow.contract_start) },
+                  { label: "Contract End", value: fmt(detailsRow.contract_end) },
+                  { label: "Contracted Manpower", value: fmt(detailsRow.contracted_manpower) },
+                  { label: "Deployed Guards", value: fmt(detailsRow.deployed_guards) },
+                  { label: "Status", value: fmt(detailsRow.status) },
+                  { label: "Created At", value: fmt(detailsRow.created_at) },
+                ].map((item) => (
+                  <div key={item.label} className="min-w-0">
+                    <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">{item.label}</div>
+                    <div className="mt-1 text-sm text-black truncate" title={item.value}>{item.value}</div>
+                  </div>
+                ))}
+                <div className="md:col-span-2">
+                  <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Remarks</div>
+                  <div className="mt-1 text-sm text-black whitespace-pre-wrap break-words">{fmt(detailsRow.remarks)}</div>
+                </div>
+              </div>
             </div>
 
-            <div className="rounded-2xl border p-4 space-y-2">
-              <div className="font-semibold">Connected Employees</div>
-              <div><span className="text-gray-500">Applicant ID:</span> {fmt(detailsRow.applicant_id)}</div>
+            <div className="rounded-2xl border bg-white p-4 space-y-3">
               <div>
-                <span className="text-gray-500">Employees:</span>{" "}
-                {detailsRow.employeeLinks.length ? (
-                  <span className="inline-flex flex-wrap gap-x-2 gap-y-1">
-                    {detailsRow.employeeLinks.map((employee) => (
-                      <Link
-                        key={employee.applicant_id}
-                        href={`/Main_Modules/Employees/details/?id=${encodeURIComponent(employee.applicant_id)}&from=${encodeURIComponent("/Main_Modules/Client/")}`}
-                        className="text-blue-700 hover:text-blue-800 underline"
-                      >
-                        {employee.name}
-                      </Link>
-                    ))}
-                  </span>
-                ) : detailsRow.employees.length ? (
-                  detailsRow.employees.join(", ")
-                ) : "—"}
+                <div className="text-sm font-semibold text-black">Connected Employees</div>
+                <div className="text-xs text-gray-500">Click a name to open the employee details page.</div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div className="md:col-span-1">
+                  <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Applicant ID</div>
+                  <div className="mt-1 text-sm text-black font-mono break-all">{fmt(detailsRow.applicant_id)}</div>
+                </div>
+
+                <div className="md:col-span-2">
+                  <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Employees</div>
+                  <div className="mt-2">
+                    {detailsRow.employeeLinks.length ? (
+                      <div className="flex flex-wrap gap-2">
+                        {detailsRow.employeeLinks.map((employee) => (
+                          <Link
+                            key={employee.applicant_id}
+                            href={`/Main_Modules/Employees/details/?id=${encodeURIComponent(employee.applicant_id)}&from=${encodeURIComponent("/Main_Modules/Client/")}`}
+                            className="inline-flex items-center rounded-full border bg-white px-3 py-1 text-sm font-medium text-blue-700 hover:bg-blue-50 hover:text-blue-800"
+                          >
+                            {employee.name}
+                          </Link>
+                        ))}
+                      </div>
+                    ) : detailsRow.employees.length ? (
+                      <div className="text-sm text-gray-700">{detailsRow.employees.join(", ")}</div>
+                    ) : (
+                      <div className="text-sm text-gray-500">—</div>
+                    )}
+                  </div>
+                </div>
               </div>
             </div>
           </div>

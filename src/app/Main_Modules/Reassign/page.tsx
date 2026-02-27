@@ -6,6 +6,7 @@ import { supabase } from "../../Client/SupabaseClients";
 import { Pencil, LayoutGrid, Table, SlidersHorizontal, Search, FileDown, FileText, Trash2 } from "lucide-react";
 import { useAuthRole } from "../../Client/useRbac";
 import EmployeeEditorModal from "../../Components/EmployeeEditorModal";
+import LoadingCircle from "../../Components/LoadingCircle";
 import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -616,7 +617,9 @@ export default function ReassignPage() {
       {error ? <div className="text-red-600 text-sm">{error}</div> : null}
 
       {loading ? (
-        <div className="bg-white rounded-2xl border shadow-sm p-8 text-center text-gray-500">Loading...</div>
+        <div className="bg-white rounded-2xl border shadow-sm p-8">
+          <LoadingCircle label="Loading employees..." />
+        </div>
       ) : filtered.length === 0 ? (
         <div className="bg-white rounded-2xl border shadow-sm p-8 text-center text-gray-500">No employees in Reassign.</div>
       ) : viewMode === "table" ? (

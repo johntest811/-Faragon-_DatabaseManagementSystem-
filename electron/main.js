@@ -66,6 +66,21 @@ function isMissingTableMessage(msg, tableName) {
   );
 }
 
+function isMissingColumnMessage(msg, columnName) {
+  const m = String(msg || '');
+  const c = String(columnName || '').trim();
+  if (!c) return false;
+  const cl = c.toLowerCase();
+  const ml = m.toLowerCase();
+  if (!ml.includes(cl)) return false;
+  return (
+    /does\s+not\s+exist/i.test(m) ||
+    /could\s+not\s+find/i.test(m) ||
+    /column/i.test(m) ||
+    /PGRST/i.test(m)
+  );
+}
+
 async function fetchAllRows(admin, tableName, { pageSize = 1000, maxRows = 200000 } = {}) {
   const rows = [];
   let offset = 0;
@@ -302,6 +317,9 @@ function loadLocalNotificationPrefs() {
   return {
     includeExpired: Boolean(raw.includeExpired),
     expiredWithinDays: clampInt(raw.expiredWithinDays, { min: 1, max: 365, fallback: 7 }),
+    // Backwards-compatible local fallback for DBs missing `send_to_employees`.
+    // Default: true.
+    sendToEmployees: raw.sendToEmployees === false ? false : true,
   };
 }
 
@@ -309,6 +327,7 @@ function saveLocalNotificationPrefs(payload) {
   const next = {
     includeExpired: Boolean(payload?.includeExpired),
     expiredWithinDays: clampInt(payload?.expiredWithinDays, { min: 1, max: 365, fallback: 7 }),
+    sendToEmployees: payload?.sendToEmployees === false ? false : true,
   };
 
   writeEncryptedJson(getLocalNotificationPrefsFilePath(), next);
@@ -360,7 +379,7 @@ async function loadConfiguredRecipientEmails(admin) {
 
 async function loadNotificationConfig(admin) {
   const localPrefs = loadLocalNotificationPrefs();
-  const [emailRes, prefRes, recipientEmails] = await Promise.all([
+  const [emailRes, recipientEmails] = await Promise.all([
     admin
       .from('notification_email_settings')
       .select('id, provider, gmail_user, from_email, gmail_app_password, is_active, notes')
@@ -368,23 +387,52 @@ async function loadNotificationConfig(admin) {
       .order('updated_at', { ascending: false })
       .limit(1)
       .maybeSingle(),
-    admin
-      .from('notification_preferences')
-      .select(
-        'id, is_enabled, days_before_expiry, include_driver_license, include_security_license, include_insurance, use_scheduled_send, send_time_local, timezone'
-      )
-      .order('updated_at', { ascending: false })
-      .limit(1)
-      .maybeSingle(),
     loadConfiguredRecipientEmails(admin),
   ]);
 
   if (emailRes.error) throw emailRes.error;
+
+  // Backward compatible: older DBs may not have send_to_employees yet.
+  let prefRes = await admin
+    .from('notification_preferences')
+    .select(
+      'id, is_enabled, send_to_employees, days_before_expiry, include_driver_license, include_security_license, include_insurance, use_scheduled_send, send_time_local, timezone'
+    )
+    .order('updated_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (prefRes.error) {
+    const msg = safeText(prefRes.error?.message || prefRes.error);
+    if (isMissingColumnMessage(msg, 'send_to_employees')) {
+      prefRes = await admin
+        .from('notification_preferences')
+        .select(
+          'id, is_enabled, days_before_expiry, include_driver_license, include_security_license, include_insurance, use_scheduled_send, send_time_local, timezone'
+        )
+        .order('updated_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+    }
+  }
+
   if (prefRes.error) throw prefRes.error;
+
+  // If the DB doesn't have `send_to_employees` (or the row doesn't include it),
+  // fall back to local encrypted prefs so the toggle still persists.
+  let prefRow = prefRes.data ?? null;
+  if (prefRow && typeof prefRow === 'object') {
+    if (typeof prefRow.send_to_employees === 'undefined') {
+      prefRow = { ...prefRow, send_to_employees: localPrefs.sendToEmployees };
+    }
+  } else {
+    // If preferences row is missing entirely, still provide a minimal object.
+    prefRow = { send_to_employees: localPrefs.sendToEmployees };
+  }
 
   return {
     email: emailRes.data ?? null,
-    preferences: prefRes.data ?? null,
+    preferences: prefRow,
     recipients: recipientEmails,
     localPrefs,
     env: {
@@ -848,6 +896,7 @@ async function runNotificationSend(admin) {
   const daysBefore = Number(preferences.days_before_expiry ?? 30);
   const useScheduledSend = preferences?.use_scheduled_send !== false;
   const sendTimeLocal = useScheduledSend ? preferences.send_time_local : null;
+  const sendToEmployees = preferences?.send_to_employees !== false;
   const configuredRecipients = Array.isArray(recipients) ? recipients.map((x) => safeText(x).toLowerCase()).filter(Boolean) : [];
   const useConfiguredRecipients = configuredRecipients.length > 0;
 
@@ -864,6 +913,18 @@ async function runNotificationSend(admin) {
         arr.push(item);
         byRecipient.set(to, arr);
       }
+      continue;
+    }
+
+    if (!sendToEmployees) {
+      await admin.from('licensure_notification_log').insert({
+        applicant_id: item.applicant_id,
+        license_type: item.license_type,
+        expires_on: item.expires_on,
+        recipient_email: null,
+        status: 'SKIPPED',
+        error_message: 'Employee email sending is disabled (send_to_employees=false) and no active notification recipient is configured.',
+      });
       continue;
     }
 
@@ -1165,6 +1226,7 @@ ipcMain.handle('settings:saveNotificationConfig', async (_event, payload) => {
 
   const prefPayload = {
     is_enabled: Boolean(preferences.is_enabled ?? true),
+    send_to_employees: Boolean(preferences.send_to_employees ?? true),
     days_before_expiry: daysBefore,
     include_driver_license: Boolean(preferences.include_driver_license ?? false),
     include_security_license: Boolean(preferences.include_security_license ?? true),
@@ -1174,13 +1236,23 @@ ipcMain.handle('settings:saveNotificationConfig', async (_event, payload) => {
     timezone: safeText(preferences.timezone) || 'Asia/Manila',
   };
 
-  if (existingPref.data?.id) {
-    const upd = await admin.from('notification_preferences').update(prefPayload).eq('id', existingPref.data.id);
-    if (upd.error) throw upd.error;
-  } else {
-    const ins = await admin.from('notification_preferences').insert(prefPayload);
-    if (ins.error) throw ins.error;
+  async function writePrefs(payloadToWrite) {
+    if (existingPref.data?.id) {
+      return await admin.from('notification_preferences').update(payloadToWrite).eq('id', existingPref.data.id);
+    }
+    return await admin.from('notification_preferences').insert(payloadToWrite);
   }
+
+  let prefWrite = await writePrefs(prefPayload);
+  if (prefWrite.error) {
+    const msg = safeText(prefWrite.error?.message || prefWrite.error);
+    if (isMissingColumnMessage(msg, 'send_to_employees')) {
+      const compat = { ...prefPayload };
+      delete compat.send_to_employees;
+      prefWrite = await writePrefs(compat);
+    }
+  }
+  if (prefWrite.error) throw prefWrite.error;
 
   await insertAuditEvent(admin, {
     actor_user_id: payload?.actor?.user_id ?? null,
@@ -1194,6 +1266,7 @@ ipcMain.handle('settings:saveNotificationConfig', async (_event, payload) => {
       include_driver_license: Boolean(prefPayload.include_driver_license),
       include_security_license: Boolean(prefPayload.include_security_license),
       include_insurance: Boolean(prefPayload.include_insurance),
+      send_to_employees: Boolean(prefPayload.send_to_employees),
     },
   });
 
@@ -1279,6 +1352,7 @@ ipcMain.handle('notifications:resendLicensureNotice', async (_event, payload) =>
   const { email, preferences } = await loadNotificationConfig(admin);
   if (!preferences?.is_enabled) throw new Error('Notifications are disabled.');
   if (email && !email.is_active) throw new Error('Gmail sender is not active.');
+  if (preferences?.send_to_employees === false) throw new Error('Sending to employee emails is disabled in Settings.');
 
   const aRes = await admin
     .from('applicants')
@@ -1490,6 +1564,7 @@ ipcMain.handle('notifications:resendAllExpiring', async (_event, payload) => {
   const expiring = await fetchExpiringRows(admin, preferences ?? {}, localPrefs);
   const configuredRecipients = Array.isArray(recipients) ? recipients.map((x) => safeText(x).toLowerCase()).filter(Boolean) : [];
   const useConfiguredRecipients = configuredRecipients.length > 0;
+  const sendToEmployees = preferences?.send_to_employees !== false;
 
   const maxRecipients = clampInt(payload?.maxRecipients, { min: 1, max: 2000, fallback: 0 });
 
@@ -1508,6 +1583,19 @@ ipcMain.handle('notifications:resendAllExpiring', async (_event, payload) => {
         arr.push(item);
         byRecipient.set(to, arr);
       }
+      continue;
+    }
+
+    if (!sendToEmployees) {
+      await admin.from('licensure_notification_log').insert({
+        applicant_id: item.applicant_id,
+        license_type: item.license_type,
+        expires_on: item.expires_on,
+        recipient_email: null,
+        status: 'SKIPPED',
+        error_message: 'Employee email sending is disabled (send_to_employees=false) and no active notification recipient is configured.',
+      });
+      skipped += 1;
       continue;
     }
 

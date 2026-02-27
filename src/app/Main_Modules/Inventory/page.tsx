@@ -4,6 +4,7 @@ import { useMemo, useState, useEffect } from "react";
 import { Search } from "lucide-react";
 import { supabase } from "@/app/Client/SupabaseClients";
 import { useAuthRole } from "@/app/Client/useRbac";
+import LoadingCircle from "@/app/Components/LoadingCircle";
 
 type CategoryConfig = {
   key: "firearms" | "communications" | "furniture" | "office" | "sec" | "vehicle";
@@ -527,55 +528,61 @@ export default function LogisticsInventoryPage() {
         {error ? <div className="rounded-2xl border bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
         {success ? <div className="rounded-2xl border bg-green-50 px-4 py-3 text-sm text-green-700">{success}</div> : null}
 
-        <div className="relative overflow-x-auto rounded-2xl border">
-          <table className="w-full text-sm text-black min-w-[1500px]">
-            <thead className="bg-gray-100 border-b sticky top-0 z-10">
-              <tr>
-                <th className="px-4 py-3 text-left font-semibold text-black">Date</th>
-                <th className="px-4 py-3 text-left font-semibold text-black">Particular</th>
+        <div className="relative overflow-x-auto rounded-2xl border bg-white">
+          <table className="w-full text-sm text-black min-w-[1500px] border-separate border-spacing-y-2">
+            <thead className="sticky top-0 z-10">
+              <tr className="bg-[#FFDA03]">
+                <th className="px-4 py-3 text-left font-semibold text-black whitespace-nowrap rounded-l-xl">Date</th>
+                <th className="px-4 py-3 text-left font-semibold text-black whitespace-nowrap">Particular</th>
                 {CATEGORY_CONFIGS.map((cfg) => (
-                  <th key={cfg.key} className="px-4 py-3 text-left font-semibold text-black border-l min-w-[190px]">
+                  <th key={cfg.key} className="px-4 py-3 text-left font-semibold text-black min-w-[190px] whitespace-nowrap">
                     {cfg.label}
                   </th>
                 ))}
-                <th className="px-4 py-3 text-right font-semibold text-black border-l">Row Total</th>
-                <th className="px-4 py-3 text-left font-semibold text-black">Last Updated</th>
-                <th className="px-4 py-3 text-left font-semibold text-black">Remarks</th>
-                {isAdmin ? <th className="px-4 py-3 text-center font-semibold text-black">Action</th> : null}
+                <th className="px-4 py-3 text-right font-semibold text-black whitespace-nowrap">Row Total</th>
+                <th className="px-4 py-3 text-left font-semibold text-black whitespace-nowrap">Last Updated</th>
+                <th className={`px-4 py-3 text-left font-semibold text-black whitespace-nowrap ${isAdmin ? "" : "rounded-r-xl"}`}>Remarks</th>
+                {isAdmin ? <th className="px-4 py-3 text-center font-semibold text-black whitespace-nowrap rounded-r-xl">Action</th> : null}
               </tr>
             </thead>
 
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={isAdmin ? 12 : 11} className="px-4 py-8 text-center text-gray-500">Loading...</td>
+                  <td colSpan={isAdmin ? 12 : 11} className="px-4 py-8 text-center text-gray-500">
+                    <LoadingCircle label="Loading inventory..." className="py-2" />
+                  </td>
                 </tr>
               ) : paginated.length ? (
                 paginated.map((row) => (
-                  <tr key={row.id} className="border-b hover:bg-gray-50">
-                    <td className="px-4 py-3 whitespace-nowrap">{row.date || "—"}</td>
+                  <tr key={row.id} className="bg-white shadow-sm transition hover:shadow-md">
+                    <td className="px-4 py-3 whitespace-nowrap rounded-l-xl">{row.date || "—"}</td>
                     <td className="px-4 py-3">{row.particular || "—"}</td>
                     {CATEGORY_CONFIGS.map((cfg) => {
                       const name = (row[cfg.nameRowField] as string | null) ?? "";
                       const qty = Number(row[cfg.qtyRowField] ?? 0) || 0;
                       const price = Number(row[cfg.priceRowField] ?? 0) || 0;
                       return (
-                        <td key={`${row.id}-${cfg.key}-cell`} className="px-4 py-3 border-l align-top">
+                        <td key={`${row.id}-${cfg.key}-cell`} className="px-4 py-3 align-top">
                           <div className="text-xs text-gray-500">Name</div>
                           <div className="font-medium text-black truncate" title={name || "—"}>{name || "—"}</div>
-                          <div className="mt-1 text-xs text-gray-600">Qty: <span className="font-semibold text-black">{qty.toLocaleString()}</span></div>
-                          <div className="text-xs text-gray-600">Price: <span className="font-semibold text-black">₱ {toMoney(price)}</span></div>
+                          <div className="mt-1 text-xs text-gray-600">
+                            Qty: <span className="font-semibold text-black">{qty.toLocaleString()}</span>
+                          </div>
+                          <div className="text-xs text-gray-600">
+                            Price: <span className="font-semibold text-black">₱ {toMoney(price)}</span>
+                          </div>
                         </td>
                       );
                     })}
-                    <td className="px-4 py-3 text-right font-semibold">₱ {toMoney(totalFromRowPrices(row))}</td>
+                    <td className="px-4 py-3 text-right font-semibold whitespace-nowrap">₱ {toMoney(totalFromRowPrices(row))}</td>
                     <td className="px-4 py-3 text-xs text-gray-600 whitespace-nowrap">{formatTimestamp(row.last_updated_at)}</td>
-                    <td className="px-4 py-3">{row.remarks || "—"}</td>
+                    <td className={`px-4 py-3 ${isAdmin ? "" : "rounded-r-xl"}`}>{row.remarks || "—"}</td>
                     {isAdmin ? (
-                      <td className="px-4 py-3 text-center">
+                      <td className="px-4 py-3 text-center rounded-r-xl">
                         <button
                           type="button"
-                          className="px-3 py-1 rounded-lg border text-sm hover:bg-gray-50"
+                          className="px-3 py-1.5 rounded-lg border bg-white text-sm hover:bg-gray-50"
                           onClick={() => openEditModal(row)}
                         >
                           Edit
