@@ -8,7 +8,13 @@ export default function RootPage() {
 
   useEffect(() => {
     // Redirect to home page
-    router.replace("/Login/");
+    try {
+      sessionStorage.setItem("showLogoutSplash", "1");
+      router.push("/Login/");
+    } catch {
+   
+    }
+  
   }, [router]);
 
   return (
