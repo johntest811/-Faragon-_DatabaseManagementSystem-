@@ -1,9 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { Pencil, Plus, Search, Trash2 } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Download, FileDown, FileText, Pencil, Plus, Search, Trash2, Upload } from "lucide-react";
 import { supabase } from "@/app/Client/SupabaseClients";
+import { useAuthRole, useMyColumnAccess } from "@/app/Client/useRbac";
 import LoadingCircle from "@/app/Components/LoadingCircle";
+import * as XLSX from "xlsx";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
+import ImportSummaryModal, { ImportSummaryData } from "../Components/ImportSummaryModal";
 
 type ParaphernaliaRow = {
   id_paraphernalia: string;
@@ -109,9 +114,47 @@ function tableCell(value: string | number | null | undefined) {
   return text.length ? text : "—";
 }
 
+function normalizeHeader(value: unknown) {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+function pickByAliases(row: Record<string, unknown>, aliases: string[]) {
+  const map = new Map<string, unknown>();
+  for (const [k, v] of Object.entries(row)) map.set(normalizeHeader(k), v);
+  for (const alias of aliases) {
+    const v = map.get(normalizeHeader(alias));
+    if (v !== undefined && String(v ?? "").trim() !== "") return String(v);
+  }
+  return "";
+}
+
+function downloadBlob(filename: string, blob: Blob) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 export default function ParaphernaliaPage() {
+  const { role } = useAuthRole();
+  const { allowedColumns, restricted } = useMyColumnAccess("paraphernalia");
+  const isAdmin = role === "admin" || role === "superadmin";
+  const canViewPermission = (columnKey: string) => !restricted || allowedColumns.has(columnKey);
+  const canImportParaphernalia = isAdmin && canViewPermission("import_file");
+  const canDownloadParaphernaliaTemplate = isAdmin && canViewPermission("export_template");
+  const canExportParaphernalia = isAdmin && canViewPermission("export_file");
+
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [infoMessage, setInfoMessage] = useState("");
   const [search, setSearch] = useState("");
 
   const [paraphernaliaRows, setParaphernaliaRows] = useState<ParaphernaliaRow[]>([]);
@@ -130,6 +173,144 @@ export default function ParaphernaliaPage() {
   const [deleteState, setDeleteState] = useState<ConfirmDeleteState>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteError, setDeleteError] = useState("");
+  const [importBusy, setImportBusy] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [importSummary, setImportSummary] = useState<ImportSummaryData | null>(null);
+  const [importSummaryOpen, setImportSummaryOpen] = useState(false);
+
+  function downloadTemplate(format: "xlsx" | "csv") {
+    const sample = {
+      names: "Sample Name",
+      items: "Sample Item",
+      quantity: 10,
+      price: 50,
+      date: "2026-03-01",
+    };
+
+    const ws = XLSX.utils.json_to_sheet([sample]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "ParaphernaliaTemplate");
+
+    if (format === "xlsx") {
+      const out = XLSX.write(wb, { type: "array", bookType: "xlsx" });
+      downloadBlob("paraphernalia_import_template.xlsx", new Blob([out], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
+      return;
+    }
+
+    const csv = XLSX.utils.sheet_to_csv(ws);
+    downloadBlob("paraphernalia_import_template.csv", new Blob([csv], { type: "text/csv;charset=utf-8;" }));
+  }
+
+  async function importSpreadsheet(file: File) {
+    if (!canImportParaphernalia) {
+      setError("You do not have permission to import files in Paraphernalia page.");
+      return;
+    }
+
+    setImportBusy(true);
+    setError("");
+    setInfoMessage("");
+    setImportSummary(null);
+
+    try {
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: "array" });
+      const firstSheet = wb.SheetNames[0];
+      if (!firstSheet) throw new Error("No sheet found in selected file.");
+      const ws = wb.Sheets[firstSheet];
+      const rawRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: "" });
+      if (!rawRows.length) throw new Error("The selected file has no data rows.");
+
+      const rowErrors: string[] = [];
+      let skipped = 0;
+
+      const payloads = rawRows
+        .map((row, idx) => {
+          const payload = {
+            names: pickByAliases(row, ["names", "name"]).trim() || null,
+            items: pickByAliases(row, ["items", "item"]).trim() || null,
+            quantity: toNumberOrNull(pickByAliases(row, ["quantity", "qty"])),
+            price: toNumberOrNull(pickByAliases(row, ["price", "unit_price", "amount"])),
+            date: pickByAliases(row, ["date", "created_at"]).trim() || null,
+          };
+
+          const hasIdentity = Boolean(payload.names || payload.items);
+          if (!hasIdentity) {
+            skipped += 1;
+            rowErrors.push(`Row ${idx + 2}: Missing identity fields (names/items).`);
+          }
+          return hasIdentity ? payload : null;
+        })
+        .filter((v): v is { names: string | null; items: string | null; quantity: number | null; price: number | null; date: string | null } => Boolean(v));
+
+      if (!payloads.length) throw new Error("No valid paraphernalia rows found in file.");
+
+      const { data: existingRows, error: existingErr } = await supabase
+        .from("paraphernalia")
+        .select("id_paraphernalia, names, items, date")
+        .limit(10000);
+      if (existingErr) throw existingErr;
+
+      const byComposite = new Map<string, string>();
+      for (const row of ((existingRows ?? []) as Array<Record<string, unknown>>)) {
+        const id = String(row.id_paraphernalia ?? "");
+        if (!id) continue;
+        const key = [
+          String(row.names ?? "").trim().toLowerCase(),
+          String(row.items ?? "").trim().toLowerCase(),
+          String(row.date ?? "").trim().toLowerCase(),
+        ].join("|");
+        if (key !== "||") byComposite.set(key, id);
+      }
+
+      const deduped = new Map<string, (typeof payloads)[number]>();
+      for (const p of payloads) {
+        const key = [
+          String(p.names ?? "").trim().toLowerCase(),
+          String(p.items ?? "").trim().toLowerCase(),
+          String(p.date ?? "").trim().toLowerCase(),
+        ].join("|");
+        if (deduped.has(key)) skipped += 1;
+        deduped.set(key, p);
+      }
+
+      let inserted = 0;
+      let updated = 0;
+
+      for (const [key, payload] of deduped.entries()) {
+        const id = byComposite.get(key);
+        if (id) {
+          const upd = await supabase.from("paraphernalia").update(payload).eq("id_paraphernalia", id);
+          if (upd.error) {
+            skipped += 1;
+            rowErrors.push(`Update failed for key ${key}: ${upd.error.message}`);
+            continue;
+          }
+          updated += 1;
+        } else {
+          const insertPayload = { ...payload, id_paraphernalia: crypto.randomUUID() };
+          const ins = await supabase.from("paraphernalia").insert(insertPayload);
+          if (ins.error) {
+            skipped += 1;
+            rowErrors.push(`Insert failed for key ${key}: ${ins.error.message}`);
+            continue;
+          }
+          inserted += 1;
+        }
+      }
+
+      setImportSummary({ inserted, updated, skipped, errors: rowErrors });
+      setImportSummaryOpen(true);
+      setError("");
+      await loadAll();
+      setInfoMessage(`Import complete. Inserted: ${inserted}, Updated (overwritten): ${updated}.`);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Import failed.");
+    } finally {
+      setImportBusy(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  }
 
   async function loadAll() {
     setLoading(true);
@@ -307,6 +488,112 @@ export default function ParaphernaliaPage() {
       return hay.includes(q);
     });
   }, [restockRows, q]);
+
+  function paraphernaliaExportFileBase() {
+    return `paraphernalia_export_${new Date().toISOString().slice(0, 10)}`;
+  }
+
+  function paraphernaliaItemsExportRows() {
+    return filteredParaphernalia.map((r) => ({
+      Name: safeText(r.names),
+      Item: safeText(r.items),
+      Quantity: tableCell(r.quantity),
+      "Unit Price": tableCell(r.price),
+      Date: safeText(r.date),
+    }));
+  }
+
+  function inventorySnapshotExportRows() {
+    return filteredInventory.map((r) => ({
+      Name: safeText(r.paraphernalia?.names),
+      Item: safeText(r.items ?? r.paraphernalia?.items),
+      "Stock Balance": tableCell(r.stock_balance),
+      "Stock In": tableCell(r.stock_in),
+      "Stock Out": tableCell(r.stock_out),
+    }));
+  }
+
+  function restockExportRows() {
+    return filteredRestock.map((r) => ({
+      Date: safeText(r.date),
+      Status: safeText(r.status),
+      Item: safeText(r.item ?? r.paraphernalia?.items),
+      Quantity: safeText(r.quanitity),
+      "Linked Inventory Item": safeText(r.paraphernalia_inventory?.items),
+    }));
+  }
+
+  function exportParaphernaliaXlsx() {
+    const rowsA = paraphernaliaItemsExportRows();
+    const rowsB = inventorySnapshotExportRows();
+    const rowsC = restockExportRows();
+    if (!rowsA.length && !rowsB.length && !rowsC.length) {
+      setError("No rows available for export.");
+      return;
+    }
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rowsA.length ? rowsA : [{}]), "Paraphernalia");
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rowsB.length ? rowsB : [{}]), "InventorySnapshot");
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rowsC.length ? rowsC : [{}]), "RestockHistory");
+
+    const out = XLSX.write(wb, { type: "array", bookType: "xlsx" });
+    downloadBlob(`${paraphernaliaExportFileBase()}.xlsx`, new Blob([out], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
+  }
+
+  function exportParaphernaliaCsv() {
+    const rowsA = paraphernaliaItemsExportRows().map((r) => ({ Section: "Paraphernalia", ...r }));
+    const rowsB = inventorySnapshotExportRows().map((r) => ({ Section: "InventorySnapshot", ...r }));
+    const rowsC = restockExportRows().map((r) => ({ Section: "RestockHistory", ...r }));
+    const rows = [...rowsA, ...rowsB, ...rowsC];
+    if (!rows.length) {
+      setError("No rows available for export.");
+      return;
+    }
+
+    const ws = XLSX.utils.json_to_sheet(rows);
+    const csv = XLSX.utils.sheet_to_csv(ws);
+    downloadBlob(`${paraphernaliaExportFileBase()}.csv`, new Blob([csv], { type: "text/csv;charset=utf-8;" }));
+  }
+
+  function exportParaphernaliaPdf() {
+    const rowsA = paraphernaliaItemsExportRows();
+    const rowsB = inventorySnapshotExportRows();
+    const rowsC = restockExportRows();
+    if (!rowsA.length && !rowsB.length && !rowsC.length) {
+      setError("No rows available for export.");
+      return;
+    }
+
+    const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
+    doc.setFontSize(14);
+    doc.text("Paraphernalia Export", 40, 40);
+
+    let y = 60;
+    const sections: Array<{ title: string; rows: Record<string, string>[] }> = [
+      { title: "Paraphernalia Items", rows: rowsA },
+      { title: "Inventory Stock Snapshot", rows: rowsB },
+      { title: "Restock History", rows: rowsC },
+    ];
+
+    for (const section of sections) {
+      if (!section.rows.length) continue;
+      doc.setFontSize(11);
+      doc.text(section.title, 40, y);
+      const headers = Object.keys(section.rows[0]);
+      const body = section.rows.map((r) => headers.map((h) => String(r[h] ?? "")));
+      autoTable(doc, {
+        startY: y + 10,
+        head: [headers],
+        body,
+        styles: { fontSize: 7, cellPadding: 2 },
+        headStyles: { fillColor: [255, 218, 3], textColor: [0, 0, 0] },
+      });
+      y = ((doc as unknown as { lastAutoTable?: { finalY?: number } }).lastAutoTable?.finalY ?? y + 120) + 20;
+    }
+
+    doc.save(`${paraphernaliaExportFileBase()}.pdf`);
+  }
 
   function openCreateModal() {
     setCreateError("");
@@ -539,14 +826,84 @@ export default function ParaphernaliaPage() {
           <div className="text-lg font-semibold text-gray-900">Logistics • Paraphernalia</div>
           <div className="text-sm text-gray-500">Clear view of item list, stock summary, and restock history.</div>
         </div>
-        <button
-          type="button"
-          onClick={openCreateModal}
-          className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-[#FFDA03] text-black text-sm font-medium hover:brightness-95"
-        >
-          <Plus className="w-4 h-4" />
-          Add Paraphernalia Data
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={openCreateModal}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-[#FFDA03] text-black text-sm font-medium hover:brightness-95"
+          >
+            <Plus className="w-4 h-4" />
+            Add Paraphernalia Data
+          </button>
+
+          {canImportParaphernalia ? (
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={importBusy}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border text-sm text-black hover:bg-gray-50 disabled:opacity-60"
+            >
+              <Upload className="w-4 h-4" />
+              {importBusy ? "Importing..." : "Import Excel/CSV"}
+            </button>
+          ) : null}
+
+          {canDownloadParaphernaliaTemplate ? (
+            <>
+              <button
+                type="button"
+                onClick={() => downloadTemplate("xlsx")}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border text-sm text-black hover:bg-gray-50"
+              >
+                <Download className="w-4 h-4" /> Template XLSX
+              </button>
+              <button
+                type="button"
+                onClick={() => downloadTemplate("csv")}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border text-sm text-black hover:bg-gray-50"
+              >
+                <Download className="w-4 h-4" /> Template CSV
+              </button>
+            </>
+          ) : null}
+
+          {canExportParaphernalia ? (
+            <>
+              <button
+                type="button"
+                onClick={exportParaphernaliaPdf}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border text-sm text-black hover:bg-gray-50"
+              >
+                <FileText className="w-4 h-4" /> Export PDF
+              </button>
+              <button
+                type="button"
+                onClick={exportParaphernaliaXlsx}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border text-sm text-black hover:bg-gray-50"
+              >
+                <FileDown className="w-4 h-4" /> Export XLSX
+              </button>
+              <button
+                type="button"
+                onClick={exportParaphernaliaCsv}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border text-sm text-black hover:bg-gray-50"
+              >
+                <FileDown className="w-4 h-4" /> Export CSV
+              </button>
+            </>
+          ) : null}
+
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".xlsx,.xls,.csv"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) void importSpreadsheet(f);
+            }}
+          />
+        </div>
       </div>
 
       <div className="flex flex-col md:flex-row md:items-center gap-3">
@@ -569,6 +926,7 @@ export default function ParaphernaliaPage() {
       </div>
 
       {error ? <div className="rounded-2xl border bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
+      {infoMessage ? <div className="rounded-2xl border bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{infoMessage}</div> : null}
 
       <div className="space-y-3">
         <div className="text-sm font-semibold text-black">Paraphernalia Items</div>
@@ -1222,6 +1580,13 @@ export default function ParaphernaliaPage() {
           </div>
         </div>
       ) : null}
+
+      <ImportSummaryModal
+        open={importSummaryOpen}
+        summary={importSummary}
+        title="Paraphernalia Import Summary"
+        onClose={() => setImportSummaryOpen(false)}
+      />
     </div>
   );
 }

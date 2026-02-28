@@ -55,7 +55,7 @@ export default function Login() {
     try {
       const { data: admin, error: adminError } = await supabase
         .from('admins')
-        .select('id, username, password, role, position, full_name, is_active')
+        .select('id, username, password, role, full_name, is_active')
         .eq('username', username.trim())
         .single();
 
@@ -88,7 +88,6 @@ export default function Login() {
         id: String(admin.id),
         username: admin.username,
         full_name: admin.full_name ?? null,
-        position: admin.position ?? null,
         role: String(admin.role ?? "").trim().toLowerCase(),
         loginTime: new Date().toISOString(),
       };

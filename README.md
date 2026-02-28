@@ -101,3 +101,17 @@ npm audit
 - npm install lucide-react
 - npm install -D electron-builder@latest
 - npm install jspdf jspdf-autotable
+
+## Supabase SQL Migration Note
+
+Run SQL migration files in Supabase SQL Editor before using the access/permissions features.
+
+For the template-permission rename, run:
+
+- `supabase_migrate_download_template_to_export_template.sql`
+
+This remaps legacy `download_template` values to `export_template` in:
+
+- `admin_column_access_overrides`
+- `user_column_access_overrides`
+- `access_requests.requested_column_key`

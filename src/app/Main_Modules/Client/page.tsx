@@ -1,10 +1,15 @@
 "use client";
 
-import { FormEvent, ReactNode, useEffect, useMemo, useState } from "react";
+import { FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { Search } from "lucide-react";
+import { Download, FileDown, FileText, Search, Upload } from "lucide-react";
+import * as XLSX from "xlsx";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
 import { supabase } from "@/app/Client/SupabaseClients";
+import { useAuthRole, useMyColumnAccess } from "@/app/Client/useRbac";
 import LoadingCircle from "@/app/Components/LoadingCircle";
+import ImportSummaryModal, { ImportSummaryData } from "../Components/ImportSummaryModal";
 
 type ClientRow = {
   contract_id: string;
@@ -117,6 +122,35 @@ function toNumberOrNull(value: string) {
   return Number.isFinite(n) ? n : null;
 }
 
+function normalizeHeader(value: unknown) {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+function findValueByAliases(row: Record<string, unknown>, aliases: string[]) {
+  const map = new Map<string, unknown>();
+  for (const [k, v] of Object.entries(row)) map.set(normalizeHeader(k), v);
+  for (const a of aliases) {
+    const v = map.get(normalizeHeader(a));
+    if (v !== undefined && String(v ?? "").trim() !== "") return String(v);
+  }
+  return "";
+}
+
+function downloadBlob(filename: string, blob: Blob) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 function firstOrNull<T>(value: T | T[] | null | undefined): T | null {
   if (!value) return null;
   if (Array.isArray(value)) return value[0] ?? null;
@@ -157,6 +191,15 @@ function toDatetimeLocalValue(v: string | null) {
 }
 
 export default function ClientsPage() {
+  const { role } = useAuthRole();
+  const { allowedColumns, restricted, loading: loadingColumnAccess } = useMyColumnAccess("client");
+
+  const isAdmin = role === "admin" || role === "superadmin";
+  const canViewColumnPermission = (columnKey: string) => !restricted || allowedColumns.has(columnKey);
+  const canImportFile = isAdmin && canViewColumnPermission("import_file");
+  const canDownloadTemplate = isAdmin && canViewColumnPermission("export_template");
+  const canExportFile = isAdmin && canViewColumnPermission("export_file");
+
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [rows, setRows] = useState<ClientRow[]>([]);
@@ -179,8 +222,185 @@ export default function ClientsPage() {
   const [editorMode, setEditorMode] = useState<"create" | "edit">("create");
   const [editingContractId, setEditingContractId] = useState<string | null>(null);
   const [detailsRow, setDetailsRow] = useState<ClientRow | null>(null);
+  const [importing, setImporting] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [importSummary, setImportSummary] = useState<ImportSummaryData | null>(null);
+  const [importSummaryOpen, setImportSummaryOpen] = useState(false);
 
   const pageSize = 10;
+
+  function downloadTemplate(format: "xlsx" | "csv") {
+    const sample = {
+      contract_no: "CN-2026-001",
+      contract_no_date: "2026-02-01",
+      client_name: "Sample Client",
+      project_name: "Project Alpha",
+      specific_area: "Area 1",
+      cluster: "Cluster A",
+      contract_start: "2026-02-01",
+      contract_end: "2027-02-01",
+      contracted_manpower: 10,
+      deployed_guards: 8,
+      status: "ACTIVE",
+      created_at: "2026-02-01T08:00",
+      remarks: "Optional notes",
+    };
+    const ws = XLSX.utils.json_to_sheet([sample]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "ClientTemplate");
+
+    if (format === "xlsx") {
+      const out = XLSX.write(wb, { type: "array", bookType: "xlsx" });
+      downloadBlob("client_import_template.xlsx", new Blob([out], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
+      return;
+    }
+
+    const csv = XLSX.utils.sheet_to_csv(ws);
+    downloadBlob("client_import_template.csv", new Blob([csv], { type: "text/csv;charset=utf-8;" }));
+  }
+
+  async function handleImportFile(file: File) {
+    setSaveState({ type: "", message: "" });
+    setError("");
+    setImportSummary(null);
+    if (!canImportFile) {
+      setSaveState({ type: "error", message: "You do not have permission to import files in Client page." });
+      return;
+    }
+
+    setImporting(true);
+    try {
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: "array" });
+      const firstSheet = wb.SheetNames[0];
+      if (!firstSheet) throw new Error("No sheet found in selected file.");
+      const ws = wb.Sheets[firstSheet];
+      const rawRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: "" });
+      if (!rawRows.length) throw new Error("The selected file has no data rows.");
+
+      const rowErrors: string[] = [];
+      let skipped = 0;
+
+      const importedPayloads = rawRows
+        .map((row, idx) => {
+          const payload = {
+            contract_no: toNullableText(findValueByAliases(row, ["contract_no", "contract number", "contractno", "contract"])),
+            contract_no_date: toNullableText(findValueByAliases(row, ["contract_no_date", "contract no date", "contract date"])),
+            client_name: toNullableText(findValueByAliases(row, ["client_name", "client", "customer"])),
+            project_name: toNullableText(findValueByAliases(row, ["project_name", "project"])),
+            specific_area: toNullableText(findValueByAliases(row, ["specific_area", "area", "specific area"])),
+            cluster: toNullableText(findValueByAliases(row, ["cluster"])),
+            contract_start: toNullableText(findValueByAliases(row, ["contract_start", "start", "start_date", "contract start"])),
+            contract_end: toNullableText(findValueByAliases(row, ["contract_end", "end", "end_date", "contract end"])),
+            contracted_manpower: toNumberOrNull(findValueByAliases(row, ["contracted_manpower", "manpower", "contracted manpower"])),
+            deployed_guards: toNumberOrNull(findValueByAliases(row, ["deployed_guards", "deployed guards", "guards"])),
+            status: toNullableText(findValueByAliases(row, ["status"])),
+            created_at: toNullableText(findValueByAliases(row, ["created_at", "created at", "created"])),
+            remarks: toNullableText(findValueByAliases(row, ["remarks", "note", "notes", "comment"])),
+          };
+
+          const hasIdentity = Boolean(payload.contract_no || payload.client_name || payload.project_name);
+          if (!hasIdentity) {
+            skipped += 1;
+            rowErrors.push(`Row ${idx + 2}: Missing identity fields (contract_no/client_name/project_name).`);
+          }
+          return hasIdentity ? payload : null;
+        })
+        .filter((v): v is {
+          contract_no: string | null;
+          contract_no_date: string | null;
+          client_name: string | null;
+          project_name: string | null;
+          specific_area: string | null;
+          cluster: string | null;
+          contract_start: string | null;
+          contract_end: string | null;
+          contracted_manpower: number | null;
+          deployed_guards: number | null;
+          status: string | null;
+          created_at: string | null;
+          remarks: string | null;
+        } => Boolean(v));
+
+      if (!importedPayloads.length) throw new Error("No valid rows found. Ensure file has identifiable contract/client columns.");
+
+      const { data: existingRows, error: existingErr } = await supabase
+        .from("contracts")
+        .select("contract_id, contract_no, client_name, project_name, contract_start")
+        .limit(10000);
+      if (existingErr) throw existingErr;
+
+      const byContractNo = new Map<string, string>();
+      const byComposite = new Map<string, string>();
+      for (const row of ((existingRows ?? []) as Array<Record<string, unknown>>)) {
+        const id = String(row.contract_id ?? "");
+        if (!id) continue;
+        const contractNo = String(row.contract_no ?? "").trim().toLowerCase();
+        if (contractNo) byContractNo.set(contractNo, id);
+        const comp = [
+          String(row.client_name ?? "").trim().toLowerCase(),
+          String(row.project_name ?? "").trim().toLowerCase(),
+          String(row.contract_start ?? "").trim().toLowerCase(),
+        ].join("|");
+        if (comp !== "||") byComposite.set(comp, id);
+      }
+
+      const dedupedMap = new Map<string, (typeof importedPayloads)[number]>();
+      for (const payload of importedPayloads) {
+        const cno = String(payload.contract_no ?? "").trim().toLowerCase();
+        const comp = [
+          String(payload.client_name ?? "").trim().toLowerCase(),
+          String(payload.project_name ?? "").trim().toLowerCase(),
+          String(payload.contract_start ?? "").trim().toLowerCase(),
+        ].join("|");
+        const key = cno ? `cno:${cno}` : `cmp:${comp}`;
+        if (dedupedMap.has(key)) skipped += 1;
+        dedupedMap.set(key, payload);
+      }
+
+      let inserted = 0;
+      let updated = 0;
+
+      for (const payload of dedupedMap.values()) {
+        const cno = String(payload.contract_no ?? "").trim().toLowerCase();
+        const comp = [
+          String(payload.client_name ?? "").trim().toLowerCase(),
+          String(payload.project_name ?? "").trim().toLowerCase(),
+          String(payload.contract_start ?? "").trim().toLowerCase(),
+        ].join("|");
+
+        const matchId = (cno ? byContractNo.get(cno) : null) ?? byComposite.get(comp) ?? null;
+        if (matchId) {
+          const upd = await supabase.from("contracts").update(payload).eq("contract_id", matchId);
+          if (upd.error) {
+            skipped += 1;
+            rowErrors.push(`Update failed for contract ${payload.contract_no ?? payload.client_name ?? "(unknown)"}: ${upd.error.message}`);
+            continue;
+          }
+          updated += 1;
+          continue;
+        }
+
+        const ins = await supabase.from("contracts").insert(payload);
+        if (ins.error) {
+          skipped += 1;
+          rowErrors.push(`Insert failed for contract ${payload.contract_no ?? payload.client_name ?? "(unknown)"}: ${ins.error.message}`);
+          continue;
+        }
+        inserted += 1;
+      }
+
+      setImportSummary({ inserted, updated, skipped, errors: rowErrors });
+      setImportSummaryOpen(true);
+      setSaveState({ type: "success", message: `Import complete. Inserted: ${inserted}, Updated (overwritten): ${updated}, Skipped: ${skipped}.` });
+      await loadConnectedData();
+    } catch (e: unknown) {
+      setSaveState({ type: "error", message: e instanceof Error ? e.message : "Import failed." });
+    } finally {
+      setImporting(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  }
 
   async function loadConnectedData() {
     setLoading(true);
@@ -646,6 +866,80 @@ export default function ClientsPage() {
     });
   }, [applicants, applicantSearch]);
 
+  function clientExportRows() {
+    return filtered.map((r) => ({
+      "Contract No.": fmt(r.contract_no),
+      "Contract No Date": fmt(r.contract_no_date),
+      "Client Name": fmt(r.client_name),
+      "Project Name": fmt(r.project_name),
+      "Specific Area": fmt(r.specific_area),
+      Cluster: fmt(r.cluster),
+      "Contract Start": fmt(r.contract_start),
+      "Contract End": fmt(r.contract_end),
+      "Contracted Manpower": fmt(r.contracted_manpower),
+      "Deployed Guards": fmt(r.deployed_guards),
+      Status: fmt(r.status),
+      "Created At": fmt(r.created_at),
+      Remarks: fmt(r.remarks),
+    }));
+  }
+
+  function clientExportFileBase() {
+    return `client_export_${new Date().toISOString().slice(0, 10)}`;
+  }
+
+  function exportClientXlsx() {
+    const rowsForExport = clientExportRows();
+    if (!rowsForExport.length) {
+      setSaveState({ type: "error", message: "No rows available for export." });
+      return;
+    }
+
+    const ws = XLSX.utils.json_to_sheet(rowsForExport);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Client");
+    const out = XLSX.write(wb, { type: "array", bookType: "xlsx" });
+    downloadBlob(
+      `${clientExportFileBase()}.xlsx`,
+      new Blob([out], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" })
+    );
+  }
+
+  function exportClientCsv() {
+    const rowsForExport = clientExportRows();
+    if (!rowsForExport.length) {
+      setSaveState({ type: "error", message: "No rows available for export." });
+      return;
+    }
+
+    const ws = XLSX.utils.json_to_sheet(rowsForExport);
+    const csv = XLSX.utils.sheet_to_csv(ws);
+    downloadBlob(`${clientExportFileBase()}.csv`, new Blob([csv], { type: "text/csv;charset=utf-8;" }));
+  }
+
+  function exportClientPdf() {
+    const rowsForExport = clientExportRows();
+    if (!rowsForExport.length) {
+      setSaveState({ type: "error", message: "No rows available for export." });
+      return;
+    }
+
+    const headers = Object.keys(rowsForExport[0]);
+    const body = rowsForExport.map((row) => headers.map((h) => String(row[h as keyof typeof row] ?? "")));
+
+    const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
+    doc.setFontSize(14);
+    doc.text("Client Export", 40, 40);
+    autoTable(doc, {
+      startY: 60,
+      head: [headers],
+      body,
+      styles: { fontSize: 7, cellPadding: 2 },
+      headStyles: { fillColor: [255, 218, 3], textColor: [0, 0, 0] },
+    });
+    doc.save(`${clientExportFileBase()}.pdf`);
+  }
+
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const pageClamped = Math.min(page, totalPages);
   const paginated = filtered.slice((pageClamped - 1) * pageSize, pageClamped * pageSize);
@@ -695,20 +989,95 @@ export default function ClientsPage() {
       <div className="rounded-2xl border bg-white p-4 space-y-3">
         <div className="font-semibold text-black">Create Contracts</div>
         <div className="text-sm text-gray-500">Create a connected contract record with full fields.</div>
-        <button
-          type="button"
-          onClick={() => {
-            setEditorMode("create");
-            setEditingContractId(null);
-            setContractForm(EMPTY_FORM);
-            setSelectedApplicantIds([]);
-            setApplicantSearch("");
-            setEditorOpen(true);
-          }}
-          className="rounded-xl bg-[#FFDA03] px-4 py-2 text-sm font-semibold text-black"
-        >
-          Create Contract
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              setEditorMode("create");
+              setEditingContractId(null);
+              setContractForm(EMPTY_FORM);
+              setSelectedApplicantIds([]);
+              setApplicantSearch("");
+              setEditorOpen(true);
+            }}
+            className="rounded-xl bg-[#FFDA03] px-4 py-2 text-sm font-semibold text-black"
+          >
+            Create Contract
+          </button>
+
+          {canImportFile ? (
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={importing || loadingColumnAccess}
+              className="inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium text-black hover:bg-gray-50 disabled:opacity-60"
+            >
+              <Upload className="w-4 h-4" />
+              {importing ? "Importing..." : "Import Excel/CSV"}
+            </button>
+          ) : null}
+
+          {canExportFile ? (
+            <>
+              <button
+                type="button"
+                onClick={exportClientPdf}
+                className="inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium text-black hover:bg-gray-50"
+              >
+                <FileText className="w-4 h-4" />
+                Export PDF
+              </button>
+              <button
+                type="button"
+                onClick={exportClientXlsx}
+                className="inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium text-black hover:bg-gray-50"
+              >
+                <FileDown className="w-4 h-4" />
+                Export XLSX
+              </button>
+              <button
+                type="button"
+                onClick={exportClientCsv}
+                className="inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium text-black hover:bg-gray-50"
+              >
+                <FileDown className="w-4 h-4" />
+                Export CSV
+              </button>
+            </>
+          ) : null}
+
+          {canDownloadTemplate ? (
+            <>
+              <button
+                type="button"
+                onClick={() => downloadTemplate("xlsx")}
+                className="inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium text-black hover:bg-gray-50"
+              >
+                <Download className="w-4 h-4" />
+                Template XLSX
+              </button>
+              <button
+                type="button"
+                onClick={() => downloadTemplate("csv")}
+                className="inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium text-black hover:bg-gray-50"
+              >
+                <Download className="w-4 h-4" />
+                Template CSV
+              </button>
+            </>
+          ) : null}
+
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".xlsx,.xls,.csv"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) void handleImportFile(f);
+            }}
+          />
+        </div>
       </div>
 
       <ModalShell
@@ -1023,6 +1392,13 @@ export default function ClientsPage() {
           </div>
         ) : null}
       </ModalShell>
+
+      <ImportSummaryModal
+        open={importSummaryOpen}
+        summary={importSummary}
+        title="Client Import Summary"
+        onClose={() => setImportSummaryOpen(false)}
+      />
     </div>
   );
 }

@@ -19,7 +19,7 @@ import {
   ZoomOut,
 } from "lucide-react";
 import { supabase } from "../../../Client/SupabaseClients";
-import { useAuthRole } from "../../../Client/useRbac";
+import { useAuthRole, useMyColumnAccess } from "../../../Client/useRbac";
 import EmployeeEditorModal from "../../../Components/EmployeeEditorModal";
 import LoadingCircle from "../../../Components/LoadingCircle";
 
@@ -337,7 +337,31 @@ function EmployeeDetailsInner() {
   const backHref = safeBackHref(from);
 
   const { role: sessionRole } = useAuthRole();
+  const {
+    allowedColumns: allowedEmployeeColumns,
+    restricted: employeeColumnsRestricted,
+    loading: loadingEmployeeColumns,
+  } = useMyColumnAccess("employees");
   const canEdit = sessionRole !== "employee";
+
+  const canViewEmployeeColumn = (columnKey: string) =>
+    !employeeColumnsRestricted || allowedEmployeeColumns.has(columnKey);
+
+  const showName =
+    canViewEmployeeColumn("first_name") ||
+    canViewEmployeeColumn("middle_name") ||
+    canViewEmployeeColumn("last_name");
+  const showProfileImage = canViewEmployeeColumn("profile_image_path");
+  const showPosition = canViewEmployeeColumn("client_position");
+  const showDetachment = canViewEmployeeColumn("detachment");
+  const showStatus = canViewEmployeeColumn("status");
+  const showHiredDate = canViewEmployeeColumn("date_hired_fsai");
+  const showGender = canViewEmployeeColumn("gender");
+  const showContactNumber = canViewEmployeeColumn("client_contact_num");
+  const showBirthDate = canViewEmployeeColumn("birth_date");
+  const showEmail = canViewEmployeeColumn("client_email");
+  const showAge = canViewEmployeeColumn("age");
+  const showCustomId = canViewEmployeeColumn("custom_id");
   const [editorOpen, setEditorOpen] = useState(false);
 
   const [loading, setLoading] = useState(true);
@@ -365,6 +389,8 @@ function EmployeeDetailsInner() {
 
   useEffect(() => {
     const run = async () => {
+      if (loadingEmployeeColumns) return;
+
       setLoading(true);
       setError("");
       setApplicant(null);
@@ -486,7 +512,7 @@ function EmployeeDetailsInner() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [id]);
+  }, [id, loadingEmployeeColumns, employeeColumnsRestricted, allowedEmployeeColumns]);
 
   const profile = useMemo(() => {
     if (!applicant) return null;
@@ -577,7 +603,7 @@ function EmployeeDetailsInner() {
     );
   }
 
-  const name = getFullName(applicant);
+  const name = showName ? getFullName(applicant) : "Employee";
 
   return (
     <div className="space-y-6">
@@ -604,7 +630,7 @@ function EmployeeDetailsInner() {
         <section className="bg-white rounded-3xl border shadow-sm p-6">
           <div className="flex flex-col items-center text-center">
             <div className="h-36 w-36 rounded-3xl bg-gray-100 overflow-hidden flex items-center justify-center">
-              {profile ? (
+              {showProfileImage && profile ? (
                 <button
                   type="button"
                   onClick={() => openImageViewerFromKey("profile")}
@@ -618,15 +644,17 @@ function EmployeeDetailsInner() {
               )}
             </div>
             <div className="mt-4 text-2xl font-extrabold uppercase text-gray-900">{name}</div>
-            <div className="mt-1 text-sm text-gray-600">{applicant.client_position ?? "—"}</div>
+            {showPosition ? <div className="mt-1 text-sm text-gray-600">{applicant.client_position ?? "—"}</div> : null}
 
             <div className="mt-4 flex items-center gap-2">
               <span className="px-3 py-1 rounded-full bg-[#FFDA03] text-black text-xs font-bold">
                 {applicant.applicant_id.slice(0, 8).toUpperCase()}
               </span>
-              <span className="px-3 py-1 rounded-full bg-emerald-500 text-white text-xs font-bold">
-                {applicant.status ?? "ACTIVE"}
-              </span>
+              {showStatus ? (
+                <span className="px-3 py-1 rounded-full bg-emerald-500 text-white text-xs font-bold">
+                  {applicant.status ?? "ACTIVE"}
+                </span>
+              ) : null}
             </div>
 
             <div className="mt-4 w-full border rounded-2xl overflow-hidden">
@@ -634,25 +662,33 @@ function EmployeeDetailsInner() {
                 <div className="px-4 py-3 text-gray-500">Employee Status</div>
                 <div className="px-4 py-3 font-semibold text-gray-900 text-right">Full-time</div>
               </div>
-              <div className="h-px bg-gray-100" />
-              <div className="grid grid-cols-2 text-sm">
-                <div className="px-4 py-3 text-gray-500">Detachment</div>
-                <div className="px-4 py-3 font-semibold text-gray-900 text-right">
-                  {applicant.detachment ?? "—"}
-                </div>
-              </div>
-              <div className="h-px bg-gray-100" />
-              <div className="grid grid-cols-2 text-sm">
-                <div className="px-4 py-3 text-gray-500">Join Date</div>
-                <div className="px-4 py-3 font-semibold text-gray-900 text-right">
-                  {formatDate(applicant.date_hired_fsai)}
-                </div>
-              </div>
-              <div className="h-px bg-gray-100" />
-              <div className="grid grid-cols-2 text-sm">
-                <div className="px-4 py-3 text-gray-500">Service Length</div>
-                <div className="px-4 py-3 font-semibold text-gray-900 text-right">{serviceLength}</div>
-              </div>
+              {showDetachment ? (
+                <>
+                  <div className="h-px bg-gray-100" />
+                  <div className="grid grid-cols-2 text-sm">
+                    <div className="px-4 py-3 text-gray-500">Detachment</div>
+                    <div className="px-4 py-3 font-semibold text-gray-900 text-right">
+                      {applicant.detachment ?? "—"}
+                    </div>
+                  </div>
+                </>
+              ) : null}
+              {showHiredDate ? (
+                <>
+                  <div className="h-px bg-gray-100" />
+                  <div className="grid grid-cols-2 text-sm">
+                    <div className="px-4 py-3 text-gray-500">Join Date</div>
+                    <div className="px-4 py-3 font-semibold text-gray-900 text-right">
+                      {formatDate(applicant.date_hired_fsai)}
+                    </div>
+                  </div>
+                  <div className="h-px bg-gray-100" />
+                  <div className="grid grid-cols-2 text-sm">
+                    <div className="px-4 py-3 text-gray-500">Service Length</div>
+                    <div className="px-4 py-3 font-semibold text-gray-900 text-right">{serviceLength}</div>
+                  </div>
+                </>
+              ) : null}
             </div>
           </div>
         </section>
@@ -695,12 +731,12 @@ function EmployeeDetailsInner() {
           </div>
 
           <div className="mt-5 grid grid-cols-1 md:grid-cols-2 gap-5">
-            <InfoRow icon={ShieldCheck} label="Custom ID" value={applicant.custom_id ?? "—"} />
-            <InfoRow icon={User} label="Gender" value={applicant.gender ?? "—"} />
-            <InfoRow icon={Phone} label="Phone Number" value={applicant.client_contact_num ?? "—"} />
-            <InfoRow icon={CalendarDays} label="Birth Date" value={formatDate(applicant.birth_date)} />
-            <InfoRow icon={Mail} label="Email Address" value={applicant.client_email ?? "—"} />
-            <InfoRow icon={User} label="Age" value={applicant.age ?? "—"} />
+            {showCustomId ? <InfoRow icon={ShieldCheck} label="Custom ID" value={applicant.custom_id ?? "—"} /> : null}
+            {showGender ? <InfoRow icon={User} label="Gender" value={applicant.gender ?? "—"} /> : null}
+            {showContactNumber ? <InfoRow icon={Phone} label="Phone Number" value={applicant.client_contact_num ?? "—"} /> : null}
+            {showBirthDate ? <InfoRow icon={CalendarDays} label="Birth Date" value={formatDate(applicant.birth_date)} /> : null}
+            {showEmail ? <InfoRow icon={Mail} label="Email Address" value={applicant.client_email ?? "—"} /> : null}
+            {showAge ? <InfoRow icon={User} label="Age" value={applicant.age ?? "—"} /> : null}
             <InfoRow icon={User} label="Emergency Contact" value={applicant.emergency_contact_person ?? "—"} />
             <InfoRow icon={MapPin} label="Present Address" value={applicant.present_address ?? "—"} />
             <InfoRow icon={Phone} label="Emergency Number" value={applicant.emergency_contact_num ?? "—"} />
@@ -816,34 +852,36 @@ function EmployeeDetailsInner() {
         <section className="bg-white rounded-3xl border shadow-sm p-6">
           <div className="text-lg font-bold text-gray-900">Scanned Documents</div>
           <div className="mt-4 divide-y">
-            <div className="flex items-center justify-between gap-3 py-2">
-              <div className="flex items-center gap-2 min-w-0">
-                <FileText className="w-4 h-4 text-yellow-700" />
-                <div className="text-sm font-medium text-gray-900 truncate">Profile Image</div>
-              </div>
-              {profile ? (
-                canEdit && isImageUrl(profile) ? (
-                  <button
-                    type="button"
-                    onClick={() => openImageViewerFromKey("profile")}
-                    className="inline-flex items-center gap-1 text-sm text-blue-600 hover:underline"
-                  >
-                    Open <ExternalLink className="w-4 h-4" />
-                  </button>
+            {showProfileImage ? (
+              <div className="flex items-center justify-between gap-3 py-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <FileText className="w-4 h-4 text-yellow-700" />
+                  <div className="text-sm font-medium text-gray-900 truncate">Profile Image</div>
+                </div>
+                {profile ? (
+                  canEdit && isImageUrl(profile) ? (
+                    <button
+                      type="button"
+                      onClick={() => openImageViewerFromKey("profile")}
+                      className="inline-flex items-center gap-1 text-sm text-blue-600 hover:underline"
+                    >
+                      Open <ExternalLink className="w-4 h-4" />
+                    </button>
+                  ) : (
+                    <a
+                      href={profile}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1 text-sm text-blue-600 hover:underline"
+                    >
+                      Open <ExternalLink className="w-4 h-4" />
+                    </a>
+                  )
                 ) : (
-                  <a
-                    href={profile}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="inline-flex items-center gap-1 text-sm text-blue-600 hover:underline"
-                  >
-                    Open <ExternalLink className="w-4 h-4" />
-                  </a>
-                )
-              ) : (
-                <div className="text-xs text-gray-400">Not uploaded</div>
-              )}
-            </div>
+                  <div className="text-xs text-gray-400">Not uploaded</div>
+                )}
+              </div>
+            ) : null}
 
             {[
               { key: "applicationForm", title: "Application Form", url: docUrls?.applicationForm ?? null },

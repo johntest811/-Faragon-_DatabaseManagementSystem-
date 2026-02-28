@@ -7,7 +7,8 @@ import { supabase } from "../Client/SupabaseClients";
 export type EmployeeExcelImportModalProps = {
   open: boolean;
   onClose: () => void;
-  onImported?: (result: { inserted: number; skipped: number; errors: string[] }) => void;
+  allowTemplateDownloads?: boolean;
+  onImported?: (result: { inserted: number; updated: number; skipped: number; errors: string[] }) => void;
 };
 
 type RowObject = Record<string, unknown>;
@@ -436,7 +437,7 @@ function rowToLicensure(row: RowObject) {
   } as Omit<LicensureUpsert, "applicant_id">;
 }
 
-export default function EmployeeExcelImportModal({ open, onClose, onImported }: EmployeeExcelImportModalProps) {
+export default function EmployeeExcelImportModal({ open, onClose, allowTemplateDownloads = true, onImported }: EmployeeExcelImportModalProps) {
   const [fileName, setFileName] = useState<string>("");
   const [rows, setRows] = useState<RowObject[]>([]);
   const [parsingError, setParsingError] = useState<string>("");
@@ -462,15 +463,15 @@ export default function EmployeeExcelImportModal({ open, onClose, onImported }: 
     return String(v ?? "").trim().toUpperCase() === "N/A";
   }
 
-  function updatePayloadMissingOnly(existing: ApplicantExistingRow, incoming: ApplicantInsert) {
-    // Fill only empty/missing DB fields from the import row.
+  function updatePayloadOverwrite(existing: ApplicantExistingRow, incoming: ApplicantInsert) {
+    // Overwrite existing fields with non-empty values from the import row.
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(incoming)) {
       if (!hasValue(v)) continue;
       if (isPlaceholderName(k, v)) continue;
 
       const existingVal = existing[k as keyof ApplicantExistingRow];
-      if (hasValue(existingVal)) continue;
+      if (String(existingVal ?? "").trim() === String(v ?? "").trim()) continue;
       out[k] = v;
     }
     return out;
@@ -744,7 +745,7 @@ export default function EmployeeExcelImportModal({ open, onClose, onImported }: 
             null;
 
           if (existing) {
-            const updPayload = updatePayloadMissingOnly(existing, item.applicant);
+            const updPayload = updatePayloadOverwrite(existing, item.applicant);
             if (Object.keys(updPayload).length) {
               const updRes = await supabase.from("applicants").update(updPayload).eq("applicant_id", existing.applicant_id);
               if (updRes.error) {
@@ -797,11 +798,10 @@ export default function EmployeeExcelImportModal({ open, onClose, onImported }: 
     } catch (e: unknown) {
       errors.push(e instanceof Error ? e.message : "Import failed");
     } finally {
-      const processed = inserted + updated + unchanged;
-      const skipped = Math.max(0, rows.length - processed);
+      const skipped = Math.max(0, rows.length - inserted - updated);
       const msg = `Imported ${inserted} • Updated ${updated} • Unchanged ${unchanged} • Skipped ${skipped}.`;
       setResultMsg(msg);
-      onImported?.({ inserted, skipped, errors });
+      onImported?.({ inserted, updated, skipped, errors });
       setImporting(false);
     }
   }
@@ -832,32 +832,34 @@ export default function EmployeeExcelImportModal({ open, onClose, onImported }: 
               </div>
 
               <div className="flex items-center gap-2">
-                <div className="flex items-center gap-1">
-                  <button
-                    type="button"
-                    onClick={downloadCsvTemplate}
-                    className="px-3 py-2 rounded-xl border bg-white text-black text-sm font-semibold"
-                  >
-                    Template CSV
-                  </button>
-                  <button
-                    type="button"
-                    onClick={downloadXlsxTemplate}
-                    className="px-3 py-2 rounded-xl border bg-white text-black text-sm font-semibold"
-                  >
-                    Template XLSX
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void exportAllEmployeesTemplateXlsx()}
-                    disabled={exporting || importing}
-                    className={`px-3 py-2 rounded-xl border bg-white text-black text-sm font-semibold ${
-                      exporting || importing ? "opacity-60" : ""
-                    }`}
-                  >
-                    {exporting ? "Exporting…" : "Export All (Template)"}
-                  </button>
-                </div>
+                {allowTemplateDownloads ? (
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={downloadCsvTemplate}
+                      className="px-3 py-2 rounded-xl border bg-white text-black text-sm font-semibold"
+                    >
+                      Template CSV
+                    </button>
+                    <button
+                      type="button"
+                      onClick={downloadXlsxTemplate}
+                      className="px-3 py-2 rounded-xl border bg-white text-black text-sm font-semibold"
+                    >
+                      Template XLSX
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void exportAllEmployeesTemplateXlsx()}
+                      disabled={exporting || importing}
+                      className={`px-3 py-2 rounded-xl border bg-white text-black text-sm font-semibold ${
+                        exporting || importing ? "opacity-60" : ""
+                      }`}
+                    >
+                      {exporting ? "Exporting…" : "Export All (Template)"}
+                    </button>
+                  </div>
+                ) : null}
 
                 <label className="px-3 py-2 rounded-xl bg-[#FFDA03] text-black text-sm font-semibold cursor-pointer">
                   Choose File
@@ -876,7 +878,7 @@ export default function EmployeeExcelImportModal({ open, onClose, onImported }: 
 
             <div className="mt-3 text-sm text-black">
               Duplicate-safe import is enabled: existing employees are matched by Custom ID, Security Licensed Number,
-              or Email, then only missing fields are filled.
+              or Email, then matching rows are overwritten using non-empty values from the file.
             </div>
           </div>
 

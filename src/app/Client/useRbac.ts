@@ -156,6 +156,21 @@ export function useAuthRole() {
 
 export type ModuleRow = { module_key: string; display_name: string };
 
+export type ColumnAccessResult = {
+  allowedColumns: Set<string>;
+  restricted: boolean;
+  loading: boolean;
+  error: string;
+};
+
+function normalizeModuleKey(value: unknown) {
+  return String(value ?? "").trim().toLowerCase();
+}
+
+function normalizeColumnKey(value: unknown) {
+  return String(value ?? "").trim();
+}
+
 export function useMyModules() {
   const [modules, setModules] = useState<ModuleRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -168,12 +183,92 @@ export function useMyModules() {
       setLoading(true);
       setError("");
 
-      // Legacy mode: no DB-backed module list; layout will use role fallback.
       const legacySession = readAdminSession();
       if (legacySession) {
-        if (!cancelled) {
-          setModules([]);
-          setLoading(false);
+        try {
+          const legacyRole = normalizeRoleName(legacySession.role);
+          if (!legacyRole) {
+            if (!cancelled) {
+              setModules([]);
+              setLoading(false);
+            }
+            return;
+          }
+
+          const { data: roleRow, error: roleErr } = await supabase
+            .from("app_roles")
+            .select("role_id")
+            .eq("role_name", legacyRole)
+            .single();
+
+          if (roleErr || !roleRow?.role_id) {
+            if (!cancelled) {
+              setModules([]);
+              setLoading(false);
+            }
+            return;
+          }
+
+          const { data: accessRows, error: accessErr } = await supabase
+            .from("role_module_access")
+            .select("module_key, can_read")
+            .eq("role_id", roleRow.role_id);
+          if (accessErr) throw accessErr;
+
+          const keys = ((accessRows as Array<{ module_key: string; can_read: boolean }> | null) ?? [])
+            .filter((r) => r && r.can_read)
+            .map((r) => r.module_key);
+
+          if (!keys.length) {
+            if (!cancelled) {
+              setModules([]);
+              setLoading(false);
+            }
+            return;
+          }
+
+          const { data: modRows, error: modErr } = await supabase
+            .from("modules")
+            .select("module_key, display_name")
+            .in("module_key", keys)
+            .order("module_key");
+          if (modErr) throw modErr;
+
+          const { data: adminOverrideRows } = await supabase
+            .from("admin_module_access_overrides")
+            .select("module_key, can_read")
+            .eq("admin_id", legacySession.id);
+
+          const overrideKeys = (((adminOverrideRows as Array<{ module_key: string; can_read: boolean }> | null) ?? []) || [])
+            .filter((row) => row && row.can_read)
+            .map((row) => row.module_key);
+
+          const allKeys = Array.from(new Set([...(keys || []), ...overrideKeys]));
+          if (!allKeys.length) {
+            if (!cancelled) {
+              setModules([]);
+              setLoading(false);
+            }
+            return;
+          }
+
+          const { data: mergedRows, error: mergedErr } = await supabase
+            .from("modules")
+            .select("module_key, display_name")
+            .in("module_key", allKeys)
+            .order("module_key");
+          if (mergedErr) throw mergedErr;
+
+          if (!cancelled) {
+            setModules(((mergedRows as ModuleRow[]) ?? (modRows as ModuleRow[]) ?? []) || []);
+            setLoading(false);
+          }
+        } catch (e: unknown) {
+          if (!cancelled) {
+            setError(e instanceof Error ? e.message : "Failed to load modules");
+            setModules([]);
+            setLoading(false);
+          }
         }
         return;
       }
@@ -193,7 +288,42 @@ export function useMyModules() {
           setError(rpcErr.message);
           setModules([]);
         } else {
-          setModules((data as ModuleRow[]) || []);
+          const roleModules = (data as ModuleRow[]) || [];
+
+          const { data: sessionData2 } = await supabase.auth.getSession();
+          const userId = sessionData2.session?.user?.id ?? null;
+
+          if (!userId) {
+            setModules(roleModules);
+          } else {
+            const { data: userOverrideRows } = await supabase
+              .from("user_module_access_overrides")
+              .select("module_key, can_read")
+              .eq("user_id", userId);
+
+            const overrideKeys = (((userOverrideRows as Array<{ module_key: string; can_read: boolean }> | null) ?? []) || [])
+              .filter((row) => row && row.can_read)
+              .map((row) => row.module_key);
+
+            if (!overrideKeys.length) {
+              setModules(roleModules);
+            } else {
+              const existing = new Set(roleModules.map((m) => m.module_key));
+              const missing = overrideKeys.filter((k) => !existing.has(k));
+
+              if (!missing.length) {
+                setModules(roleModules);
+              } else {
+                const { data: extraRows } = await supabase
+                  .from("modules")
+                  .select("module_key, display_name")
+                  .in("module_key", missing)
+                  .order("module_key");
+
+                setModules([...(roleModules || []), ...(((extraRows as ModuleRow[]) ?? []) || [])]);
+              }
+            }
+          }
         }
         setLoading(false);
       }
@@ -218,4 +348,142 @@ export function useMyModules() {
   }, []);
 
   return { modules, loading, error };
+}
+
+export function useMyColumnAccess(moduleKey: string): ColumnAccessResult {
+  const [allowedColumns, setAllowedColumns] = useState<Set<string>>(new Set());
+  const [restricted, setRestricted] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    const key = normalizeModuleKey(moduleKey);
+
+    async function run() {
+      setLoading(true);
+      setError("");
+
+      if (!key) {
+        if (!cancelled) {
+          setAllowedColumns(new Set());
+          setRestricted(false);
+          setLoading(false);
+        }
+        return;
+      }
+
+      try {
+        const legacySession = readAdminSession();
+
+        if (legacySession) {
+          const roleName = normalizeRoleName(legacySession.role);
+          if (roleName === "superadmin") {
+            if (!cancelled) {
+              setAllowedColumns(new Set());
+              setRestricted(false);
+              setLoading(false);
+            }
+            return;
+          }
+
+          const { data, error: colErr } = await supabase
+            .from("admin_column_access_overrides")
+            .select("column_key, can_read")
+            .eq("admin_id", legacySession.id)
+            .eq("module_key", key);
+          if (colErr) throw colErr;
+
+          const rows =
+            (((data as Array<{ column_key: string; can_read: boolean | null }> | null) ?? []) || []);
+          const next = new Set(
+            rows
+              .filter((r) => r && r.can_read !== false)
+              .map((r) => normalizeColumnKey(r.column_key))
+              .filter(Boolean)
+          );
+
+          if (!cancelled) {
+            setAllowedColumns(next);
+            setRestricted(rows.length > 0);
+            setLoading(false);
+          }
+          return;
+        }
+
+        const { data: sessionData, error: sessErr } = await supabase.auth.getSession();
+        if (sessErr) throw sessErr;
+        const userId = sessionData.session?.user?.id ?? null;
+
+        if (!userId) {
+          if (!cancelled) {
+            setAllowedColumns(new Set());
+            setRestricted(false);
+            setLoading(false);
+          }
+          return;
+        }
+
+        let roleName: RoleName = null;
+        const { data: roleData } = await supabase.rpc("current_role_name");
+        roleName = normalizeRoleName(roleData);
+        if (roleName === "superadmin") {
+          if (!cancelled) {
+            setAllowedColumns(new Set());
+            setRestricted(false);
+            setLoading(false);
+          }
+          return;
+        }
+
+        const { data, error: colErr } = await supabase
+          .from("user_column_access_overrides")
+          .select("column_key, can_read")
+          .eq("user_id", userId)
+          .eq("module_key", key);
+        if (colErr) throw colErr;
+
+        const rows =
+          (((data as Array<{ column_key: string; can_read: boolean | null }> | null) ?? []) || []);
+        const next = new Set(
+          rows
+            .filter((r) => r && r.can_read !== false)
+            .map((r) => normalizeColumnKey(r.column_key))
+            .filter(Boolean)
+        );
+
+        if (!cancelled) {
+          setAllowedColumns(next);
+          setRestricted(rows.length > 0);
+          setLoading(false);
+        }
+      } catch (e: unknown) {
+        if (!cancelled) {
+          setError(e instanceof Error ? e.message : "Failed to load column permissions");
+          setAllowedColumns(new Set());
+          setRestricted(false);
+          setLoading(false);
+        }
+      }
+    }
+
+    run();
+
+    const { data: authSub } = supabase.auth.onAuthStateChange(() => {
+      run();
+    });
+
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === "adminSession") run();
+    };
+    window.addEventListener("storage", onStorage);
+
+    return () => {
+      cancelled = true;
+      authSub.subscription.unsubscribe();
+      window.removeEventListener("storage", onStorage);
+    };
+  }, [moduleKey]);
+
+  return { allowedColumns, restricted, loading, error };
 }

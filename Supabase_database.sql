@@ -1,6 +1,49 @@
 -- WARNING: This schema is for context only and is not meant to be run.
 -- Table order and constraints may not be valid for execution.
 
+CREATE TABLE public.access_requests (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  status text NOT NULL DEFAULT 'PENDING'::text CHECK (status = ANY (ARRAY['PENDING'::text, 'APPROVED'::text, 'REJECTED'::text, 'CANCELLED'::text])),
+  requested_module_key text NOT NULL,
+  requested_path text,
+  reason text,
+  requester_user_id uuid,
+  requester_email text,
+  requester_admin_id uuid,
+  requester_username text,
+  requester_role text,
+  resolved_at timestamp with time zone,
+  resolved_by uuid,
+  resolution_note text,
+  requested_column_key text,
+  CONSTRAINT access_requests_pkey PRIMARY KEY (id),
+  CONSTRAINT access_requests_module_fkey FOREIGN KEY (requested_module_key) REFERENCES public.modules(module_key),
+  CONSTRAINT access_requests_requester_admin_fkey FOREIGN KEY (requester_admin_id) REFERENCES public.admins(id)
+);
+CREATE TABLE public.admin_column_access_overrides (
+  admin_id uuid NOT NULL,
+  module_key text NOT NULL,
+  column_key text NOT NULL,
+  can_read boolean NOT NULL DEFAULT true,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  created_by uuid,
+  CONSTRAINT admin_column_access_overrides_pkey PRIMARY KEY (admin_id, module_key, column_key),
+  CONSTRAINT admin_column_access_overrides_admin_fkey FOREIGN KEY (admin_id) REFERENCES public.admins(id),
+  CONSTRAINT admin_column_access_overrides_module_fkey FOREIGN KEY (module_key) REFERENCES public.modules(module_key)
+);
+CREATE TABLE public.admin_module_access_overrides (
+  admin_id uuid NOT NULL,
+  module_key text NOT NULL,
+  can_read boolean NOT NULL DEFAULT true,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  created_by uuid,
+  CONSTRAINT admin_module_access_overrides_pkey PRIMARY KEY (admin_id, module_key),
+  CONSTRAINT admin_module_access_overrides_admin_fkey FOREIGN KEY (admin_id) REFERENCES public.admins(id),
+  CONSTRAINT admin_module_access_overrides_module_fkey FOREIGN KEY (module_key) REFERENCES public.modules(module_key)
+);
 CREATE TABLE public.admin_role_memberships (
   user_id uuid NOT NULL,
   role_id uuid NOT NULL,
@@ -10,13 +53,12 @@ CREATE TABLE public.admin_role_memberships (
 CREATE TABLE public.admins (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
   username text NOT NULL UNIQUE,
-  role text NOT NULL CHECK (role = ANY (ARRAY['superadmin'::text, 'admin'::text, 'employee'::text])),
+  role text NOT NULL,
   created_at timestamp with time zone DEFAULT now(),
   last_login timestamp with time zone,
   employee_id integer,
   employee_number character varying,
   full_name text,
-  position text CHECK ("position" = ANY (ARRAY['Supervisor'::text, 'Employee'::text, 'Manager'::text, 'Admin'::text, 'Superadmin'::text])),
   is_active boolean DEFAULT true,
   password text NOT NULL DEFAULT 'admin123'::text,
   CONSTRAINT admins_pkey PRIMARY KEY (id)
@@ -352,4 +394,25 @@ CREATE TABLE public.role_module_access (
   CONSTRAINT role_module_access_pkey PRIMARY KEY (role_id, module_key),
   CONSTRAINT role_module_access_role_id_fkey FOREIGN KEY (role_id) REFERENCES public.app_roles(role_id),
   CONSTRAINT role_module_access_module_key_fkey FOREIGN KEY (module_key) REFERENCES public.modules(module_key)
+);
+CREATE TABLE public.user_column_access_overrides (
+  user_id uuid NOT NULL,
+  module_key text NOT NULL,
+  column_key text NOT NULL,
+  can_read boolean NOT NULL DEFAULT true,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  created_by uuid,
+  CONSTRAINT user_column_access_overrides_pkey PRIMARY KEY (user_id, module_key, column_key),
+  CONSTRAINT user_column_access_overrides_module_fkey FOREIGN KEY (module_key) REFERENCES public.modules(module_key)
+);
+CREATE TABLE public.user_module_access_overrides (
+  user_id uuid NOT NULL,
+  module_key text NOT NULL,
+  can_read boolean NOT NULL DEFAULT true,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  created_by uuid,
+  CONSTRAINT user_module_access_overrides_pkey PRIMARY KEY (user_id, module_key),
+  CONSTRAINT user_module_access_overrides_module_fkey FOREIGN KEY (module_key) REFERENCES public.modules(module_key)
 );

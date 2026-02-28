@@ -7,10 +7,11 @@ import { Pencil, SlidersHorizontal, Trash2, Upload, LayoutGrid, Table, Search, F
 import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
-import { useAuthRole } from "../../Client/useRbac";
+import { useAuthRole, useMyColumnAccess } from "../../Client/useRbac";
 import EmployeeEditorModal from "../../Components/EmployeeEditorModal";
 import EmployeeExcelImportModal from "../../Components/EmployeeExcelImportModal";
 import LoadingCircle from "../../Components/LoadingCircle";
+import ImportSummaryModal, { ImportSummaryData } from "../Components/ImportSummaryModal";
 
 type Applicant = {
 	applicant_id: string;
@@ -37,6 +38,22 @@ type LicensureRow = {
 	driver_expiration: string | null;
 	security_expiration: string | null;
 	insurance_expiration: string | null;
+};
+
+const EMPLOYEE_COLUMN_TO_DB_FIELDS: Record<string, string[]> = {
+	first_name: ["first_name"],
+	middle_name: ["middle_name"],
+	last_name: ["last_name"],
+	client_position: ["client_position"],
+	detachment: ["detachment"],
+	status: ["status"],
+	date_hired_fsai: ["date_hired_fsai"],
+	client_email: ["client_email"],
+	client_contact_num: ["client_contact_num"],
+	gender: ["gender"],
+	birth_date: ["birth_date"],
+	age: ["age"],
+	profile_image_path: ["profile_image_path"],
 };
 
 const BUCKETS = {
@@ -181,7 +198,79 @@ function weekOfMonth(date: Date) {
 export default function EmployeesPage() {
 	const router = useRouter();
 	const { role: sessionRole } = useAuthRole();
+	const {
+		allowedColumns: allowedEmployeeColumns,
+		restricted: employeeColumnsRestricted,
+		loading: loadingEmployeeColumns,
+		error: employeeColumnsError,
+	} = useMyColumnAccess("employees");
 	const api = (globalThis as unknown as { electronAPI?: any }).electronAPI;
+
+	const canViewEmployeeColumn = (columnKey: string) =>
+		!employeeColumnsRestricted || allowedEmployeeColumns.has(columnKey);
+	const isAdmin = sessionRole === "admin" || sessionRole === "superadmin";
+	const canExportEmployees = isAdmin && canViewEmployeeColumn("export_file");
+	const canImportEmployees = isAdmin && canViewEmployeeColumn("import_file");
+	const canDownloadEmployeeTemplate = isAdmin && canViewEmployeeColumn("export_template");
+
+	const showPhotoColumn = canViewEmployeeColumn("profile_image_path");
+	const showNameColumn =
+		canViewEmployeeColumn("first_name") || canViewEmployeeColumn("middle_name") || canViewEmployeeColumn("last_name");
+	const showPositionColumn = canViewEmployeeColumn("client_position");
+	const showGenderColumn = canViewEmployeeColumn("gender");
+	const showBirthDateColumn = canViewEmployeeColumn("birth_date");
+	const showAgeColumn = canViewEmployeeColumn("age");
+	const showHiredDateColumn = canViewEmployeeColumn("date_hired_fsai");
+	const showYearsWithCompanyColumn = canViewEmployeeColumn("date_hired_fsai");
+	const showDetachmentColumn = canViewEmployeeColumn("detachment");
+	const showStatusColumn = canViewEmployeeColumn("status");
+	const showEmailColumn = canViewEmployeeColumn("client_email");
+	const showPhoneColumn = canViewEmployeeColumn("client_contact_num");
+
+	const exportColumnDefs = useMemo(
+		() => {
+			const cols: Array<{ key: string; label: string; value: (e: Applicant, now: Date) => string }> = [];
+			if (showNameColumn) cols.push({ key: "name", label: "Name", value: (e) => getFullName(e) });
+			if (showPositionColumn) cols.push({ key: "job", label: "Job Title", value: (e) => e.client_position ?? "" });
+			if (showDetachmentColumn) cols.push({ key: "detachment", label: "Detachment", value: (e) => e.detachment ?? "" });
+			if (showGenderColumn) cols.push({ key: "gender", label: "Gender", value: (e) => (e.gender ?? "").trim() });
+			if (showHiredDateColumn) {
+				cols.push({
+					key: "hire_date",
+					label: "Hire Date",
+					value: (e) => (e.date_hired_fsai ? new Date(e.date_hired_fsai).toLocaleDateString() : ""),
+				});
+			}
+			if (showYearsWithCompanyColumn) {
+				cols.push({
+					key: "service",
+					label: "Service Length",
+					value: (e, now) => formatServiceLengthShort(e.date_hired_fsai, now),
+				});
+			}
+			if (showEmailColumn) cols.push({ key: "email", label: "Email", value: (e) => (e.client_email ?? "").trim() });
+			if (showPhoneColumn) {
+				cols.push({ key: "phone", label: "Phone", value: (e) => (e.client_contact_num ?? "").trim() });
+			}
+
+			return cols;
+		},
+		[
+			showNameColumn,
+			showPositionColumn,
+			showDetachmentColumn,
+			showGenderColumn,
+			showHiredDateColumn,
+			showYearsWithCompanyColumn,
+			showEmailColumn,
+			showPhoneColumn,
+		]
+	);
+
+	const employeeColumnsSignature = useMemo(
+		() => Array.from(allowedEmployeeColumns).sort().join("|"),
+		[allowedEmployeeColumns]
+	);
 
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string>("");
@@ -217,11 +306,13 @@ export default function EmployeesPage() {
 	const [editorMode, setEditorMode] = useState<"create" | "edit">("edit");
 	const [editorApplicantId, setEditorApplicantId] = useState<string | null>(null);
 	const [excelOpen, setExcelOpen] = useState(false);
+	const [importSummary, setImportSummary] = useState<ImportSummaryData | null>(null);
+	const [importSummaryOpen, setImportSummaryOpen] = useState(false);
 
 	const [exportOpen, setExportOpen] = useState(false);
 	const [exportMonth, setExportMonth] = useState("ALL"); // MM
 	const [exportWeek, setExportWeek] = useState("ALL"); // 1..5
-	const [exportTitle, setExportTitle] = useState("Employees (1+ year of service)");
+	const [exportTitle, setExportTitle] = useState("Employees Export");
 	const [exportExpiringOpen, setExportExpiringOpen] = useState(false);
 	const [exportPreviewOpen, setExportPreviewOpen] = useState(false);
 
@@ -239,14 +330,25 @@ export default function EmployeesPage() {
 	const [trashEmployee, setTrashEmployee] = useState<Applicant | null>(null);
 
 	async function fetchEmployees() {
+		if (loadingEmployeeColumns) {
+			setLoading(true);
+			return;
+		}
+
 		setLoading(true);
-		setError("");
+		setError(employeeColumnsError || "");
 		try {
+			const selectFields = new Set<string>(["applicant_id", "created_at", "is_archived", "is_trashed"]);
+			for (const [columnKey, dbFields] of Object.entries(EMPLOYEE_COLUMN_TO_DB_FIELDS)) {
+				if (!canViewEmployeeColumn(columnKey)) continue;
+				for (const field of dbFields) {
+					selectFields.add(field);
+				}
+			}
+
 			const { data, error: fetchError } = await supabase
 				.from("applicants")
-				.select(
-					"applicant_id, created_at, date_hired_fsai, first_name, middle_name, last_name, client_position, detachment, status, gender, birth_date, age, client_contact_num, client_email, profile_image_path, is_archived, is_trashed"
-				)
+				.select(Array.from(selectFields).join(", "))
 				.eq("is_archived", false)
 				.eq("is_trashed", false)
 				.order("created_at", { ascending: false })
@@ -330,6 +432,8 @@ export default function EmployeesPage() {
 
 
 	useEffect(() => {
+		if (loadingEmployeeColumns) return;
+
 		fetchEmployees();
 
 		const channel = supabase
@@ -340,7 +444,7 @@ export default function EmployeesPage() {
 		return () => {
 			supabase.removeChannel(channel);
 		};
-	}, []);
+	}, [loadingEmployeeColumns, employeeColumnsRestricted, employeeColumnsSignature, employeeColumnsError]);
 
 	const filtered = useMemo(() => {
 		const q = search.trim().toLowerCase();
@@ -490,11 +594,7 @@ if (hiredMonthFilter !== "ALL") {
 ]);
 
 	const exportCandidates = useMemo(() => {
-		const now = new Date();
 		return filtered.filter((e) => {
-			const years = serviceYearsExact(e.date_hired_fsai, now);
-			if (years == null || years < 1) return false;
-
 			if (exportMonth !== "ALL" || exportWeek !== "ALL") {
 				if (!e.date_hired_fsai) return false;
 				const hired = new Date(e.date_hired_fsai);
@@ -520,9 +620,9 @@ if (hiredMonthFilter !== "ALL") {
 				if (!next.nextYmd) return null;
 				return {
 					applicant_id: e.applicant_id,
-					name: getFullName(e),
-					job: e.client_position ?? "—",
-					detachment: e.detachment ?? "—",
+					name: showNameColumn ? getFullName(e) : "Employee",
+					job: showPositionColumn ? e.client_position ?? "—" : "—",
+					detachment: showDetachmentColumn ? e.detachment ?? "—" : "—",
 					expires_on: next.nextYmd,
 					days: next.nextDays,
 				};
@@ -536,7 +636,7 @@ if (hiredMonthFilter !== "ALL") {
 		});
 
 		return items.slice(0, 200);
-	}, [filtered, expiringSummaryByApplicantId, licensureByApplicantId]);
+	}, [filtered, expiringSummaryByApplicantId, licensureByApplicantId, showNameColumn, showPositionColumn, showDetachmentColumn]);
 
 	const filterOptions = useMemo(() => {
 		const det = new Set<string>();
@@ -574,6 +674,7 @@ if (hiredMonthFilter !== "ALL") {
 	}
 
 	function openExcelImport() {
+		if (!canImportEmployees) return;
 		setExcelOpen(true);
 	}
 
@@ -665,47 +766,51 @@ if (hiredMonthFilter !== "ALL") {
 	}
 
 	function exportFileBase() {
-		const parts = ["employees", "min1yr"];
+		const parts = ["employees"];
 		if (exportMonth !== "ALL") parts.push(`m${exportMonth}`);
 		if (exportWeek !== "ALL") parts.push(`w${exportWeek}`);
 		parts.push(new Date().toISOString().slice(0, 10));
 		return parts.join("_");
 	}
 
+	function exportEmployeesCsv() {
+		setError("");
+		const rows = exportCandidates;
+		if (!rows.length) {
+			setError("No employees match the export filters.");
+			return;
+		}
+		if (!exportColumnDefs.length) {
+			setError("No permitted columns are available for export.");
+			return;
+		}
+
+		const now = new Date();
+		const headers = exportColumnDefs.map((c) => c.label);
+		const body = rows.map((e) => exportColumnDefs.map((c) => c.value(e, now)));
+		const ws = XLSX.utils.aoa_to_sheet([headers, ...body]);
+		const csv = XLSX.utils.sheet_to_csv(ws);
+		downloadBlob(`${exportFileBase()}.csv`, new Blob([csv], { type: "text/csv;charset=utf-8;" }));
+		setExportOpen(false);
+	}
+
 	function exportEmployeesXlsx() {
 		setError("");
 		const rows = exportCandidates;
 		if (!rows.length) {
-			setError("No employees match the export criteria (must be 1+ year of service).");
+			setError("No employees match the export filters.");
 			return;
 		}
-		const title = exportTitle.trim() || "Employees (1+ year of service)";
+		if (!exportColumnDefs.length) {
+			setError("No permitted columns are available for export.");
+			return;
+		}
+		const title = exportTitle.trim() || "Employees Export";
 
 		const now = new Date();
-		const data = rows.map((e) => {
-			return {
-				Name: getFullName(e),
-				"Job Title": e.client_position ?? "",
-				Detachment: e.detachment ?? "",
-				Gender: (e.gender ?? "").trim(),
-				"Hire Date": e.date_hired_fsai ? new Date(e.date_hired_fsai).toLocaleDateString() : "",
-				"Service Length": formatServiceLengthShort(e.date_hired_fsai, now),
-				Email: (e.client_email ?? "").trim(),
-				Phone: (e.client_contact_num ?? "").trim(),
-			};
-		});
 
-		const headers = ["Name", "Job Title", "Detachment", "Gender", "Hire Date", "Service Length", "Email", "Phone"];
-		const body = data.map((row) => [
-			row.Name,
-			row["Job Title"],
-			row.Detachment,
-			row.Gender,
-			row["Hire Date"],
-			row["Service Length"],
-			row.Email,
-			row.Phone,
-		]);
+		const headers = exportColumnDefs.map((c) => c.label);
+		const body = rows.map((e) => exportColumnDefs.map((c) => c.value(e, now)));
 		const ws = XLSX.utils.aoa_to_sheet([
 			[title],
 			[`Generated: ${new Date().toLocaleString()}`],
@@ -727,29 +832,22 @@ if (hiredMonthFilter !== "ALL") {
 		setError("");
 		const rows = exportCandidates;
 		if (!rows.length) {
-			setError("No employees match the export criteria (must be 1+ year of service).");
+			setError("No employees match the export filters.");
 			return;
 		}
-		const title = exportTitle.trim() || "Employees (1+ year of service)";
+		if (!exportColumnDefs.length) {
+			setError("No permitted columns are available for export.");
+			return;
+		}
+		const title = exportTitle.trim() || "Employees Export";
 
 		const now = new Date();
 		const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
 		doc.setFontSize(14);
 		doc.text(title, 40, 40);
 
-		const head = [["Name", "Job Title", "Detachment", "Gender", "Hire Date", "Service", "Email", "Phone"]];
-		const body = rows.map((e) => {
-			return [
-				getFullName(e),
-				e.client_position ?? "",
-				e.detachment ?? "",
-				(e.gender ?? "").trim(),
-				e.date_hired_fsai ? new Date(e.date_hired_fsai).toLocaleDateString() : "",
-				formatServiceLengthShort(e.date_hired_fsai, now),
-				(e.client_email ?? "").trim(),
-				(e.client_contact_num ?? "").trim(),
-			];
-		});
+		const head = [exportColumnDefs.map((c) => c.label)];
+		const body = rows.map((e) => exportColumnDefs.map((c) => c.value(e, now)));
 
 		autoTable(doc, {
 			startY: 60,
@@ -828,24 +926,28 @@ if (hiredMonthFilter !== "ALL") {
 
 					{sessionRole !== "employee" ? (
 						<div className="flex items-center gap-2">
-							<button
-								type="button"
-								onClick={() => setExportOpen(true)}
-								className="h-10 w-10 rounded-xl border bg-white flex items-center justify-center"
-								aria-label="Export"
-								title="Export"
-							>
-								<FileDown className="w-5 h-5 text-gray-800" />
-							</button>
+							{canExportEmployees ? (
+								<button
+									type="button"
+									onClick={() => setExportOpen(true)}
+									className="h-10 w-10 rounded-xl border bg-white flex items-center justify-center"
+									aria-label="Export"
+									title="Export"
+								>
+									<FileDown className="w-5 h-5 text-gray-800" />
+								</button>
+							) : null}
 
-							<button
-								onClick={openExcelImport}
-								className="h-10 w-10 rounded-xl border bg-white flex items-center justify-center"
-								aria-label="Import Excel"
-								title="Import Excel"
-							>
-								<Upload className="w-5 h-5 text-gray-800" />
-							</button>
+							{canImportEmployees ? (
+								<button
+									onClick={openExcelImport}
+									className="h-10 w-10 rounded-xl border bg-white flex items-center justify-center"
+									aria-label="Import Excel"
+									title="Import Excel"
+								>
+									<Upload className="w-5 h-5 text-gray-800" />
+								</button>
+							) : null}
 							<button onClick={openCreate} className="px-4 py-2 rounded-full bg-[#FFDA03] text-black font-semibold">
 								New Employee
 							</button>
@@ -897,39 +999,49 @@ if (hiredMonthFilter !== "ALL") {
 								}`}
 							>
 								<div className="flex items-center gap-4">
-									<div className="h-16 w-16 rounded-2xl bg-gray-100 overflow-hidden flex items-center justify-center">
-										{profileUrl ? (
-											<img src={profileUrl} alt={name} className="h-full w-full object-cover" />
-										) : (
-											<div className="text-xs text-gray-500">No Photo</div>
-										)}
-									</div>
+									{showPhotoColumn ? (
+										<div className="h-16 w-16 rounded-2xl bg-gray-100 overflow-hidden flex items-center justify-center">
+											{profileUrl ? (
+												<img src={profileUrl} alt={name} className="h-full w-full object-cover" />
+											) : (
+												<div className="text-xs text-gray-500">No Photo</div>
+											)}
+										</div>
+									) : null}
 									<div className="min-w-0">
-										<div className="text-sm font-bold text-gray-900 truncate">{name}</div>
+										{showNameColumn ? <div className="text-sm font-bold text-gray-900 truncate">{name}</div> : null}
 										<div className="text-xs text-gray-500 truncate">{shortCode(e.applicant_id)}</div>
-										<div className="mt-1 text-xs text-gray-500 truncate">
-                <span className="text-gray-500">Job Title:</span>{" "}
-                {e.client_position ?? "—"}
-										</div>
-										<div className="text-xs text-gray-500 truncate">
-                <span className="text-gray-500">Detachment:</span>{" "}
-                {e.detachment ?? "—"}
-										</div>
-										<div className="text-xs text-gray-500 truncate">
-											<span className="text-gray-500">Years w/ Company:</span>{" "}
-											{formatServiceLengthShort(e.date_hired_fsai)}
-										</div>
+										{showPositionColumn ? (
+											<div className="mt-1 text-xs text-gray-500 truncate">
+												<span className="text-gray-500">Job Title:</span>{" "}
+												{e.client_position ?? "—"}
+											</div>
+										) : null}
+										{showDetachmentColumn ? (
+											<div className="text-xs text-gray-500 truncate">
+												<span className="text-gray-500">Detachment:</span>{" "}
+												{e.detachment ?? "—"}
+											</div>
+										) : null}
+										{showYearsWithCompanyColumn ? (
+											<div className="text-xs text-gray-500 truncate">
+												<span className="text-gray-500">Years w/ Company:</span>{" "}
+												{formatServiceLengthShort(e.date_hired_fsai)}
+											</div>
+										) : null}
 									</div>
 								</div>
 
 								<div className="mt-4 flex items-center justify-between gap-3">
-									<span
-										className={`px-3 py-1 rounded-full text-xs font-bold ${
-											isActive ? "bg-emerald-500 text-white" : "bg-red-500 text-white"
-										}`}
-									>
-										{status || "—"}
-									</span>
+									{showStatusColumn ? (
+										<span
+											className={`px-3 py-1 rounded-full text-xs font-bold ${
+												isActive ? "bg-emerald-500 text-white" : "bg-red-500 text-white"
+											}`}
+										>
+											{status || "—"}
+										</span>
+									) : <span />}
 
 									<div className="flex items-center gap-2">
 									{sessionRole !== "employee" && (
@@ -981,17 +1093,17 @@ if (hiredMonthFilter !== "ALL") {
 		<table className="w-full text-sm text-black border-separate border-spacing-y-2">
 			<thead className="sticky top-0 z-10">
 				<tr className="bg-[#FFDA03]">
-					<th className="px-4 py-3 text-left font-semibold text-black first:rounded-l-xl">Photo</th>
-					<th className="px-4 py-3 text-left font-semibold text-black">Name</th>
-					<th className="px-4 py-3 text-left font-semibold text-black">Position</th>
-					<th className="px-4 py-3 text-left font-semibold text-black">Gender</th>
-					<th className="px-4 py-3 text-left font-semibold text-black">Birth Date</th>
-					<th className="px-4 py-3 text-left font-semibold text-black">Age</th>
-					<th className="px-4 py-3 text-left font-semibold text-black">Hired Date</th>
-					<th className="px-4 py-3 text-left font-semibold text-black">Years w/ Company</th>
-					<th className="px-4 py-3 text-left font-semibold text-black">Detachment</th>
+					{showPhotoColumn ? <th className="px-4 py-3 text-left font-semibold text-black first:rounded-l-xl">Photo</th> : null}
+					{showNameColumn ? <th className="px-4 py-3 text-left font-semibold text-black">Name</th> : null}
+					{showPositionColumn ? <th className="px-4 py-3 text-left font-semibold text-black">Position</th> : null}
+					{showGenderColumn ? <th className="px-4 py-3 text-left font-semibold text-black">Gender</th> : null}
+					{showBirthDateColumn ? <th className="px-4 py-3 text-left font-semibold text-black">Birth Date</th> : null}
+					{showAgeColumn ? <th className="px-4 py-3 text-left font-semibold text-black">Age</th> : null}
+					{showHiredDateColumn ? <th className="px-4 py-3 text-left font-semibold text-black">Hired Date</th> : null}
+					{showYearsWithCompanyColumn ? <th className="px-4 py-3 text-left font-semibold text-black">Years w/ Company</th> : null}
+					{showDetachmentColumn ? <th className="px-4 py-3 text-left font-semibold text-black">Detachment</th> : null}
 					<th className="px-4 py-3 text-left font-semibold text-black">Next License Expiry</th>
-					<th className="px-4 py-3 text-left font-semibold text-black">Status</th>
+					{showStatusColumn ? <th className="px-4 py-3 text-left font-semibold text-black">Status</th> : null}
 					{sessionRole !== "employee" ? (
 						<th className="px-4 py-3 text-center font-semibold text-black last:rounded-r-xl">Actions</th>
 					) : null}
@@ -1024,22 +1136,26 @@ if (hiredMonthFilter !== "ALL") {
 							}}
 							className={`bg-white shadow-sm transition ${canClick ? "hover:shadow-md cursor-pointer" : ""}`}
 						>
-							<td className="px-4 py-3 rounded-l-xl">
-								<div className="h-10 w-10 rounded-full bg-gray-100 overflow-hidden">
-									{profileUrl && (
-										<img src={profileUrl} alt="" className="h-full w-full object-cover" />
-									)}
-								</div>
-							</td>
+							{showPhotoColumn ? (
+								<td className="px-4 py-3 rounded-l-xl">
+									<div className="h-10 w-10 rounded-full bg-gray-100 overflow-hidden">
+										{profileUrl && (
+											<img src={profileUrl} alt="" className="h-full w-full object-cover" />
+										)}
+									</div>
+								</td>
+							) : null}
 
-							<td className="px-4 py-3 font-semibold">{getFullName(e)}</td>
-							<td className="px-4 py-3">{e.client_position ?? "—"}</td>
-							<td className="px-4 py-3">{e.gender ?? "—"}</td>
-							<td className="px-4 py-3">{e.birth_date ?? "—"}</td>
-							<td className="px-4 py-3">{e.age ?? "—"}</td>
-							<td className="px-4 py-3">{e.date_hired_fsai ? new Date(e.date_hired_fsai).toLocaleDateString() : "—"}</td>
-							<td className="px-4 py-3">{formatServiceLengthShort(e.date_hired_fsai)}</td>
-							<td className="px-4 py-3">{e.detachment ?? "—"}</td>
+							{showNameColumn ? <td className="px-4 py-3 font-semibold">{getFullName(e)}</td> : null}
+							{showPositionColumn ? <td className="px-4 py-3">{e.client_position ?? "—"}</td> : null}
+							{showGenderColumn ? <td className="px-4 py-3">{e.gender ?? "—"}</td> : null}
+							{showBirthDateColumn ? <td className="px-4 py-3">{e.birth_date ?? "—"}</td> : null}
+							{showAgeColumn ? <td className="px-4 py-3">{e.age ?? "—"}</td> : null}
+							{showHiredDateColumn ? (
+								<td className="px-4 py-3">{e.date_hired_fsai ? new Date(e.date_hired_fsai).toLocaleDateString() : "—"}</td>
+							) : null}
+							{showYearsWithCompanyColumn ? <td className="px-4 py-3">{formatServiceLengthShort(e.date_hired_fsai)}</td> : null}
+							{showDetachmentColumn ? <td className="px-4 py-3">{e.detachment ?? "—"}</td> : null}
 							<td className="px-4 py-3">
 								{next.nextYmd ? (
 									<div className="leading-tight">
@@ -1052,15 +1168,17 @@ if (hiredMonthFilter !== "ALL") {
 									"—"
 								)}
 							</td>
-							<td className="px-4 py-3">
-								<span
-									className={`px-3 py-1 rounded-full text-xs font-bold ${
-										normalizeStatus(e.status) === "ACTIVE" ? "bg-emerald-500 text-white" : "bg-red-500 text-white"
-									}`}
-								>
-									{normalizeStatus(e.status)}
-								</span>
-							</td>
+							{showStatusColumn ? (
+								<td className="px-4 py-3">
+									<span
+										className={`px-3 py-1 rounded-full text-xs font-bold ${
+											normalizeStatus(e.status) === "ACTIVE" ? "bg-emerald-500 text-white" : "bg-red-500 text-white"
+										}`}
+									>
+										{normalizeStatus(e.status)}
+									</span>
+								</td>
+							) : null}
 							{sessionRole !== "employee" ? (
 								<td className="px-4 py-3 text-center rounded-r-xl">
 									<div className="inline-flex items-center gap-2">
@@ -1133,7 +1251,7 @@ if (hiredMonthFilter !== "ALL") {
 				</div>
 			) : null}
 
-			{exportOpen && sessionRole !== "employee" ? (
+			{exportOpen && canExportEmployees ? (
 				<div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
 					<div className="bg-white rounded-3xl shadow-xl max-w-4xl w-full overflow-hidden">
 						<div className="px-6 py-4 border-b flex items-center justify-between">
@@ -1217,8 +1335,8 @@ if (hiredMonthFilter !== "ALL") {
 											setExportExpiringOpen(false);
 										}}
 										className="relative h-10 w-10 rounded-xl bg-[#FFDA03] text-black flex items-center justify-center"
-										aria-label="Preview (1+ year of service)"
-										title="Preview (1+ year of service)"
+										aria-label="Preview Export"
+										title="Preview Export"
 									>
 										<Users className="w-5 h-5" />
 										{exportCandidates.length > 0 ? (
@@ -1231,7 +1349,7 @@ if (hiredMonthFilter !== "ALL") {
 									{exportPreviewOpen ? (
 										<div className="absolute right-0 mt-2 w-[520px] max-w-[92vw] rounded-2xl border bg-white shadow-lg overflow-hidden z-50">
 											<div className="px-4 py-3 border-b flex items-center justify-between">
-												<div className="text-sm font-semibold text-black">Preview (1+ year of service)</div>
+												<div className="text-sm font-semibold text-black">Preview Export</div>
 												<div className="text-xs text-gray-500">Matches export filters</div>
 											</div>
 
@@ -1264,17 +1382,24 @@ if (hiredMonthFilter !== "ALL") {
 															title="Open employee details"
 														>
 															<div className="flex items-center justify-between gap-3">
-																<div className="text-sm font-medium text-black truncate">{getFullName(e)}</div>
-																<div className="text-xs text-gray-600 whitespace-nowrap">
-																	{e.date_hired_fsai ? new Date(e.date_hired_fsai).toLocaleDateString() : "—"}
-																</div>
+																<div className="text-sm font-medium text-black truncate">{showNameColumn ? getFullName(e) : "Employee"}</div>
+																{showHiredDateColumn ? (
+																	<div className="text-xs text-gray-600 whitespace-nowrap">
+																		{e.date_hired_fsai ? new Date(e.date_hired_fsai).toLocaleDateString() : "—"}
+																	</div>
+																) : null}
 															</div>
-															<div className="text-xs text-gray-600 truncate">{e.client_position ?? "—"} • {e.detachment ?? "—"}</div>
-															<div className="mt-1 text-[11px] text-gray-500">Service: {formatServiceLengthShort(e.date_hired_fsai)}</div>
+															<div className="text-xs text-gray-600 truncate">
+																{showPositionColumn ? e.client_position ?? "—" : "—"}
+																{showDetachmentColumn ? ` • ${e.detachment ?? "—"}` : ""}
+															</div>
+															{showYearsWithCompanyColumn ? (
+																<div className="mt-1 text-[11px] text-gray-500">Service: {formatServiceLengthShort(e.date_hired_fsai)}</div>
+															) : null}
 														</div>
 													))
 												) : (
-													<div className="px-4 py-6 text-sm text-gray-500">No employees match the 1+ year of service criteria.</div>
+													<div className="px-4 py-6 text-sm text-gray-500">No employees match the export filters.</div>
 												)}
 											</div>
 										</div>
@@ -1299,7 +1424,7 @@ if (hiredMonthFilter !== "ALL") {
 										value={exportTitle}
 										onChange={(e) => setExportTitle(e.target.value)}
 										className="w-full border rounded-xl px-3 py-2 bg-white"
-										placeholder="Employees (1+ year of service)"
+										placeholder="Employees Export"
 									/>
 								</label>
 
@@ -1345,6 +1470,15 @@ if (hiredMonthFilter !== "ALL") {
 								<div className="flex items-end justify-end gap-2">
 									<button
 										type="button"
+										onClick={exportEmployeesCsv}
+										className="h-10 px-4 rounded-xl border bg-white text-xs font-semibold hover:bg-gray-50"
+										title="Download CSV"
+										aria-label="Download CSV"
+									>
+										CSV
+									</button>
+									<button
+										type="button"
 										onClick={exportEmployeesPdf}
 										className="h-10 w-10 rounded-xl border bg-white flex items-center justify-center hover:bg-gray-50"
 										title="Download PDF"
@@ -1383,9 +1517,19 @@ if (hiredMonthFilter !== "ALL") {
 			<EmployeeExcelImportModal
 				open={excelOpen}
 				onClose={() => setExcelOpen(false)}
-				onImported={() => {
+				allowTemplateDownloads={canDownloadEmployeeTemplate}
+				onImported={(summary) => {
+					setImportSummary(summary);
+					setImportSummaryOpen(true);
 					fetchEmployees();
 				}}
+			/>
+
+			<ImportSummaryModal
+				open={importSummaryOpen}
+				summary={importSummary}
+				title="Employees Import Summary"
+				onClose={() => setImportSummaryOpen(false)}
 			/>
 
 			{filtersOpen ? (

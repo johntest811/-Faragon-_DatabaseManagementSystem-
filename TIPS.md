@@ -39,3 +39,10 @@
 npm view @electron/rebuild@3.7.2 engines
 npm view electron-builder@26.4.0 dependencies --json
 npm ls @electron/rebuild
+
+**SUPABASE MIGRATION NOTE (TEMPLATE PERMISSION KEY RENAME)**
+- Run `supabase_migrate_download_template_to_export_template.sql` in Supabase SQL Editor.
+- This remaps legacy `download_template` to `export_template` in:
+	- `admin_column_access_overrides`
+	- `user_column_access_overrides`
+	- `access_requests.requested_column_key`

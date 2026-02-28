@@ -13,7 +13,6 @@ type AdminRow = {
 	username: string;
 	role: string;
 	full_name: string | null;
-	position: string | null;
 	is_active: boolean;
 	created_at: string | null;
 	last_login: string | null;
@@ -56,7 +55,6 @@ export default function AdminAccountsPage() {
 
 	const [accountUsername, setAccountUsername] = useState("");
 	const [accountFullName, setAccountFullName] = useState("");
-	const [accountPosition, setAccountPosition] = useState("");
 	const [accountPassword, setAccountPassword] = useState("");
 	const [accountRole, setAccountRole] = useState("admin");
 	const [creatingAccount, setCreatingAccount] = useState(false);
@@ -104,7 +102,7 @@ export default function AdminAccountsPage() {
 	const loadAccounts = useCallback(async () => {
 		const { data, error: fetchErr } = await supabase
 			.from("admins")
-			.select("id, username, role, full_name, position, is_active, created_at, last_login")
+			.select("id, username, role, full_name, is_active, created_at, last_login")
 			.order("created_at", { ascending: false })
 			.limit(500);
 		if (fetchErr) throw fetchErr;
@@ -157,7 +155,6 @@ export default function AdminAccountsPage() {
 				password: accountPassword,
 				role: roleName,
 				full_name: accountFullName.trim() || null,
-				position: accountPosition.trim() || null,
 				is_active: true,
 			});
 			if (insErr) return setError(insErr.message);
@@ -166,7 +163,6 @@ export default function AdminAccountsPage() {
 			setAccountUsername("");
 			setAccountPassword("");
 			setAccountFullName("");
-			setAccountPosition("");
 			logAudit("ADMIN_CREATE_ACCOUNT", { username, role: roleName });
 			loadAccounts();
 		} catch (e: unknown) {
@@ -219,6 +215,30 @@ export default function AdminAccountsPage() {
 		logAudit("ADMIN_DELETE_ACCOUNT", { id: a.id, username: a.username });
 	}
 
+	const accessDenied = role !== null && role !== "superadmin";
+	if (accessDenied) {
+		return (
+			<section className="bg-white rounded-2xl shadow-sm border p-5">
+				<div className="text-lg font-semibold text-black">Admin Accounts</div>
+				<div className="mt-2 text-sm text-gray-600">Only Superadmin can access this page.</div>
+				<div className="mt-4 flex gap-2">
+					<button
+						onClick={() => router.push("/Main_Modules/Dashboard/")}
+						className="px-4 py-2 rounded-xl bg-white border"
+					>
+						Back
+					</button>
+					<button
+						onClick={() => router.push("/Main_Modules/Requests/?module=access")}
+						className="px-4 py-2 rounded-xl font-semibold bg-[#FFDA03] text-black"
+					>
+						Request Access
+					</button>
+				</div>
+			</section>
+		);
+	}
+
 	return (
 		<section className="bg-white rounded-2xl shadow-sm border p-5">
 			<div className="flex items-start justify-between gap-3 mb-3">
@@ -266,13 +286,6 @@ export default function AdminAccountsPage() {
 						value={accountFullName}
 						onChange={(e) => setAccountFullName(e.target.value)}
 						placeholder="full name (optional)"
-						className="border rounded-xl px-3 py-2 text-black"
-						disabled={!canManage || creatingAccount}
-					/>
-					<input
-						value={accountPosition}
-						onChange={(e) => setAccountPosition(e.target.value)}
-						placeholder="position (optional)"
 						className="border rounded-xl px-3 py-2 text-black"
 						disabled={!canManage || creatingAccount}
 					/>

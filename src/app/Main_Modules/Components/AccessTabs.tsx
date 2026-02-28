@@ -9,6 +9,7 @@ const TABS: Tab[] = [
 	{ label: "Admin Accounts", href: "/Main_Modules/AdminAccounts/" },
 	{ label: "Roles", href: "/Main_Modules/Roles/" },
 	{ label: "Permissions", href: "/Main_Modules/Permissions/" },
+	{ label: "Requests", href: "/Main_Modules/Requests/" },
 ];
 
 function normalize(path: string) {

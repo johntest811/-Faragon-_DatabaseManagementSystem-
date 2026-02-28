@@ -46,11 +46,69 @@ const ALL_MENU = [
   { key: "retired", name: "Retired", href: "/Main_Modules/Retired/", icon: UserX },
   { key: "archive", name: "Archive", href: "/Main_Modules/Archive/", icon: Archive },
   { key: "logistics", name: "Logistics", href: "/Main_Modules/Logistics/", icon: Truck },
+  { key: "requests", name: "Requests", href: "/Main_Modules/Requests/", icon: ClipboardCheck },
   { key: "trash", name: "Trash", href: "/Main_Modules/Trash/", icon: Trash2 },
   { key: "access", name: "Admin Accounts", href: "/Main_Modules/AdminAccounts/", icon: Shield },
   { key: "audit", name: "Audit", href: "/Main_Modules/Audit/", icon: ClipboardList },
   { key: "settings", name: "Settings", href: "/Main_Modules/Settings/", icon: Settings },
 ] as const;
+
+type ModuleKey =
+  | "dashboard"
+  | "employees"
+  | "reassign"
+  | "resigned"
+  | "retired"
+  | "archive"
+  | "client"
+  | "inventory"
+  | "paraphernalia"
+  | "reports"
+  | "requests"
+  | "trash"
+  | "audit"
+  | "settings"
+  | "access"
+  | "logistics";
+
+type AccessRequirement =
+  | { kind: "module"; moduleKey: ModuleKey }
+  | { kind: "superadmin" };
+
+function accessRequirementForPath(pathname: string): AccessRequirement | null {
+  if (!pathname) return null;
+  const p = pathname;
+
+  // Access-management section is Superadmin-only.
+  if (
+    p.startsWith("/Main_Modules/AdminAccounts/") ||
+    p.startsWith("/Main_Modules/Roles/") ||
+    p.startsWith("/Main_Modules/Permissions/")
+  ) {
+    return { kind: "superadmin" };
+  }
+
+  if (p.startsWith("/Main_Modules/Dashboard/")) return { kind: "module", moduleKey: "dashboard" };
+  if (p.startsWith("/Main_Modules/Employees/")) return { kind: "module", moduleKey: "employees" };
+  if (p.startsWith("/Main_Modules/Reassign/")) return { kind: "module", moduleKey: "reassign" };
+  if (p.startsWith("/Main_Modules/Resigned/")) return { kind: "module", moduleKey: "resigned" };
+  if (p.startsWith("/Main_Modules/Retired/")) return { kind: "module", moduleKey: "retired" };
+  if (p.startsWith("/Main_Modules/Archive/")) return { kind: "module", moduleKey: "archive" };
+  if (p.startsWith("/Main_Modules/Client/")) return { kind: "module", moduleKey: "client" };
+  if (p.startsWith("/Main_Modules/Inventory/")) return { kind: "module", moduleKey: "inventory" };
+  if (p.startsWith("/Main_Modules/Paraphernalia/")) return { kind: "module", moduleKey: "paraphernalia" };
+  if (p.startsWith("/Main_Modules/Reports/")) return { kind: "module", moduleKey: "reports" };
+  if (p.startsWith("/Main_Modules/Requests/")) return { kind: "module", moduleKey: "requests" };
+  if (p.startsWith("/Main_Modules/Trash/")) return { kind: "module", moduleKey: "trash" };
+  if (p.startsWith("/Main_Modules/Audit/")) return { kind: "module", moduleKey: "audit" };
+  if (p.startsWith("/Main_Modules/Settings/")) return { kind: "module", moduleKey: "settings" };
+
+  // If the user lands on /Main_Modules/Logistics/ (group route), treat it as logistics.
+  if (p.startsWith("/Main_Modules/Logistics/")) return { kind: "module", moduleKey: "logistics" };
+
+  // Unknown route inside Main_Modules: let the existing behavior handle it.
+  return null;
+}
 
 function titleFromPath(pathname: string) {
   const clean = (pathname || "/").replace(/\/+$/, "");
@@ -476,30 +534,65 @@ export default function MainModulesLayout({ children }: LayoutProps) {
 
   const allowedKeys = useMemo(() => {
     const fromDb = new Set(myModules.map((m) => m.module_key));
+    // Always allow reaching the Requests page so users can request access.
+    fromDb.add("requests");
+
+    if (sessionRole === "superadmin") {
+      return new Set<ModuleKey>([
+        "dashboard",
+        "employees",
+        "reassign",
+        "resigned",
+        "retired",
+        "archive",
+        "client",
+        "inventory",
+        "paraphernalia",
+        "reports",
+        "requests",
+        "trash",
+        "audit",
+        "settings",
+        "access",
+        "logistics",
+      ]);
+    }
+
     if (fromDb.size) {
       // Backwards-compatibility: older deployments used the `reassign` module key
       // to grant access to the Resigned page.
       if (fromDb.has("reassign") && !fromDb.has("resigned")) fromDb.add("resigned");
 
-      if (sessionRole === "superadmin" || sessionRole === "admin") {
-        fromDb.add("reassign");
-        fromDb.add("resigned");
-        fromDb.add("retired");
-        fromDb.add("audit");
-        // Backwards-compatibility: allow access-management section even if
-        // the module row hasn't been added yet.
-        fromDb.add("access");
+      // Treat the Logistics group as allowed if ANY logistics child module is allowed.
+      if (fromDb.has("client") || fromDb.has("inventory") || fromDb.has("paraphernalia") || fromDb.has("reports")) {
+        fromDb.add("logistics");
       }
+
       return fromDb;
     }
 
-    // Fallback (before migration is applied): keep UI usable.
-    if (!sessionRole) return new Set<string>();
-    if (sessionRole === "superadmin") return new Set(ALL_MENU.map((m) => m.key));
+    // Fallback (before RBAC modules are populated): keep UI usable.
+    if (!sessionRole) return new Set<ModuleKey>(["requests"]);
     if (sessionRole === "admin") {
-      return new Set(["dashboard", "employees", "reassign", "resigned", "retired", "archive", "logistics", "trash", "settings", "access", "audit"]);
+      return new Set<ModuleKey>([
+        "dashboard",
+        "employees",
+        "reassign",
+        "resigned",
+        "retired",
+        "archive",
+        "client",
+        "inventory",
+        "paraphernalia",
+        "reports",
+        "logistics",
+        "trash",
+        "settings",
+        "audit",
+        "requests",
+      ]);
     }
-    return new Set(["dashboard", "employees", "archive"]);
+    return new Set<ModuleKey>(["dashboard", "employees", "archive", "requests"]);
   }, [sessionRole, myModules]);
 
   const menu = useMemo(
@@ -509,27 +602,23 @@ export default function MainModulesLayout({ children }: LayoutProps) {
 
   useEffect(() => {
     if (!pathname || !sessionRole) return;
-    const baseAllowed = ALL_MENU
-      .filter((m) => allowedKeys.has(m.key))
-      .some((m) => pathname === m.href || pathname.startsWith(m.href));
-    const logisticsChildAllowed =
-      allowedKeys.has("logistics") &&
-      [
-        "/Main_Modules/Client/",
-        "/Main_Modules/Inventory/",
-        "/Main_Modules/Paraphernalia/",
-        "/Main_Modules/Reports/",
-      ].some((prefix) => pathname === prefix || pathname.startsWith(prefix));
-    const accessChildAllowed =
-      allowedKeys.has("access") &&
-      [
-        "/Main_Modules/AdminAccounts/",
-        "/Main_Modules/Roles/",
-        "/Main_Modules/Permissions/",
-      ].some((prefix) => pathname === prefix || pathname.startsWith(prefix));
-    const allowed = baseAllowed || logisticsChildAllowed || accessChildAllowed;
-    if (!allowed) {
-      router.replace("/Main_Modules/Dashboard/");
+    if (!pathname.startsWith("/Main_Modules/")) return;
+
+    const req = accessRequirementForPath(pathname);
+    if (!req) return;
+
+    if (req.kind === "superadmin") {
+      if (sessionRole !== "superadmin") {
+        router.replace("/Main_Modules/Requests/?module=access");
+      }
+      return;
+    }
+
+    if (sessionRole === "superadmin") return;
+
+    const ok = allowedKeys.has(req.moduleKey);
+    if (!ok) {
+      router.replace(`/Main_Modules/Requests/?module=${encodeURIComponent(req.moduleKey)}`);
     }
   }, [pathname, sessionRole, allowedKeys, router]);
 
@@ -541,10 +630,10 @@ export default function MainModulesLayout({ children }: LayoutProps) {
   const LOGISTICS_ITEMS = useMemo(
     () =>
       [
-        { key: "logistics_client", name: "Client", href: "/Main_Modules/Client/", icon: CreditCard },
-        { key: "logistics_inventory", name: "Inventory", href: "/Main_Modules/Inventory/", icon: Package },
-        { key: "logistics_paraphernalia", name: "Paraphernalia", href: "/Main_Modules/Paraphernalia/", icon: Package },
-        { key: "logistics_reports", name: "Reports", href: "/Main_Modules/Reports/", icon: FileText },
+        { key: "logistics_client", moduleKey: "client" as const, name: "Client", href: "/Main_Modules/Client/", icon: CreditCard },
+        { key: "logistics_inventory", moduleKey: "inventory" as const, name: "Inventory", href: "/Main_Modules/Inventory/", icon: Package },
+        { key: "logistics_paraphernalia", moduleKey: "paraphernalia" as const, name: "Paraphernalia", href: "/Main_Modules/Paraphernalia/", icon: Package },
+        { key: "logistics_reports", moduleKey: "reports" as const, name: "Reports", href: "/Main_Modules/Reports/", icon: FileText },
       ] as const,
     []
   );
@@ -579,7 +668,10 @@ export default function MainModulesLayout({ children }: LayoutProps) {
     if (!collapsed && workforceActive) setWorkforceOpen(true);
   }, [collapsed, workforceActive]);
 
-  const logisticsAllowed = useMemo(() => allowedKeys.has("logistics"), [allowedKeys]);
+  const logisticsAllowed = useMemo(() => {
+    if (sessionRole === "superadmin") return true;
+    return LOGISTICS_ITEMS.some((i) => allowedKeys.has(i.moduleKey));
+  }, [LOGISTICS_ITEMS, allowedKeys, sessionRole]);
 
   const logisticsActive = useMemo(() => {
     if (!logisticsAllowed) return false;
@@ -706,6 +798,11 @@ export default function MainModulesLayout({ children }: LayoutProps) {
             if (item.key === "logistics") {
               if (!logisticsAllowed) return null;
 
+              const logisticsItemsVisible =
+                sessionRole === "superadmin"
+                  ? LOGISTICS_ITEMS
+                  : LOGISTICS_ITEMS.filter((l) => allowedKeys.has(l.moduleKey));
+
               return (
                 <div key="logistics" className="relative mb-1">
                   <button
@@ -732,7 +829,7 @@ export default function MainModulesLayout({ children }: LayoutProps) {
 
                   {collapsed && logisticsFlyoutOpen ? (
                     <div className="mt-1 space-y-1">
-                      {LOGISTICS_ITEMS.map((l) => {
+                      {logisticsItemsVisible.map((l) => {
                         const active = pathname === l.href || pathname.startsWith(l.href);
                         return (
                           <Link
@@ -755,7 +852,7 @@ export default function MainModulesLayout({ children }: LayoutProps) {
 
                   {!collapsed && logisticsOpen ? (
                     <div className="mt-1 ml-4 pl-3 border-l border-gray-200 space-y-1">
-                      {LOGISTICS_ITEMS.map((l) => {
+                      {logisticsItemsVisible.map((l) => {
                         const active = pathname === l.href || pathname.startsWith(l.href);
                         return (
                           <Link key={l.key} href={l.href} className={navLinkClass(active)}>

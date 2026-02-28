@@ -11,7 +11,6 @@ type AdminRow = {
   username: string;
   full_name?: string | null;
   role: string;
-  position?: string | null;
   is_active: boolean;
   created_at: string | null;
 };
@@ -36,7 +35,7 @@ export default function DashboardPage() {
     try {
       const { data, error: fetchError } = await supabase
         .from('admins')
-        .select('id, username, full_name, role, position, is_active, created_at')
+        .select('id, username, full_name, role, is_active, created_at')
         .order('created_at', { ascending: false })
         .limit(100);
 
