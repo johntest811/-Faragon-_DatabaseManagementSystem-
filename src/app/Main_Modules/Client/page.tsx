@@ -2,7 +2,7 @@
 
 import { FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { Download, FileDown, FileText, Search, Upload } from "lucide-react";
+import { Download, Plus, FileDown, FileSpreadsheet, FileText, Search, Upload } from "lucide-react";
 import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -10,6 +10,10 @@ import { supabase } from "@/app/Client/SupabaseClients";
 import { useAuthRole, useMyColumnAccess } from "@/app/Client/useRbac";
 import LoadingCircle from "@/app/Components/LoadingCircle";
 import ImportSummaryModal, { ImportSummaryData } from "../Components/ImportSummaryModal";
+
+
+
+/* --- types and helpers (kept from your original file) --- */
 
 type ClientRow = {
   contract_id: string;
@@ -110,6 +114,8 @@ function ModalShell({
   );
 }
 
+/* --- utility helpers (kept) --- */
+
 function toNullableText(value: string) {
   const clean = value.trim();
   return clean.length ? clean : null;
@@ -190,6 +196,8 @@ function toDatetimeLocalValue(v: string | null) {
   return `${yyyy}-${mm}-${dd}T${hh}:${min}`;
 }
 
+/* ------------------- Main Page Component ------------------- */
+
 export default function ClientsPage() {
   const { role } = useAuthRole();
   const { allowedColumns, restricted, loading: loadingColumnAccess } = useMyColumnAccess("client");
@@ -227,7 +235,17 @@ export default function ClientsPage() {
   const [importSummary, setImportSummary] = useState<ImportSummaryData | null>(null);
   const [importSummaryOpen, setImportSummaryOpen] = useState(false);
 
+  /* NEW: Modal state for exports/templates */
+  const [exportModalOpen, setExportModalOpen] = useState(false);
+  const [templateModalOpen, setTemplateModalOpen] = useState(false);
+  const [importModalOpen, setImportModalOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
+const [templateOpen, setTemplateOpen] = useState(false);
+
   const pageSize = 10;
+
+  /* --- downloadTemplate, handleImportFile, loadConnectedData, loadApplicants, submitContract etc.
+     kept unchanged from your original file. I will include your existing implementations here  --- */
 
   function downloadTemplate(format: "xlsx" | "csv") {
     const sample = {
@@ -401,6 +419,15 @@ export default function ClientsPage() {
       if (fileInputRef.current) fileInputRef.current.value = "";
     }
   }
+
+  function handleImportChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    void handleImportFile(file);
+  }
+
+  /* --- loadConnectedData, loadApplicants, submitContract, openEditModal, openDetails etc.
+         unchanged — include them as in your original file. For brevity here I keep the original implementations. --- */
 
   async function loadConnectedData() {
     setLoading(true);
@@ -924,6 +951,7 @@ export default function ClientsPage() {
       return;
     }
 
+
     const headers = Object.keys(rowsForExport[0]);
     const body = rowsForExport.map((row) => headers.map((h) => String(row[h as keyof typeof row] ?? "")));
 
@@ -943,6 +971,8 @@ export default function ClientsPage() {
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const pageClamped = Math.min(page, totalPages);
   const paginated = filtered.slice((pageClamped - 1) * pageSize, pageClamped * pageSize);
+
+  /* ------------------- Render ------------------- */
 
   return (
     <div className="space-y-5">
@@ -1005,67 +1035,47 @@ export default function ClientsPage() {
             Create Contract
           </button>
 
+          <div className="flex items-start justify-between gap-4">
+
+
+
           {canImportFile ? (
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={importing || loadingColumnAccess}
-              className="inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium text-black hover:bg-gray-50 disabled:opacity-60"
-            >
-              <Upload className="w-4 h-4" />
-              {importing ? "Importing..." : "Import Excel/CSV"}
-            </button>
-          ) : null}
+  <button
+    type="button"
+    onClick={() => setImportModalOpen(true)}
+    className="flex items-center gap-3 rounded-xl border px-4 py-2 text-sm font-medium text-black hover:bg-gray-50"
+  >
+    <Upload className="w-4 h-4" />
+    Import
+  </button>
+) : null}
+
+
+
+
+
 
           {canExportFile ? (
-            <>
-              <button
-                type="button"
-                onClick={exportClientPdf}
-                className="inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium text-black hover:bg-gray-50"
-              >
-                <FileText className="w-4 h-4" />
-                Export PDF
-              </button>
-              <button
-                type="button"
-                onClick={exportClientXlsx}
-                className="inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium text-black hover:bg-gray-50"
-              >
-                <FileDown className="w-4 h-4" />
-                Export XLSX
-              </button>
-              <button
-                type="button"
-                onClick={exportClientCsv}
-                className="inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium text-black hover:bg-gray-50"
-              >
-                <FileDown className="w-4 h-4" />
-                Export CSV
-              </button>
-            </>
-          ) : null}
+  <button
+    type="button"
+    onClick={() => setExportModalOpen(true)}
+    className="flex items-center gap-3 rounded-xl border px-4 py-2 text-sm font-medium text-black hover:bg-gray-50"
+  >
+    <FileText className="w-4 h-4" />
+    Export
+  </button>
+) : null}
 
-          {canDownloadTemplate ? (
-            <>
-              <button
-                type="button"
-                onClick={() => downloadTemplate("xlsx")}
-                className="inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium text-black hover:bg-gray-50"
-              >
-                <Download className="w-4 h-4" />
-                Template XLSX
-              </button>
-              <button
-                type="button"
-                onClick={() => downloadTemplate("csv")}
-                className="inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium text-black hover:bg-gray-50"
-              >
-                <Download className="w-4 h-4" />
-                Template CSV
-              </button>
-            </>
-          ) : null}
+{canDownloadTemplate ? (
+  <button
+    type="button"
+    onClick={() => setTemplateModalOpen(true)}
+    className="flex items-center gap-3 rounded-xl border px-4 py-2 text-sm font-medium text-black hover:bg-gray-50"
+  >
+    <Download className="w-4 h-4" />
+    Download Templates
+  </button>
+) : null}
 
           <input
             ref={fileInputRef}
@@ -1077,8 +1087,122 @@ export default function ClientsPage() {
               if (f) void handleImportFile(f);
             }}
           />
+
+          </div>
         </div>
       </div>
+
+
+
+<ModalShell
+  open={importModalOpen}
+  title="Import Contracts"
+  onClose={() => setImportModalOpen(false)}
+>
+  <div className="space-y-4">
+
+    <div className="text-sm text-gray-700">
+      Upload an XLSX or CSV file to import contracts.
+    </div>
+
+<input
+  type="file"
+  accept=".xlsx,.csv"
+  onChange={handleImportChange}
+  className="block w-full text-sm border rounded-xl p-2"
+/>
+
+    <div className="flex justify-end">
+      <button
+        type="button"
+        onClick={() => setImportModalOpen(false)}
+        className="rounded-xl border px-4 py-2 text-sm font-medium text-black hover:bg-gray-50"
+      >
+        Cancel
+      </button>
+    </div>
+
+  </div>
+</ModalShell>
+      
+<ModalShell
+  open={exportModalOpen}
+  title="Export Contracts"
+  onClose={() => setExportModalOpen(false)}
+>
+  <div className="space-y-4">
+
+    <div className="text-sm text-gray-700">
+      Export the currently filtered contracts.
+    </div>
+
+    <div className="flex flex-wrap gap-2">
+      <button
+        type="button"
+        onClick={exportClientPdf}
+        className="inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium text-black hover:bg-gray-50"
+      >
+        <FileText className="w-4 h-4" />
+        Export PDF
+      </button>
+
+      <button
+        type="button"
+        onClick={exportClientXlsx}
+        className="inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium text-black hover:bg-gray-50"
+      >
+        <FileDown className="w-4 h-4" />
+        Export XLSX
+      </button>
+
+      <button
+        type="button"
+        onClick={exportClientCsv}
+        className="inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium text-black hover:bg-gray-50"
+      >
+        <FileDown className="w-4 h-4" />
+        Export CSV
+      </button>
+    </div>
+
+  </div>
+</ModalShell>
+
+<ModalShell
+  open={templateModalOpen}
+  title="Download Templates"
+  onClose={() => setTemplateModalOpen(false)}
+>
+  <div className="space-y-4">
+
+    <div className="text-sm text-gray-700">
+      Download a template file for importing client contracts.
+    </div>
+
+    <div className="flex flex-wrap gap-2">
+      <button
+        type="button"
+        onClick={() => downloadTemplate("xlsx")}
+        className="inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium text-black"
+      >
+        <Download className="w-4 h-4" />
+        Template XLSX
+      </button>
+
+      <button
+        type="button"
+        onClick={() => downloadTemplate("csv")}
+        className="inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium text-black"
+      >
+        <Download className="w-4 h-4" />
+        Template CSV
+      </button>
+    </div>
+
+  </div>
+</ModalShell>
+
+      {/* ---------- Editor modal & details modal and table (kept unchanged) ---------- */}
 
       <ModalShell
         open={editorOpen}
@@ -1089,6 +1213,8 @@ export default function ClientsPage() {
           setEditingContractId(null);
         }}
       >
+        {/* Editor form — unchanged (omitted in this snippet for brevity but present earlier) */}
+        {/* ... keep exactly the same form code you already had ... */}
         <form onSubmit={submitContract} className="space-y-4">
           <div className="rounded-2xl border p-4 space-y-3">
             <div className="font-semibold text-black">Contract Information</div>

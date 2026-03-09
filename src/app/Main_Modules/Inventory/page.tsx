@@ -281,6 +281,11 @@ export default function LogisticsInventoryPage() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [importSummary, setImportSummary] = useState<ImportSummaryData | null>(null);
   const [importSummaryOpen, setImportSummaryOpen] = useState(false);
+ const [showTemplatePopup, setShowTemplatePopup] = useState(false);
+  const [showExportPopup, setShowExportPopup] = useState(false);
+
+  const [showTemplateModalOpen, setTemplateModalOpen] = useState(false);
+
 
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
@@ -289,6 +294,8 @@ export default function LogisticsInventoryPage() {
   const [formData, setFormData] = useState<InventoryForm>(EMPTY_FORM);
 
   function downloadTemplate(format: "xlsx" | "csv") {
+
+    
     const sample = {
       date: "2026-03-01",
       particular: "Sample Particular",
@@ -327,6 +334,16 @@ export default function LogisticsInventoryPage() {
     const csv = XLSX.utils.sheet_to_csv(ws);
     downloadBlob("inventory_import_template.csv", new Blob([csv], { type: "text/csv;charset=utf-8;" }));
   }
+
+  function downloadInventoryTemplateCsv() {
+  downloadTemplate("csv");
+}
+
+function downloadInventoryTemplateXlsx() {
+  downloadTemplate("xlsx");
+}
+
+  
 
   async function importSpreadsheet(file: File) {
     if (!canImportInventory) {
@@ -822,49 +839,43 @@ export default function LogisticsInventoryPage() {
               </button>
             ) : null}
 
+            
+
             {canDownloadInventoryTemplate ? (
               <>
                 <button
-                  type="button"
-                  onClick={() => downloadTemplate("xlsx")}
-                  className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border text-sm text-black hover:bg-gray-50"
-                >
-                  <Download className="w-4 h-4" /> Template XLSX
-                </button>
-                <button
-                  type="button"
-                  onClick={() => downloadTemplate("csv")}
-                  className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border text-sm text-black hover:bg-gray-50"
-                >
-                  <Download className="w-4 h-4" /> Template CSV
-                </button>
+    type="button"
+    onClick={() => setShowTemplatePopup(true)}
+    className="flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium text-black hover:bg-gray-50"
+  >
+    <Download className="w-4 h-4" />
+    Download Templates
+  </button>
+
+
+
+
+
               </>
             ) : null}
 
             {canExportInventory ? (
               <>
-                <button
-                  type="button"
-                  onClick={exportInventoryPdf}
-                  className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border text-sm text-black hover:bg-gray-50"
-                >
-                  <FileText className="w-4 h-4" /> Export PDF
-                </button>
-                <button
-                  type="button"
-                  onClick={exportInventoryXlsx}
-                  className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border text-sm text-black hover:bg-gray-50"
-                >
-                  <FileDown className="w-4 h-4" /> Export XLSX
-                </button>
-                <button
-                  type="button"
-                  onClick={exportInventoryCsv}
-                  className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border text-sm text-black hover:bg-gray-50"
-                >
-                  <FileDown className="w-4 h-4" /> Export CSV
-                </button>
+               <button
+    type="button"
+    onClick={() => setShowExportPopup(true)}
+    className="flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium text-black hover:bg-gray-50"
+  >
+    <FileText className="w-4 h-4" />
+    Export
+  </button>
+
+
+
+  
               </>
+
+              
             ) : null}
 
             <input
@@ -879,6 +890,8 @@ export default function LogisticsInventoryPage() {
             />
           </div>
         </div>
+
+        
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           {canViewInventoryColumn("quanitity") ? (
@@ -1029,7 +1042,122 @@ export default function LogisticsInventoryPage() {
             </button>
           </div>
         </div>
+        
       </section>
+
+
+
+
+        {showExportPopup && (
+        <div className="fixed inset-0 flex items-center justify-center bg-black/40 z-50">
+
+          <div className="bg-white w-[750px] rounded-2xl shadow-xl overflow-hidden">
+
+            {/* HEADER */}
+            <div className="flex items-center justify-between px-6 py-4 border-b">
+              <h2 className="text-2xl font-semibold">
+                Export Inventory
+              </h2>
+
+              <button
+                onClick={() => setShowExportPopup(false)}
+                className="border px-4 py-2 rounded-xl hover:bg-gray-100"
+              >
+                Close
+              </button>
+            </div>
+
+            {/* BODY */}
+            <div className="p-6">
+
+              <p className="text-gray-600 mb-6">
+                Choose the format you want to export.
+              </p>
+
+              <div className="flex gap-4">
+
+                <button 
+                onClick={exportInventoryXlsx}
+                className="inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium text-black hover:bg-gray-50">
+                  <FileDown className="w-4 h-4" />
+                  Export XLSX
+                </button>
+
+                <button 
+                onClick={exportInventoryCsv}
+                className="inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium text-black hover:bg-gray-50">
+                  <FileDown className="w-4 h-4" />
+                  Export CSV
+                </button>
+
+                <button 
+                onClick={exportInventoryPdf}
+                className="inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium text-black hover:bg-gray-50">
+                  <FileText className="w-4 h-4" />
+                  Export PDF
+                </button>
+
+              </div>
+
+            </div>
+
+          </div>
+
+        </div>
+      )}
+
+
+{showTemplatePopup && (
+        <div className="fixed inset-0 flex items-center justify-center bg-black/40 z-50">
+
+          <div className="bg-white w-[750px] rounded-2xl shadow-xl overflow-hidden">
+
+            {/* HEADER */}
+            <div className="flex items-center justify-between px-6 py-4 border-b">
+              <h2 className="text-2xl font-semibold">
+                Download Templates
+              </h2>
+
+              <button
+                onClick={() => setShowTemplatePopup(false)}
+                className="border px-4 py-2 rounded-xl hover:bg-gray-100"
+              >
+                Close
+              </button>
+            </div>
+
+            {/* BODY */}
+            <div className="p-6">
+
+              <p className="text-gray-600 mb-6">
+                Download a template file for importing inventory data.
+              </p>
+
+              <div className="flex gap-4">
+
+                <button 
+                onClick={downloadInventoryTemplateXlsx}
+                className="inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium text-black hover:bg-gray-50">
+                 <Download className="w-4 h-4" />
+                  Template XLSX
+                </button>
+
+                <button 
+                onClick={downloadInventoryTemplateCsv}
+                className="inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium text-black hover:bg-gray-50">
+                  <Download className="w-4 h-4" />
+                  Template CSV
+                </button>
+
+              </div>
+
+            </div>
+
+          </div>
+
+        </div>
+      )}
+      
 
       {(showAddModal || showEditModal) && canMutateInventory ? (
         <div
@@ -1129,12 +1257,16 @@ export default function LogisticsInventoryPage() {
         </div>
       ) : null}
 
+      
+
       <ImportSummaryModal
         open={importSummaryOpen}
         summary={importSummary}
         title="Inventory Import Summary"
         onClose={() => setImportSummaryOpen(false)}
       />
+
+      
     </>
   );
 }

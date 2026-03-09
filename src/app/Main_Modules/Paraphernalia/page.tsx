@@ -177,6 +177,8 @@ export default function ParaphernaliaPage() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [importSummary, setImportSummary] = useState<ImportSummaryData | null>(null);
   const [importSummaryOpen, setImportSummaryOpen] = useState(false);
+  const [showTemplatePopup, setShowTemplatePopup] = useState(false);
+  const [showExportPopup, setShowExportPopup] = useState(false);
 
   function downloadTemplate(format: "xlsx" | "csv") {
     const sample = {
@@ -849,48 +851,25 @@ export default function ParaphernaliaPage() {
           ) : null}
 
           {canDownloadParaphernaliaTemplate ? (
-            <>
-              <button
-                type="button"
-                onClick={() => downloadTemplate("xlsx")}
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border text-sm text-black hover:bg-gray-50"
-              >
-                <Download className="w-4 h-4" /> Template XLSX
-              </button>
-              <button
-                type="button"
-                onClick={() => downloadTemplate("csv")}
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border text-sm text-black hover:bg-gray-50"
-              >
-                <Download className="w-4 h-4" /> Template CSV
-              </button>
-            </>
+            <button
+              type="button"
+              onClick={() => setShowTemplatePopup(true)}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border text-sm font-medium text-black hover:bg-gray-50"
+            >
+              <Download className="w-4 h-4" />
+              Download Templates
+            </button>
           ) : null}
 
           {canExportParaphernalia ? (
-            <>
-              <button
-                type="button"
-                onClick={exportParaphernaliaPdf}
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border text-sm text-black hover:bg-gray-50"
-              >
-                <FileText className="w-4 h-4" /> Export PDF
-              </button>
-              <button
-                type="button"
-                onClick={exportParaphernaliaXlsx}
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border text-sm text-black hover:bg-gray-50"
-              >
-                <FileDown className="w-4 h-4" /> Export XLSX
-              </button>
-              <button
-                type="button"
-                onClick={exportParaphernaliaCsv}
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border text-sm text-black hover:bg-gray-50"
-              >
-                <FileDown className="w-4 h-4" /> Export CSV
-              </button>
-            </>
+            <button
+              type="button"
+              onClick={() => setShowExportPopup(true)}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border text-sm font-medium text-black hover:bg-gray-50"
+            >
+              <FileText className="w-4 h-4" />
+              Export
+            </button>
           ) : null}
 
           <input
@@ -1580,6 +1559,83 @@ export default function ParaphernaliaPage() {
           </div>
         </div>
       ) : null}
+
+      {showExportPopup && (
+        <div className="fixed inset-0 flex items-center justify-center bg-black/40 z-50">
+          <div className="bg-white w-[750px] rounded-2xl shadow-xl overflow-hidden">
+            <div className="flex items-center justify-between px-6 py-4 border-b">
+              <h2 className="text-2xl font-semibold">Export Paraphernalia</h2>
+              <button
+                onClick={() => setShowExportPopup(false)}
+                className="border px-4 py-2 rounded-xl hover:bg-gray-100"
+              >
+                Close
+              </button>
+            </div>
+            <div className="p-6">
+              <p className="text-gray-600 mb-6">Choose the format you want to export.</p>
+              <div className="flex gap-4">
+                <button
+                  onClick={exportParaphernaliaXlsx}
+                  className="inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium text-black hover:bg-gray-50"
+                >
+                  <FileDown className="w-4 h-4" />
+                  Export XLSX
+                </button>
+                <button
+                  onClick={exportParaphernaliaCsv}
+                  className="inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium text-black hover:bg-gray-50"
+                >
+                  <FileDown className="w-4 h-4" />
+                  Export CSV
+                </button>
+                <button
+                  onClick={exportParaphernaliaPdf}
+                  className="inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium text-black hover:bg-gray-50"
+                >
+                  <FileText className="w-4 h-4" />
+                  Export PDF
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showTemplatePopup && (
+        <div className="fixed inset-0 flex items-center justify-center bg-black/40 z-50">
+          <div className="bg-white w-[750px] rounded-2xl shadow-xl overflow-hidden">
+            <div className="flex items-center justify-between px-6 py-4 border-b">
+              <h2 className="text-2xl font-semibold">Download Templates</h2>
+              <button
+                onClick={() => setShowTemplatePopup(false)}
+                className="border px-4 py-2 rounded-xl hover:bg-gray-100"
+              >
+                Close
+              </button>
+            </div>
+            <div className="p-6">
+              <p className="text-gray-600 mb-6">Download a template file for importing paraphernalia data.</p>
+              <div className="flex gap-4">
+                <button
+                  onClick={() => downloadTemplate("xlsx")}
+                  className="inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium text-black hover:bg-gray-50"
+                >
+                  <Download className="w-4 h-4" />
+                  Template XLSX
+                </button>
+                <button
+                  onClick={() => downloadTemplate("csv")}
+                  className="inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium text-black hover:bg-gray-50"
+                >
+                  <Download className="w-4 h-4" />
+                  Template CSV
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <ImportSummaryModal
         open={importSummaryOpen}
