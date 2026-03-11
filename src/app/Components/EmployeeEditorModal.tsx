@@ -296,7 +296,7 @@ function generateUuidV4(): string {
     else for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
 
     // RFC 4122 v4
-    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[6] = (bytes[6] & 0x0f) | 0x40; 
     bytes[8] = (bytes[8] & 0x3f) | 0x80;
 
     const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
@@ -1537,13 +1537,15 @@ export default function EmployeeEditorModal({
                     className="w-full border rounded-xl px-3 py-2" />
                 </label>
               </div>
-              <div className="rounded-2xl border p-4">
+
+              {/* <div className="rounded-2xl border p-4">
                 <div className="text-sm font-semibold text-black">Security License Number (Applicants)</div>
                 <div className="text-xs text-gray-500 mt-1">Stored in applicants.security_licensed_num as well</div>
                 <input value={app.security_licensed_num}
                   onChange={(e) => setApp((d) => ({ ...d, security_licensed_num: e.target.value }))}
                   className="mt-2 w-full border rounded-xl px-3 py-2" />
-              </div>
+              </div> */}
+
             </div>
           ) : tab === "employment" ? (
             <div className="space-y-4">

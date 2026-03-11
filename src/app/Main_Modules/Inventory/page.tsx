@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useEffect, useRef } from "react";
+import { useCallback, useMemo, useState, useEffect, useRef } from "react";
 import { Download, FileDown, FileText, Search, Upload } from "lucide-react";
 import { supabase } from "@/app/Client/SupabaseClients";
 import { useAuthRole, useMyColumnAccess } from "@/app/Client/useRbac";
@@ -9,6 +9,7 @@ import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import ImportSummaryModal, { ImportSummaryData } from "../Components/ImportSummaryModal";
+import SpreadsheetImportModal from "@/app/Components/SpreadsheetImportModal";
 
 type CategoryConfig = {
   key: "firearms" | "communications" | "furniture" | "office" | "sec" | "vehicle";
@@ -283,6 +284,7 @@ export default function LogisticsInventoryPage() {
   const [importSummaryOpen, setImportSummaryOpen] = useState(false);
  const [showTemplatePopup, setShowTemplatePopup] = useState(false);
   const [showExportPopup, setShowExportPopup] = useState(false);
+  const [importModalOpen, setImportModalOpen] = useState(false);
 
   const [showTemplateModalOpen, setTemplateModalOpen] = useState(false);
 
@@ -420,7 +422,7 @@ function downloadInventoryTemplateXlsx() {
           }
           return hasIdentity ? payload : null;
         })
-        .filter((v): v is Record<string, unknown> => Boolean(v));
+        .filter((v): v is NonNullable<typeof v> => Boolean(v));
 
       if (!importedRows.length) throw new Error("No valid inventory rows found in file.");
 
@@ -438,7 +440,8 @@ function downloadInventoryTemplateXlsx() {
         if (key !== "|") byComposite.set(key, id);
       }
 
-      const deduped = new Map<string, Record<string, unknown>>();
+      type InventoryPayload = NonNullable<(typeof importedRows)[number]>;
+      const deduped = new Map<string, InventoryPayload>();
       for (const payload of importedRows) {
         const key = `${String(payload.particular ?? "").trim().toLowerCase()}|${String(payload.date ?? "").trim().toLowerCase()}`;
         if (deduped.has(key)) skipped += 1;
@@ -480,6 +483,132 @@ function downloadInventoryTemplateXlsx() {
     }
   }
 
+  const parseInventoryImportRow = useCallback((row: Record<string, unknown>, idx: number) => {
+    const firearmsPrice = toNumber(pickByAliases(row, ["firearms_price", "firearms price", "firearms amount"]));
+    const communicationsPrice = toNumber(pickByAliases(row, ["communications_price", "communications price", "communications amount"]));
+    const furniturePrice = toNumber(pickByAliases(row, ["furniture_price", "furniture price", "furniture amount"]));
+    const officePrice = toNumber(pickByAliases(row, ["office_price", "office price", "office amount"]));
+    const secPrice = toNumber(pickByAliases(row, ["sec_price", "sec price", "security price"]));
+    const vehiclePrice = toNumber(pickByAliases(row, ["vehicle_price", "vehicle price", "vehicle amount"]));
+    const computedAmount = firearmsPrice + communicationsPrice + furniturePrice + officePrice + secPrice + vehiclePrice;
+
+    const payload = {
+      date: pickByAliases(row, ["date"]).trim() || null,
+      particular: pickByAliases(row, ["particular", "description", "item"]).trim() || null,
+      quanitity: toNumber(pickByAliases(row, ["quanitity", "quantity", "total quantity"])),
+      amount: toNumber(pickByAliases(row, ["amount", "row total", "total_amount"])) || computedAmount,
+      remarks: pickByAliases(row, ["remarks", "note", "notes"]).trim() || null,
+      firearms_name: pickByAliases(row, ["firearms_name", "firearms", "firearms ammunitions"]).trim() || null,
+      firearms_qty: toNumber(pickByAliases(row, ["firearms_qty", "firearms quantity"])),
+      firearms_price: firearmsPrice,
+      communications_name: pickByAliases(row, ["communications_name", "communications", "communications equipment"]).trim() || null,
+      communications_qty: toNumber(pickByAliases(row, ["communications_qty", "communications quantity"])),
+      communications_price: communicationsPrice,
+      furniture_name: pickByAliases(row, ["furniture_name", "furniture", "furniture fixtures"]).trim() || null,
+      furniture_qty: toNumber(pickByAliases(row, ["furniture_qty", "furniture quantity"])),
+      furniture_price: furniturePrice,
+      office_name: pickByAliases(row, ["office_name", "office", "office equipment"]).trim() || null,
+      office_qty: toNumber(pickByAliases(row, ["office_qty", "office quantity"])),
+      office_price: officePrice,
+      sec_name: pickByAliases(row, ["sec_name", "security_name", "sec equipment"]).trim() || null,
+      sec_qty: toNumber(pickByAliases(row, ["sec_qty", "security quantity"])),
+      sec_price: secPrice,
+      vehicle_name: pickByAliases(row, ["vehicle_name", "vehicle", "motorcycle"]).trim() || null,
+      vehicle_qty: toNumber(pickByAliases(row, ["vehicle_qty", "vehicle quantity"])),
+      vehicle_price: vehiclePrice,
+      firearms_ammunitions: pickByAliases(row, ["firearms_ammunitions", "firearms_name"]).trim() || null,
+      communications_equipment: pickByAliases(row, ["communications_equipment", "communications_name"]).trim() || null,
+      furniture_and_fixtures: pickByAliases(row, ["furniture_and_fixtures", "furniture_name"]).trim() || null,
+      office_equipments_sec_equipments: pickByAliases(row, ["office_equipments_sec_equipments", "office_name"]).trim() || null,
+      sec_equipments: pickByAliases(row, ["sec_equipments", "sec_name"]).trim() || null,
+      vehicle_and_motorcycle: pickByAliases(row, ["vehicle_and_motorcycle", "vehicle_name"]).trim() || null,
+      total_amount: toNumber(pickByAliases(row, ["total_amount", "amount"])) || computedAmount,
+      grand_total: toNumber(pickByAliases(row, ["grand_total"])) || null,
+    };
+
+    const hasIdentity = Boolean((payload.particular ?? "").trim() || (payload.date ?? "").trim());
+    const displayName = payload.particular || payload.date || "—";
+
+    if (!hasIdentity) {
+      return { payload: null, displayName, error: "Missing identity fields (particular/date)" };
+    }
+
+    return { payload, displayName };
+  }, []);
+
+  const handleInventoryImport = useCallback(async (rawRows: Record<string, unknown>[]) => {
+    if (!canImportInventory) {
+      throw new Error("You do not have permission to import inventory files.");
+    }
+
+    const rowErrors: string[] = [];
+    let skipped = 0;
+
+    const importedRows = rawRows
+      .map((row, idx) => {
+        const { payload, error } = parseInventoryImportRow(row, idx);
+        if (!payload) {
+          skipped += 1;
+          if (error) rowErrors.push(`Row ${idx + 2}: ${error}`);
+        }
+        return payload;
+      })
+      .filter((v): v is NonNullable<typeof v> => Boolean(v));
+
+    if (!importedRows.length) throw new Error("No valid inventory rows found in file.");
+
+    const { data: existingRows, error: existingErr } = await supabase
+      .from("inventory_fixed_asset")
+      .select("id, date, particular")
+      .limit(10000);
+    if (existingErr) throw existingErr;
+
+    const byComposite = new Map<string, string>();
+    for (const row of ((existingRows ?? []) as Array<Record<string, unknown>>)) {
+      const id = String(row.id ?? "");
+      if (!id) continue;
+      const key = `${String(row.particular ?? "").trim().toLowerCase()}|${String(row.date ?? "").trim().toLowerCase()}`;
+      if (key !== "|") byComposite.set(key, id);
+    }
+
+    const deduped = new Map<string, Record<string, unknown>>();
+    for (const payload of importedRows) {
+      const key = `${String(payload.particular ?? "").trim().toLowerCase()}|${String(payload.date ?? "").trim().toLowerCase()}`;
+      if (deduped.has(key)) skipped += 1;
+      deduped.set(key, payload);
+    }
+
+    let inserted = 0;
+    let updated = 0;
+    for (const [key, payload] of deduped.entries()) {
+      const id = byComposite.get(key);
+      if (id) {
+        const upd = await supabase.from("inventory_fixed_asset").update(payload).eq("id", id);
+        if (upd.error) {
+          skipped += 1;
+          rowErrors.push(`Update failed for key ${key}: ${upd.error.message}`);
+          continue;
+        }
+        updated += 1;
+      } else {
+        const ins = await supabase.from("inventory_fixed_asset").insert(payload);
+        if (ins.error) {
+          skipped += 1;
+          rowErrors.push(`Insert failed for key ${key}: ${ins.error.message}`);
+          continue;
+        }
+        inserted += 1;
+      }
+    }
+
+    setImportSummary({ inserted, updated, skipped, errors: rowErrors });
+    setImportSummaryOpen(true);
+    setSuccess(`Import complete. Inserted: ${inserted}, Updated (overwritten): ${updated}.`);
+    await loadData();
+
+    return { inserted, updated, skipped, errors: rowErrors };
+  }, [canImportInventory, parseInventoryImportRow]);
+
   async function loadData() {
     if (loadingInventoryColumns) {
       setLoading(true);
@@ -507,7 +636,7 @@ function downloadInventoryTemplateXlsx() {
       setError(res.error.message || "Failed to load inventory");
       setRows([]);
     } else {
-      setRows((res.data as InventoryRow[]) || []);
+      setRows((res.data as unknown as InventoryRow[]) || []);
     }
 
     setLoading(false);
@@ -830,7 +959,7 @@ function downloadInventoryTemplateXlsx() {
             {canImportInventory ? (
               <button
                 type="button"
-                onClick={() => fileInputRef.current?.click()}
+                onClick={() => setImportModalOpen(true)}
                 disabled={importing}
                 className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border text-sm text-black hover:bg-gray-50 disabled:opacity-60"
               >
@@ -1257,7 +1386,41 @@ function downloadInventoryTemplateXlsx() {
         </div>
       ) : null}
 
-      
+      <SpreadsheetImportModal
+        open={importModalOpen}
+        onClose={() => setImportModalOpen(false)}
+        title="Import Inventory"
+        description="Upload an Excel (.xlsx/.xls) or CSV (.csv) file with inventory data."
+        allowTemplateDownloads={canDownloadInventoryTemplate}
+        templateFileName="inventory_import_template"
+        templateSampleData={{
+          date: "2026-03-01",
+          particular: "Sample Particular",
+          quanitity: 5,
+          firearms_name: "Sample Firearm",
+          firearms_qty: 1,
+          firearms_price: 1000,
+          communications_name: "Sample Radio",
+          communications_qty: 1,
+          communications_price: 800,
+          furniture_name: "Sample Chair",
+          furniture_qty: 1,
+          furniture_price: 500,
+          office_name: "Sample Printer",
+          office_qty: 1,
+          office_price: 400,
+          sec_name: "Sample Vest",
+          sec_qty: 1,
+          sec_price: 300,
+          vehicle_name: "Sample Motorcycle",
+          vehicle_qty: 1,
+          vehicle_price: 2000,
+          remarks: "Optional remarks",
+        }}
+        previewColumns={["Particular/Date"]}
+        parseRow={parseInventoryImportRow}
+        onImport={handleInventoryImport}
+      />
 
       <ImportSummaryModal
         open={importSummaryOpen}

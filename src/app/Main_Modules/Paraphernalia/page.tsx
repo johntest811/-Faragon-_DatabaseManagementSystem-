@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Download, FileDown, FileText, Pencil, Plus, Search, Trash2, Upload } from "lucide-react";
 import { supabase } from "@/app/Client/SupabaseClients";
 import { useAuthRole, useMyColumnAccess } from "@/app/Client/useRbac";
@@ -9,6 +9,7 @@ import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import ImportSummaryModal, { ImportSummaryData } from "../Components/ImportSummaryModal";
+import SpreadsheetImportModal from "@/app/Components/SpreadsheetImportModal";
 
 type ParaphernaliaRow = {
   id_paraphernalia: string;
@@ -179,6 +180,7 @@ export default function ParaphernaliaPage() {
   const [importSummaryOpen, setImportSummaryOpen] = useState(false);
   const [showTemplatePopup, setShowTemplatePopup] = useState(false);
   const [showExportPopup, setShowExportPopup] = useState(false);
+  const [importModalOpen, setImportModalOpen] = useState(false);
 
   function downloadTemplate(format: "xlsx" | "csv") {
     const sample = {
@@ -313,6 +315,109 @@ export default function ParaphernaliaPage() {
       if (fileInputRef.current) fileInputRef.current.value = "";
     }
   }
+
+  const parseParaphernaliaImportRow = useCallback((row: Record<string, unknown>, idx: number) => {
+    const payload = {
+      names: pickByAliases(row, ["names", "name"]).trim() || null,
+      items: pickByAliases(row, ["items", "item"]).trim() || null,
+      quantity: toNumberOrNull(pickByAliases(row, ["quantity", "qty"])),
+      price: toNumberOrNull(pickByAliases(row, ["price", "unit_price", "amount"])),
+      date: pickByAliases(row, ["date", "created_at"]).trim() || null,
+    };
+
+    const hasIdentity = Boolean(payload.names || payload.items);
+    const displayName = payload.names || payload.items || "—";
+
+    if (!hasIdentity) {
+      return { payload: null, displayName, error: "Missing identity fields (names/items)" };
+    }
+
+    return { payload, displayName };
+  }, []);
+
+  const handleParaphernaliaImport = useCallback(async (rawRows: Record<string, unknown>[]) => {
+    if (!canImportParaphernalia) {
+      throw new Error("You do not have permission to import files in Paraphernalia page.");
+    }
+
+    const rowErrors: string[] = [];
+    let skipped = 0;
+
+    const payloads = rawRows
+      .map((row, idx) => {
+        const { payload, error } = parseParaphernaliaImportRow(row, idx);
+        if (!payload) {
+          skipped += 1;
+          if (error) rowErrors.push(`Row ${idx + 2}: ${error}`);
+        }
+        return payload;
+      })
+      .filter((v): v is NonNullable<typeof v> => Boolean(v));
+
+    if (!payloads.length) throw new Error("No valid paraphernalia rows found in file.");
+
+    const { data: existingRows, error: existingErr } = await supabase
+      .from("paraphernalia")
+      .select("id_paraphernalia, names, items, date")
+      .limit(10000);
+    if (existingErr) throw existingErr;
+
+    const byComposite = new Map<string, string>();
+    for (const row of ((existingRows ?? []) as Array<Record<string, unknown>>)) {
+      const id = String(row.id_paraphernalia ?? "");
+      if (!id) continue;
+      const key = [
+        String(row.names ?? "").trim().toLowerCase(),
+        String(row.items ?? "").trim().toLowerCase(),
+        String(row.date ?? "").trim().toLowerCase(),
+      ].join("|");
+      if (key !== "||") byComposite.set(key, id);
+    }
+
+    const deduped = new Map<string, (typeof payloads)[number]>();
+    for (const p of payloads) {
+      const key = [
+        String(p.names ?? "").trim().toLowerCase(),
+        String(p.items ?? "").trim().toLowerCase(),
+        String(p.date ?? "").trim().toLowerCase(),
+      ].join("|");
+      if (deduped.has(key)) skipped += 1;
+      deduped.set(key, p);
+    }
+
+    let inserted = 0;
+    let updated = 0;
+
+    for (const [key, payload] of deduped.entries()) {
+      const id = byComposite.get(key);
+      if (id) {
+        const upd = await supabase.from("paraphernalia").update(payload).eq("id_paraphernalia", id);
+        if (upd.error) {
+          skipped += 1;
+          rowErrors.push(`Update failed for key ${key}: ${upd.error.message}`);
+          continue;
+        }
+        updated += 1;
+      } else {
+        const insertPayload = { ...payload, id_paraphernalia: crypto.randomUUID() };
+        const ins = await supabase.from("paraphernalia").insert(insertPayload);
+        if (ins.error) {
+          skipped += 1;
+          rowErrors.push(`Insert failed for key ${key}: ${ins.error.message}`);
+          continue;
+        }
+        inserted += 1;
+      }
+    }
+
+    setImportSummary({ inserted, updated, skipped, errors: rowErrors });
+    setImportSummaryOpen(true);
+    setError("");
+    await loadAll();
+    setInfoMessage(`Import complete. Inserted: ${inserted}, Updated (overwritten): ${updated}.`);
+
+    return { inserted, updated, skipped, errors: rowErrors };
+  }, [canImportParaphernalia, parseParaphernaliaImportRow]);
 
   async function loadAll() {
     setLoading(true);
@@ -841,7 +946,7 @@ export default function ParaphernaliaPage() {
           {canImportParaphernalia ? (
             <button
               type="button"
-              onClick={() => fileInputRef.current?.click()}
+              onClick={() => setImportModalOpen(true)}
               disabled={importBusy}
               className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border text-sm text-black hover:bg-gray-50 disabled:opacity-60"
             >
@@ -1636,6 +1741,25 @@ export default function ParaphernaliaPage() {
           </div>
         </div>
       )}
+
+      <SpreadsheetImportModal
+        open={importModalOpen}
+        onClose={() => setImportModalOpen(false)}
+        title="Import Paraphernalia"
+        description="Upload an Excel (.xlsx/.xls) or CSV (.csv) file with paraphernalia data."
+        allowTemplateDownloads={canDownloadParaphernaliaTemplate}
+        templateFileName="paraphernalia_import_template"
+        templateSampleData={{
+          names: "Sample Name",
+          items: "Sample Item",
+          quantity: 10,
+          price: 50,
+          date: "2026-03-01",
+        }}
+        previewColumns={["Name/Item"]}
+        parseRow={parseParaphernaliaImportRow}
+        onImport={handleParaphernaliaImport}
+      />
 
       <ImportSummaryModal
         open={importSummaryOpen}

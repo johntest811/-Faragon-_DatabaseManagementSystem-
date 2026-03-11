@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { Download, Plus, FileDown, FileSpreadsheet, FileText, Search, Upload } from "lucide-react";
 import * as XLSX from "xlsx";
@@ -10,6 +10,7 @@ import { supabase } from "@/app/Client/SupabaseClients";
 import { useAuthRole, useMyColumnAccess } from "@/app/Client/useRbac";
 import LoadingCircle from "@/app/Components/LoadingCircle";
 import ImportSummaryModal, { ImportSummaryData } from "../Components/ImportSummaryModal";
+import SpreadsheetImportModal from "@/app/Components/SpreadsheetImportModal";
 
 
 
@@ -425,6 +426,128 @@ const [templateOpen, setTemplateOpen] = useState(false);
     if (!file) return;
     void handleImportFile(file);
   }
+
+  const parseClientImportRow = useCallback((row: Record<string, unknown>, idx: number) => {
+    const payload = {
+      contract_no: toNullableText(findValueByAliases(row, ["contract_no", "contract number", "contractno", "contract"])),
+      contract_no_date: toNullableText(findValueByAliases(row, ["contract_no_date", "contract no date", "contract date"])),
+      client_name: toNullableText(findValueByAliases(row, ["client_name", "client", "customer"])),
+      project_name: toNullableText(findValueByAliases(row, ["project_name", "project"])),
+      specific_area: toNullableText(findValueByAliases(row, ["specific_area", "area", "specific area"])),
+      cluster: toNullableText(findValueByAliases(row, ["cluster"])),
+      contract_start: toNullableText(findValueByAliases(row, ["contract_start", "start", "start_date", "contract start"])),
+      contract_end: toNullableText(findValueByAliases(row, ["contract_end", "end", "end_date", "contract end"])),
+      contracted_manpower: toNumberOrNull(findValueByAliases(row, ["contracted_manpower", "manpower", "contracted manpower"])),
+      deployed_guards: toNumberOrNull(findValueByAliases(row, ["deployed_guards", "deployed guards", "guards"])),
+      status: toNullableText(findValueByAliases(row, ["status"])),
+      created_at: toNullableText(findValueByAliases(row, ["created_at", "created at", "created"])),
+      remarks: toNullableText(findValueByAliases(row, ["remarks", "note", "notes", "comment"])),
+    };
+
+    const hasIdentity = Boolean(payload.contract_no || payload.client_name || payload.project_name);
+    const displayName = payload.contract_no || payload.client_name || payload.project_name || "—";
+
+    if (!hasIdentity) {
+      return { payload: null, displayName, error: "Missing identity fields (contract_no/client_name/project_name)" };
+    }
+
+    return { payload, displayName };
+  }, []);
+
+  const handleClientImport = useCallback(async (rawRows: Record<string, unknown>[]) => {
+    if (!canImportFile) {
+      throw new Error("You do not have permission to import files in Client page.");
+    }
+
+    const rowErrors: string[] = [];
+    let skipped = 0;
+
+    const importedPayloads = rawRows
+      .map((row, idx) => {
+        const { payload, error } = parseClientImportRow(row, idx);
+        if (!payload) {
+          skipped += 1;
+          if (error) rowErrors.push(`Row ${idx + 2}: ${error}`);
+        }
+        return payload;
+      })
+      .filter((v): v is NonNullable<typeof v> => Boolean(v));
+
+    if (!importedPayloads.length) throw new Error("No valid rows found. Ensure file has identifiable contract/client columns.");
+
+    const { data: existingRows, error: existingErr } = await supabase
+      .from("contracts")
+      .select("contract_id, contract_no, client_name, project_name, contract_start")
+      .limit(10000);
+    if (existingErr) throw existingErr;
+
+    const byContractNo = new Map<string, string>();
+    const byComposite = new Map<string, string>();
+    for (const row of ((existingRows ?? []) as Array<Record<string, unknown>>)) {
+      const id = String(row.contract_id ?? "");
+      if (!id) continue;
+      const contractNo = String(row.contract_no ?? "").trim().toLowerCase();
+      if (contractNo) byContractNo.set(contractNo, id);
+      const comp = [
+        String(row.client_name ?? "").trim().toLowerCase(),
+        String(row.project_name ?? "").trim().toLowerCase(),
+        String(row.contract_start ?? "").trim().toLowerCase(),
+      ].join("|");
+      if (comp !== "||") byComposite.set(comp, id);
+    }
+
+    const dedupedMap = new Map<string, (typeof importedPayloads)[number]>();
+    for (const payload of importedPayloads) {
+      const cno = String(payload.contract_no ?? "").trim().toLowerCase();
+      const comp = [
+        String(payload.client_name ?? "").trim().toLowerCase(),
+        String(payload.project_name ?? "").trim().toLowerCase(),
+        String(payload.contract_start ?? "").trim().toLowerCase(),
+      ].join("|");
+      const key = cno ? `cno:${cno}` : `cmp:${comp}`;
+      if (dedupedMap.has(key)) skipped += 1;
+      dedupedMap.set(key, payload);
+    }
+
+    let inserted = 0;
+    let updated = 0;
+
+    for (const payload of dedupedMap.values()) {
+      const cno = String(payload.contract_no ?? "").trim().toLowerCase();
+      const comp = [
+        String(payload.client_name ?? "").trim().toLowerCase(),
+        String(payload.project_name ?? "").trim().toLowerCase(),
+        String(payload.contract_start ?? "").trim().toLowerCase(),
+      ].join("|");
+
+      const matchId = (cno ? byContractNo.get(cno) : null) ?? byComposite.get(comp) ?? null;
+      if (matchId) {
+        const upd = await supabase.from("contracts").update(payload).eq("contract_id", matchId);
+        if (upd.error) {
+          skipped += 1;
+          rowErrors.push(`Update failed for contract ${payload.contract_no ?? payload.client_name ?? "(unknown)"}: ${upd.error.message}`);
+          continue;
+        }
+        updated += 1;
+        continue;
+      }
+
+      const ins = await supabase.from("contracts").insert(payload);
+      if (ins.error) {
+        skipped += 1;
+        rowErrors.push(`Insert failed for contract ${payload.contract_no ?? payload.client_name ?? "(unknown)"}: ${ins.error.message}`);
+        continue;
+      }
+      inserted += 1;
+    }
+
+    setImportSummary({ inserted, updated, skipped, errors: rowErrors });
+    setImportSummaryOpen(true);
+    setSaveState({ type: "success", message: `Import complete. Inserted: ${inserted}, Updated (overwritten): ${updated}, Skipped: ${skipped}.` });
+    await loadConnectedData();
+
+    return { inserted, updated, skipped, errors: rowErrors };
+  }, [canImportFile, parseClientImportRow]);
 
   /* --- loadConnectedData, loadApplicants, submitContract, openEditModal, openDetails etc.
          unchanged — include them as in your original file. For brevity here I keep the original implementations. --- */
@@ -1094,36 +1217,32 @@ const [templateOpen, setTemplateOpen] = useState(false);
 
 
 
-<ModalShell
+<SpreadsheetImportModal
   open={importModalOpen}
-  title="Import Contracts"
   onClose={() => setImportModalOpen(false)}
->
-  <div className="space-y-4">
-
-    <div className="text-sm text-gray-700">
-      Upload an XLSX or CSV file to import contracts.
-    </div>
-
-<input
-  type="file"
-  accept=".xlsx,.csv"
-  onChange={handleImportChange}
-  className="block w-full text-sm border rounded-xl p-2"
+  title="Import Contracts"
+  description="Upload an Excel (.xlsx/.xls) or CSV (.csv) file with contract data."
+  allowTemplateDownloads={canDownloadTemplate}
+  templateFileName="client_import_template"
+  templateSampleData={{
+    contract_no: "CN-2026-001",
+    contract_no_date: "2026-02-01",
+    client_name: "Sample Client",
+    project_name: "Project Alpha",
+    specific_area: "Area 1",
+    cluster: "Cluster A",
+    contract_start: "2026-02-01",
+    contract_end: "2027-02-01",
+    contracted_manpower: 10,
+    deployed_guards: 8,
+    status: "ACTIVE",
+    created_at: "2026-02-01T08:00",
+    remarks: "Optional notes",
+  }}
+  previewColumns={["Contract/Client"]}
+  parseRow={parseClientImportRow}
+  onImport={handleClientImport}
 />
-
-    <div className="flex justify-end">
-      <button
-        type="button"
-        onClick={() => setImportModalOpen(false)}
-        className="rounded-xl border px-4 py-2 text-sm font-medium text-black hover:bg-gray-50"
-      >
-        Cancel
-      </button>
-    </div>
-
-  </div>
-</ModalShell>
       
 <ModalShell
   open={exportModalOpen}
