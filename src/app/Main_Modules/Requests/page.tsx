@@ -9,12 +9,43 @@ import { columnsForModule, normalizeModuleKey } from "../Components/permissionCa
 
 type ModuleRow = { module_key: string; display_name: string; path: string };
 
+const ROW_IDENTIFIER_OPTIONS: Record<string, string[]> = {
+  employees: ["applicant_id", "full_name", "custom_id"],
+  client: ["contract_no", "client_name", "project_name"],
+  inventory: ["particular", "date", "id"],
+  paraphernalia: ["names", "items", "id_paraphernalia"],
+  reports: ["report_type", "date", "id"],
+};
+
+type ApplicantOption = {
+  applicant_id: string;
+  first_name: string | null;
+  middle_name: string | null;
+  last_name: string | null;
+};
+
+type ApproverRow = {
+  id: string;
+  username: string;
+  full_name: string | null;
+  role: string | null;
+  is_active: boolean | null;
+};
+
 type AccessRequestRow = {
   id: string;
   created_at: string;
   status: string | null;
+  request_scope_row?: boolean | null;
+  request_scope_column?: boolean | null;
   requested_module_key: string;
+  requested_column_keys?: string[] | null;
   requested_column_key?: string | null;
+  requested_applicant_ids?: string[] | null;
+  requested_applicant_id?: string | null;
+  requested_row_identifier_key?: string | null;
+  requested_row_identifier_values?: string[] | null;
+  requested_row_identifier_value?: string | null;
   requested_path: string | null;
   reason: string | null;
   requester_user_id?: string | null;
@@ -22,6 +53,9 @@ type AccessRequestRow = {
   requester_admin_id?: string | null;
   requester_username?: string | null;
   requester_role?: string | null;
+  approver_admin_id?: string | null;
+  approver_username?: string | null;
+  approver_full_name?: string | null;
 };
 
 function normalizeRoleNameLoose(value: unknown) {
@@ -57,6 +91,16 @@ function readLegacyAdminSession(): LegacyAdminSession | null {
   }
 }
 
+function applicantLabel(a: ApplicantOption) {
+  const parts = [a.first_name, a.middle_name, a.last_name].filter(Boolean);
+  const name = parts.length ? parts.join(" ") : "(No name)";
+  return `${name} — ${a.applicant_id.slice(0, 8).toUpperCase()}`;
+}
+
+function rowIdentifierOptionsFor(moduleKey: string) {
+  return ROW_IDENTIFIER_OPTIONS[normalizeModuleKey(moduleKey)] ?? ["id", "name", "reference_no"];
+}
+
 export default function RequestsPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -71,8 +115,21 @@ export default function RequestsPage() {
   const [success, setSuccess] = useState<string>("");
 
   const [requestedModuleKey, setRequestedModuleKey] = useState<string>(preselectModule);
-  const [requestedColumnKey, setRequestedColumnKey] = useState<string>("");
+  const [scopeRow, setScopeRow] = useState(false);
+  const [scopeColumn, setScopeColumn] = useState(false);
+  const [requestedColumnKeys, setRequestedColumnKeys] = useState<string[]>([]);
+  const [requestedApplicantIds, setRequestedApplicantIds] = useState<string[]>([]);
+  const [requestedRowIdentifierKey, setRequestedRowIdentifierKey] = useState<string>("");
+  const [requestedRowIdentifierValues, setRequestedRowIdentifierValues] = useState<string[]>([]);
+  const [rowIdentifierInput, setRowIdentifierInput] = useState<string>("");
+  const [personnelSearch, setPersonnelSearch] = useState<string>("");
+  const [approverAdminId, setApproverAdminId] = useState<string>("");
   const [reason, setReason] = useState<string>("");
+
+  const [applicants, setApplicants] = useState<ApplicantOption[]>([]);
+  const [loadingApplicants, setLoadingApplicants] = useState(false);
+  const [approvers, setApprovers] = useState<ApproverRow[]>([]);
+  const [loadingApprovers, setLoadingApprovers] = useState(false);
 
   const [myRequests, setMyRequests] = useState<AccessRequestRow[]>([]);
   const [loadingRequests, setLoadingRequests] = useState(true);
@@ -80,6 +137,10 @@ export default function RequestsPage() {
   const [pendingRequests, setPendingRequests] = useState<AccessRequestRow[]>([]);
   const [loadingPending, setLoadingPending] = useState(false);
   const [resolvingId, setResolvingId] = useState<string | null>(null);
+
+  const legacySession = useMemo(() => readLegacyAdminSession(), []);
+  const reviewerAdminId = legacySession?.id ?? "";
+  const canReviewRequests = role === "superadmin" || role === "admin";
 
   useEffect(() => {
     // Keep selection in sync with query string.
@@ -103,6 +164,48 @@ export default function RequestsPage() {
     }
   }, []);
 
+  const loadApplicants = useCallback(async () => {
+    setLoadingApplicants(true);
+    try {
+      const { data, error: fetchErr } = await supabase
+        .from("applicants")
+        .select("applicant_id, first_name, middle_name, last_name")
+        .eq("is_archived", false)
+        .eq("is_trashed", false)
+        .order("last_name", { ascending: true })
+        .limit(2000);
+      if (fetchErr) throw fetchErr;
+      setApplicants((data as ApplicantOption[]) || []);
+    } catch {
+      setApplicants([]);
+    } finally {
+      setLoadingApplicants(false);
+    }
+  }, []);
+
+  const loadApprovers = useCallback(async () => {
+    setLoadingApprovers(true);
+    try {
+      const { data, error: fetchErr } = await supabase
+        .from("admins")
+        .select("id, username, full_name, role, is_active")
+        .eq("is_active", true)
+        .in("role", ["admin", "superadmin"])
+        .order("username", { ascending: true });
+      if (fetchErr) throw fetchErr;
+      const rows = (data as ApproverRow[]) || [];
+      setApprovers(rows);
+      setApproverAdminId((prev) => {
+        if (prev && rows.some((r) => r.id === prev)) return prev;
+        return rows[0]?.id ?? "";
+      });
+    } catch {
+      setApprovers([]);
+    } finally {
+      setLoadingApprovers(false);
+    }
+  }, []);
+
   const loadMyRequests = useCallback(async () => {
     setLoadingRequests(true);
     try {
@@ -113,7 +216,9 @@ export default function RequestsPage() {
 
       let query = supabase
         .from("access_requests")
-        .select("id, created_at, status, requested_module_key, requested_column_key, requested_path, reason")
+        .select(
+          "id, created_at, status, request_scope_row, request_scope_column, requested_module_key, requested_column_keys, requested_column_key, requested_applicant_ids, requested_applicant_id, requested_row_identifier_key, requested_row_identifier_values, requested_row_identifier_value, requested_path, reason, approver_admin_id, approver_username, approver_full_name"
+        )
         .order("created_at", { ascending: false })
         .limit(100);
 
@@ -140,21 +245,31 @@ export default function RequestsPage() {
   }, []);
 
   const loadPendingRequests = useCallback(async () => {
-    if (role !== "superadmin") {
+    if (!canReviewRequests) {
       setPendingRequests([]);
       return;
     }
 
     setLoadingPending(true);
     try {
-      const { data, error: reqErr } = await supabase
+      let query = supabase
         .from("access_requests")
         .select(
-          "id, created_at, status, requested_module_key, requested_column_key, requested_path, reason, requester_user_id, requester_email, requester_admin_id, requester_username, requester_role"
+          "id, created_at, status, request_scope_row, request_scope_column, requested_module_key, requested_column_keys, requested_column_key, requested_applicant_ids, requested_applicant_id, requested_row_identifier_key, requested_row_identifier_values, requested_row_identifier_value, requested_path, reason, requester_user_id, requester_email, requester_admin_id, requester_username, requester_role, approver_admin_id, approver_username, approver_full_name"
         )
         .eq("status", "PENDING")
         .order("created_at", { ascending: false })
         .limit(200);
+
+      if (role !== "superadmin") {
+        if (!reviewerAdminId) {
+          setPendingRequests([]);
+          return;
+        }
+        query = query.eq("approver_admin_id", reviewerAdminId);
+      }
+
+      const { data, error: reqErr } = await query;
       if (reqErr) throw reqErr;
       setPendingRequests((data as AccessRequestRow[]) || []);
     } catch {
@@ -162,13 +277,15 @@ export default function RequestsPage() {
     } finally {
       setLoadingPending(false);
     }
-  }, [role]);
+  }, [canReviewRequests, reviewerAdminId, role]);
 
   useEffect(() => {
     loadModules();
+    loadApplicants();
+    loadApprovers();
     loadMyRequests();
     loadPendingRequests();
-  }, [loadModules, loadMyRequests, loadPendingRequests]);
+  }, [loadModules, loadApplicants, loadApprovers, loadMyRequests, loadPendingRequests]);
 
   const selectableModules = useMemo(() => {
     return modules.map((m) => ({
@@ -187,7 +304,58 @@ export default function RequestsPage() {
     return columnsForModule(requestedModuleKey);
   }, [requestedModuleKey]);
 
+  const rowIdentifierOptions = useMemo(
+    () => rowIdentifierOptionsFor(requestedModuleKey),
+    [requestedModuleKey]
+  );
+
+  const isEmployeesModule = normalizeModuleKey(requestedModuleKey) === "employees";
+
+  const applicantLabelById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const a of applicants) map.set(a.applicant_id, applicantLabel(a));
+    return map;
+  }, [applicants]);
+
+  const filteredApplicants = useMemo(() => {
+    const q = personnelSearch.trim().toLowerCase();
+    if (!q) return applicants;
+    return applicants.filter((a) => {
+      const label = applicantLabel(a).toLowerCase();
+      return label.includes(q);
+    });
+  }, [applicants, personnelSearch]);
+
   const disabled = submitting || loadingModules;
+
+  function toggleRequestedColumn(columnKey: string) {
+    const key = String(columnKey ?? "").trim();
+    if (!key) return;
+    setRequestedColumnKeys((prev) =>
+      prev.includes(key) ? prev.filter((c) => c !== key) : [...prev, key]
+    );
+  }
+
+  function addRowIdentifierValue(value: string) {
+    const clean = String(value ?? "").trim();
+    if (!clean) return;
+    setRequestedRowIdentifierValues((prev) => (prev.includes(clean) ? prev : [...prev, clean]));
+    setRowIdentifierInput("");
+  }
+
+  function removeRowIdentifierValue(value: string) {
+    const clean = String(value ?? "").trim();
+    if (!clean) return;
+    setRequestedRowIdentifierValues((prev) => prev.filter((v) => v !== clean));
+  }
+
+  function toggleRequestedApplicant(applicantId: string) {
+    const id = String(applicantId ?? "").trim();
+    if (!id) return;
+    setRequestedApplicantIds((prev) =>
+      prev.includes(id) ? prev.filter((v) => v !== id) : [...prev, id]
+    );
+  }
 
   async function submitRequest() {
     setError("");
@@ -195,6 +363,64 @@ export default function RequestsPage() {
 
     const moduleKey = normalizeModuleKey(requestedModuleKey);
     if (!moduleKey) return setError("Please choose a page/module to request.");
+
+    if (!scopeRow && !scopeColumn) {
+      return setError("Choose at least one scope: Row or Column.");
+    }
+
+    const applicantIds = Array.from(
+      new Set(
+        requestedApplicantIds
+          .map((id) => String(id ?? "").trim())
+          .filter(Boolean)
+      )
+    );
+    if (applicantIds.length > 0 && moduleKey !== "employees") {
+      return setError("Specific personnel access is only available for the Employees module.");
+    }
+
+    const cleanColumns = Array.from(
+      new Set(
+        requestedColumnKeys
+          .map((c) => String(c ?? "").trim())
+          .filter(Boolean)
+      )
+    );
+    if (scopeColumn && !cleanColumns.length) {
+      return setError("Please choose a specific column for column-level access.");
+    }
+
+    const initialRowIdentifierKey = String(requestedRowIdentifierKey ?? "").trim() || null;
+    const initialRowIdentifierValues = Array.from(
+      new Set(
+        requestedRowIdentifierValues
+          .map((v) => String(v ?? "").trim())
+          .filter(Boolean)
+      )
+    );
+    const cleanRowIdentifierKey =
+      scopeRow && moduleKey === "employees" && applicantIds.length > 0 && !initialRowIdentifierKey ? "applicant_id" : initialRowIdentifierKey;
+    const cleanRowIdentifierValues =
+      scopeRow && moduleKey === "employees"
+        ? applicantIds.length > 0
+          ? applicantIds
+          : initialRowIdentifierValues
+        : initialRowIdentifierValues;
+
+    if (scopeRow) {
+      if (moduleKey === "employees") {
+        if (applicantIds.length === 0 && (!cleanRowIdentifierKey || !cleanRowIdentifierValues.length)) {
+          return setError("For row-level Employees access, choose Specific Personnel or provide an identifier key/value.");
+        }
+      } else if (!cleanRowIdentifierKey || !cleanRowIdentifierValues.length) {
+        return setError("For row-level access, provide an identifier key and value (e.g. contract_no / particular).");
+      }
+    }
+
+    const approverId = String(approverAdminId ?? "").trim() || null;
+    if (!approverId) {
+      return setError("Please choose a supervisor approver.");
+    }
 
     setSubmitting(true);
     try {
@@ -204,11 +430,18 @@ export default function RequestsPage() {
       const legacy = readLegacyAdminSession();
 
       const requestedPath = selectedModule?.path ?? null;
-      const cleanColumn = requestedColumnKey.trim() || null;
 
       const { error: insErr } = await supabase.from("access_requests").insert({
+        request_scope_row: scopeRow,
+        request_scope_column: scopeColumn,
         requested_module_key: moduleKey,
-        requested_column_key: cleanColumn,
+        requested_column_keys: scopeColumn ? cleanColumns : null,
+        requested_column_key: scopeColumn ? cleanColumns[0] ?? null : null,
+        requested_applicant_ids: applicantIds.length > 0 ? applicantIds : null,
+        requested_applicant_id: applicantIds[0] ?? null,
+        requested_row_identifier_key: scopeRow ? cleanRowIdentifierKey : null,
+        requested_row_identifier_values: scopeRow ? cleanRowIdentifierValues : null,
+        requested_row_identifier_value: scopeRow ? cleanRowIdentifierValues[0] ?? null : null,
         requested_path: requestedPath,
         reason: reason.trim() || null,
         requester_user_id: userId,
@@ -216,14 +449,25 @@ export default function RequestsPage() {
         requester_admin_id: legacy?.id ?? null,
         requester_username: legacy?.username ?? null,
         requester_role: legacy?.role ?? role ?? null,
+        approver_admin_id: approverId,
+        approver_username: approvers.find((a) => a.id === approverId)?.username ?? null,
+        approver_full_name: approvers.find((a) => a.id === approverId)?.full_name ?? null,
       });
 
       if (insErr) throw insErr;
 
       setSuccess("Request submitted.");
       setReason("");
-      setRequestedColumnKey("");
+      setScopeRow(false);
+      setScopeColumn(false);
+      setRequestedColumnKeys([]);
+      setRequestedApplicantIds([]);
+      setRequestedRowIdentifierKey("");
+      setRequestedRowIdentifierValues([]);
+      setRowIdentifierInput("");
+      setPersonnelSearch("");
       loadMyRequests();
+      loadPendingRequests();
 
       // Keep URL in sync so the page can be bookmarked.
       router.replace(`/Main_Modules/Requests/?module=${encodeURIComponent(moduleKey)}`);
@@ -237,13 +481,64 @@ export default function RequestsPage() {
   async function resolveRequest(req: AccessRequestRow, nextStatus: "APPROVED" | "REJECTED") {
     setError("");
     setSuccess("");
-    if (role !== "superadmin") {
-      setError("Only Superadmin can review requests.");
+    if (!canReviewRequests) {
+      setError("Only Supervisor or Superadmin can review requests.");
       return;
+    }
+    if (role !== "superadmin") {
+      if (!reviewerAdminId || req.approver_admin_id !== reviewerAdminId) {
+        setError("This request is not assigned to your reviewer account.");
+        return;
+      }
     }
 
     const requestedKey = normalizeModuleKey(req.requested_module_key);
-    const requestedColumn = String(req.requested_column_key ?? "").trim();
+    const rowScope = req.request_scope_row !== false && (Boolean(req.request_scope_row) || Boolean(req.requested_applicant_id) || Boolean(req.requested_row_identifier_value));
+    const requestedColumns = Array.from(
+      new Set(
+        [
+          ...((req.requested_column_keys ?? []) as string[]),
+          String(req.requested_column_key ?? "").trim(),
+        ]
+          .map((c) => String(c ?? "").trim())
+          .filter(Boolean)
+      )
+    );
+    const columnScope = req.request_scope_column !== false && (Boolean(req.request_scope_column) || requestedColumns.length > 0);
+    const requestedApplicantIds = Array.from(
+      new Set(
+        [
+          ...((req.requested_applicant_ids ?? []) as string[]),
+          String(req.requested_applicant_id ?? "").trim(),
+        ]
+          .map((id) => String(id ?? "").trim())
+          .filter(Boolean)
+      )
+    );
+    const requestedRowIdentifierKey = String(req.requested_row_identifier_key ?? "").trim();
+    const requestedRowIdentifierValues = Array.from(
+      new Set(
+        [
+          ...((req.requested_row_identifier_values ?? []) as string[]),
+          String(req.requested_row_identifier_value ?? "").trim(),
+        ]
+          .map((v) => String(v ?? "").trim())
+          .filter(Boolean)
+      )
+    );
+    const isPersonnelColumnRequest =
+      requestedKey === "employees" && requestedApplicantIds.length > 0 && requestedColumns.length > 0;
+
+    if (requestedApplicantIds.length > 0 && requestedKey !== "employees") {
+      setError("Invalid request: personnel-level access is only valid for Employees.");
+      return;
+    }
+
+    if (rowScope && requestedKey !== "employees" && (!requestedRowIdentifierKey || requestedRowIdentifierValues.length === 0)) {
+      setError("Row-level request is missing row identifier details.");
+      return;
+    }
+
     if (!requestedKey) {
       setError("Invalid requested module.");
       return;
@@ -277,19 +572,66 @@ export default function RequestsPage() {
             .upsert(adminRows, { onConflict: "admin_id,module_key" });
           if (adminGrantErr) throw adminGrantErr;
 
-          if (requestedColumn) {
+          if (rowScope && requestedApplicantIds.length > 0) {
+            const adminApplicantRows = requestedApplicantIds.map((applicantId) => ({
+              admin_id: req.requester_admin_id,
+              module_key: requestedKey,
+              applicant_id: applicantId,
+              can_read: true,
+            }));
+            const { error: adminApplicantRowErr } = await supabase
+              .from("admin_applicant_access_overrides")
+              .upsert(adminApplicantRows, { onConflict: "admin_id,module_key,applicant_id" });
+            if (adminApplicantRowErr) throw adminApplicantRowErr;
+          }
+
+          if (columnScope && requestedColumns.length > 0 && !isPersonnelColumnRequest) {
+            const adminColRows = requestedColumns.map((columnKey) => ({
+              admin_id: req.requester_admin_id,
+              module_key: requestedKey,
+              column_key: columnKey,
+              can_read: true,
+            }));
             const { error: adminColErr } = await supabase
               .from("admin_column_access_overrides")
-              .upsert(
-                {
-                  admin_id: req.requester_admin_id,
-                  module_key: requestedKey,
-                  column_key: requestedColumn,
-                  can_read: true,
-                },
-                { onConflict: "admin_id,module_key,column_key" }
-              );
+              .upsert(adminColRows, { onConflict: "admin_id,module_key,column_key" });
             if (adminColErr) throw adminColErr;
+          }
+
+          if (columnScope && isPersonnelColumnRequest) {
+            const adminApplicantColRows = requestedApplicantIds.flatMap((applicantId) =>
+              requestedColumns.map((columnKey) => ({
+                admin_id: req.requester_admin_id,
+                module_key: requestedKey,
+                applicant_id: applicantId,
+                column_key: columnKey,
+                can_read: true,
+              }))
+            );
+            const { error: adminApplicantColErr } = await supabase
+              .from("admin_applicant_column_access_overrides")
+              .upsert(adminApplicantColRows, { onConflict: "admin_id,module_key,applicant_id,column_key" });
+            if (adminApplicantColErr) throw adminApplicantColErr;
+          }
+
+          if (rowScope && requestedKey !== "employees" && requestedRowIdentifierKey && requestedRowIdentifierValues.length > 0) {
+            const cols = columnScope && requestedColumns.length > 0 ? requestedColumns : ["*"];
+            const adminRowColumnRows = requestedRowIdentifierValues.flatMap((identifierValue) =>
+              cols.map((columnKey) => ({
+                admin_id: req.requester_admin_id,
+                module_key: requestedKey,
+                row_identifier_key: requestedRowIdentifierKey,
+                row_identifier_value: identifierValue,
+                column_key: columnKey,
+                can_read: true,
+              }))
+            );
+            const { error: adminRowColumnErr } = await supabase
+              .from("admin_row_identifier_column_access_overrides")
+              .upsert(adminRowColumnRows, {
+                onConflict: "admin_id,module_key,row_identifier_key,row_identifier_value,column_key",
+              });
+            if (adminRowColumnErr) throw adminRowColumnErr;
           }
         } else if (req.requester_user_id) {
           const userRows = keysToGrant.map((k) => ({
@@ -303,19 +645,66 @@ export default function RequestsPage() {
             .upsert(userRows, { onConflict: "user_id,module_key" });
           if (userGrantErr) throw userGrantErr;
 
-          if (requestedColumn) {
+          if (rowScope && requestedApplicantIds.length > 0) {
+            const userApplicantRows = requestedApplicantIds.map((applicantId) => ({
+              user_id: req.requester_user_id,
+              module_key: requestedKey,
+              applicant_id: applicantId,
+              can_read: true,
+            }));
+            const { error: userApplicantRowErr } = await supabase
+              .from("user_applicant_access_overrides")
+              .upsert(userApplicantRows, { onConflict: "user_id,module_key,applicant_id" });
+            if (userApplicantRowErr) throw userApplicantRowErr;
+          }
+
+          if (columnScope && requestedColumns.length > 0 && !isPersonnelColumnRequest) {
+            const userColRows = requestedColumns.map((columnKey) => ({
+              user_id: req.requester_user_id,
+              module_key: requestedKey,
+              column_key: columnKey,
+              can_read: true,
+            }));
             const { error: userColErr } = await supabase
               .from("user_column_access_overrides")
-              .upsert(
-                {
-                  user_id: req.requester_user_id,
-                  module_key: requestedKey,
-                  column_key: requestedColumn,
-                  can_read: true,
-                },
-                { onConflict: "user_id,module_key,column_key" }
-              );
+              .upsert(userColRows, { onConflict: "user_id,module_key,column_key" });
             if (userColErr) throw userColErr;
+          }
+
+          if (columnScope && isPersonnelColumnRequest) {
+            const userApplicantColRows = requestedApplicantIds.flatMap((applicantId) =>
+              requestedColumns.map((columnKey) => ({
+                user_id: req.requester_user_id,
+                module_key: requestedKey,
+                applicant_id: applicantId,
+                column_key: columnKey,
+                can_read: true,
+              }))
+            );
+            const { error: userApplicantColErr } = await supabase
+              .from("user_applicant_column_access_overrides")
+              .upsert(userApplicantColRows, { onConflict: "user_id,module_key,applicant_id,column_key" });
+            if (userApplicantColErr) throw userApplicantColErr;
+          }
+
+          if (rowScope && requestedKey !== "employees" && requestedRowIdentifierKey && requestedRowIdentifierValues.length > 0) {
+            const cols = columnScope && requestedColumns.length > 0 ? requestedColumns : ["*"];
+            const userRowColumnRows = requestedRowIdentifierValues.flatMap((identifierValue) =>
+              cols.map((columnKey) => ({
+                user_id: req.requester_user_id,
+                module_key: requestedKey,
+                row_identifier_key: requestedRowIdentifierKey,
+                row_identifier_value: identifierValue,
+                column_key: columnKey,
+                can_read: true,
+              }))
+            );
+            const { error: userRowColumnErr } = await supabase
+              .from("user_row_identifier_column_access_overrides")
+              .upsert(userRowColumnRows, {
+                onConflict: "user_id,module_key,row_identifier_key,row_identifier_value,column_key",
+              });
+            if (userRowColumnErr) throw userRowColumnErr;
           }
         } else {
           const requesterRoleName = normalizeRoleNameLoose(req.requester_role);
@@ -381,10 +770,13 @@ export default function RequestsPage() {
       {error ? <div className="mb-3 text-red-600 text-sm">{error}</div> : null}
       {success ? <div className="mb-3 text-emerald-700 text-sm">{success}</div> : null}
 
-      {role === "superadmin" ? (
+      {canReviewRequests ? (
         <div className="mb-5 rounded-2xl border p-4">
-          <div className="text-sm font-semibold text-black">Pending Requests (Superadmin)</div>
-          <div className="mt-2 text-xs text-gray-500">Approve grants access to the requester’s role via Permissions.</div>
+          <div className="text-sm font-semibold text-black">Pending Requests (Reviewer Queue)</div>
+          <div className="mt-2 text-xs text-gray-500">
+            Approve grants access based on selected scope (Row, Column, or both). Row requests include identifier key/value such as
+            name, contract_no, or particular.
+          </div>
 
           {loadingPending ? (
             <div className="py-6">
@@ -401,7 +793,11 @@ export default function RequestsPage() {
                     <th className="px-3 py-2">Requester</th>
                     <th className="px-3 py-2">Role</th>
                     <th className="px-3 py-2">Module</th>
+                    <th className="px-3 py-2">Scope</th>
                     <th className="px-3 py-2">Column</th>
+                    <th className="px-3 py-2">Personnel</th>
+                    <th className="px-3 py-2">Row Identifier</th>
+                    <th className="px-3 py-2">Reviewer</th>
                     <th className="px-3 py-2">Reason</th>
                     <th className="px-3 py-2">Actions</th>
                   </tr>
@@ -413,6 +809,31 @@ export default function RequestsPage() {
                       (r.requester_username ?? "").trim() ||
                       (r.requester_email ?? "").trim() ||
                       (r.requester_admin_id ? `admin:${r.requester_admin_id}` : r.requester_user_id ? `user:${r.requester_user_id}` : "—");
+                    const personIds = Array.from(
+                      new Set([...(r.requested_applicant_ids ?? []), String(r.requested_applicant_id ?? "").trim()].filter(Boolean))
+                    );
+                    const personLabel = personIds.length > 0
+                      ? personIds.map((id) => applicantLabelById.get(id) ?? id).join(", ")
+                      : "—";
+                    const reviewerLabel =
+                      (r.approver_full_name ?? "").trim() ||
+                      (r.approver_username ?? "").trim() ||
+                      (r.approver_admin_id ? `admin:${r.approver_admin_id}` : "—");
+                    const scopeLabel = [
+                      r.request_scope_row ? "ROW" : null,
+                      r.request_scope_column ? "COLUMN" : null,
+                    ]
+                      .filter(Boolean)
+                      .join(" + ") || "—";
+                    const rowIdentifierLabel =
+                      (r.requested_row_identifier_key ?? "").trim() &&
+                      ([...(r.requested_row_identifier_values ?? []), String(r.requested_row_identifier_value ?? "").trim()].filter(Boolean)
+                        .length > 0)
+                        ? `${r.requested_row_identifier_key}: ${Array.from(new Set([...(r.requested_row_identifier_values ?? []), String(r.requested_row_identifier_value ?? "").trim()].filter(Boolean))).join(", " )}`
+                        : "—";
+                    const columnsLabel = Array.from(
+                      new Set([...(r.requested_column_keys ?? []), String(r.requested_column_key ?? "").trim()].filter(Boolean))
+                    ).join(", ");
 
                     return (
                       <tr key={r.id} className="border-t align-top">
@@ -422,7 +843,11 @@ export default function RequestsPage() {
                         <td className="px-3 py-2 text-sm text-black whitespace-nowrap">{requesterLabel}</td>
                         <td className="px-3 py-2 text-sm text-gray-700 whitespace-nowrap">{r.requester_role ?? "—"}</td>
                         <td className="px-3 py-2 text-sm text-black whitespace-nowrap">{r.requested_module_key}</td>
-                        <td className="px-3 py-2 text-xs text-gray-700 whitespace-nowrap">{r.requested_column_key ?? "—"}</td>
+                        <td className="px-3 py-2 text-xs text-gray-700 whitespace-nowrap">{scopeLabel}</td>
+                        <td className="px-3 py-2 text-xs text-gray-700 whitespace-nowrap">{columnsLabel || "—"}</td>
+                        <td className="px-3 py-2 text-xs text-gray-700 whitespace-nowrap">{personLabel}</td>
+                        <td className="px-3 py-2 text-xs text-gray-700 whitespace-nowrap">{rowIdentifierLabel}</td>
+                        <td className="px-3 py-2 text-xs text-gray-700 whitespace-nowrap">{reviewerLabel}</td>
                         <td className="px-3 py-2 text-xs text-gray-600">{r.reason ?? ""}</td>
                         <td className="px-3 py-2">
                           <div className="flex gap-2">
@@ -471,7 +896,14 @@ export default function RequestsPage() {
                   value={requestedModuleKey}
                   onChange={(e) => {
                     setRequestedModuleKey(e.target.value);
-                    setRequestedColumnKey("");
+                    setRequestedColumnKeys([]);
+                    setRequestedRowIdentifierKey("");
+                    setRequestedRowIdentifierValues([]);
+                    setRowIdentifierInput("");
+                    setPersonnelSearch("");
+                    if (normalizeModuleKey(e.target.value) !== "employees") {
+                      setRequestedApplicantIds([]);
+                    }
                   }}
                   disabled={disabled}
                   className="w-full border rounded-xl px-3 py-2 text-black bg-white"
@@ -483,25 +915,188 @@ export default function RequestsPage() {
                     </option>
                   ))}
                 </select>
-                <div className="mt-2 text-xs text-gray-500">All pages are requestable. Superadmin approval is required.</div>
+                <div className="mt-2 text-xs text-gray-500">
+                  All pages are requestable. Supervisor approval is required.
+                </div>
               </div>
 
               <div>
-                <div className="text-xs text-gray-500 mb-1">Column (optional)</div>
+                <div className="text-xs text-gray-500 mb-1">Supervisor / Reviewer</div>
                 <select
-                  value={requestedColumnKey}
-                  onChange={(e) => setRequestedColumnKey(e.target.value)}
-                  disabled={disabled || !requestedModuleKey}
+                  value={approverAdminId}
+                  onChange={(e) => setApproverAdminId(e.target.value)}
+                  disabled={disabled || loadingApprovers}
                   className="w-full border rounded-xl px-3 py-2 text-black bg-white"
                 >
-                  <option value="">Page-level access only</option>
-                  {selectableColumns.map((col) => (
-                    <option key={col} value={col}>
-                      {col}
+                  <option value="">Select reviewer…</option>
+                  {approvers.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.full_name?.trim() || a.username} ({a.role ?? "admin"})
                     </option>
                   ))}
                 </select>
               </div>
+
+              <div>
+                <div className="text-xs text-gray-500 mb-1">Fine-grained Scope</div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                  <label className="inline-flex items-center gap-2 border rounded-xl px-3 py-2 text-sm text-black bg-white">
+                    <input
+                      type="checkbox"
+                      checked={scopeRow}
+                      onChange={(e) => setScopeRow(e.target.checked)}
+                      disabled={disabled}
+                    />
+                    Row-level access
+                  </label>
+                  <label className="inline-flex items-center gap-2 border rounded-xl px-3 py-2 text-sm text-black bg-white">
+                    <input
+                      type="checkbox"
+                      checked={scopeColumn}
+                      onChange={(e) => setScopeColumn(e.target.checked)}
+                      disabled={disabled}
+                    />
+                    Column-level access
+                  </label>
+                </div>
+                <div className="mt-2 text-xs text-gray-500">Choose one or both.</div>
+              </div>
+
+              <div>
+                <div className="text-xs text-gray-500 mb-1">Columns (checkboxes)</div>
+                <div className={`rounded-xl border p-3 ${scopeColumn ? "bg-white" : "bg-gray-50"}`}>
+                  {!scopeColumn ? (
+                    <div className="text-xs text-gray-500">Enable Column-level access above to choose columns.</div>
+                  ) : selectableColumns.length === 0 ? (
+                    <div className="text-xs text-gray-500">No columns defined for this module.</div>
+                  ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-52 overflow-auto">
+                      {selectableColumns.map((col) => (
+                        <label key={col} className="inline-flex items-center gap-2 text-sm text-black">
+                          <input
+                            type="checkbox"
+                            checked={requestedColumnKeys.includes(col)}
+                            onChange={() => toggleRequestedColumn(col)}
+                            disabled={disabled || !requestedModuleKey || !scopeColumn}
+                          />
+                          {col}
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {scopeRow && !isEmployeesModule ? (
+                <div className="rounded-xl border p-3 space-y-2">
+                  <div className="text-xs font-semibold text-gray-700">Row Identifier</div>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                    <select
+                      value={requestedRowIdentifierKey}
+                      onChange={(e) => setRequestedRowIdentifierKey(e.target.value)}
+                      disabled={disabled || !requestedModuleKey}
+                      className="w-full border rounded-xl px-3 py-2 text-black bg-white"
+                    >
+                      <option value="">Identifier key…</option>
+                      {rowIdentifierOptions.map((key) => (
+                        <option key={key} value={key}>
+                          {key}
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      value={rowIdentifierInput}
+                      onChange={(e) => setRowIdentifierInput(e.target.value)}
+                      disabled={disabled || !requestedModuleKey}
+                      placeholder="Add identifier value"
+                      className="w-full border rounded-xl px-3 py-2 text-black"
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          addRowIdentifierValue(rowIdentifierInput);
+                        }
+                      }}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => addRowIdentifierValue(rowIdentifierInput)}
+                      disabled={disabled || !requestedModuleKey || !rowIdentifierInput.trim()}
+                      className="px-3 py-2 rounded-xl border bg-white text-sm"
+                    >
+                      Add Value
+                    </button>
+                  </div>
+                  {requestedRowIdentifierValues.length > 0 ? (
+                    <div className="flex flex-wrap gap-2">
+                      {requestedRowIdentifierValues.map((val) => (
+                        <button
+                          type="button"
+                          key={val}
+                          onClick={() => removeRowIdentifierValue(val)}
+                          className="px-2 py-1 rounded-full border text-xs bg-gray-50 text-gray-700"
+                          title="Remove"
+                        >
+                          {val} ×
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-xs text-gray-500">Add one or more identifier values (array).</div>
+                  )}
+                  <div className="text-xs text-gray-500">
+                    Example identifiers: name, contract_no, particular. Add multiple values to request an array of rows.
+                  </div>
+                </div>
+              ) : null}
+
+              {scopeRow && isEmployeesModule ? (
+                <div>
+                  <div className="text-xs text-gray-500 mb-1">Specific Personnel (checkboxes)</div>
+                  <input
+                    value={personnelSearch}
+                    onChange={(e) => setPersonnelSearch(e.target.value)}
+                    placeholder="Search personnel by name or ID"
+                    disabled={disabled || loadingApplicants}
+                    className="mb-2 w-full border rounded-xl px-3 py-2 text-black bg-white"
+                  />
+                  <div className="rounded-xl border p-3 bg-white max-h-56 overflow-auto">
+                    {loadingApplicants ? (
+                      <div className="text-xs text-gray-500">Loading personnel...</div>
+                    ) : filteredApplicants.length === 0 ? (
+                      <div className="text-xs text-gray-500">No personnel found.</div>
+                    ) : (
+                      <div className="grid grid-cols-1 gap-2">
+                        {filteredApplicants.map((a) => (
+                          <label key={a.applicant_id} className="inline-flex items-center gap-2 text-sm text-black">
+                            <input
+                              type="checkbox"
+                              checked={requestedApplicantIds.includes(a.applicant_id)}
+                              onChange={() => toggleRequestedApplicant(a.applicant_id)}
+                              disabled={disabled || loadingApplicants}
+                            />
+                            {applicantLabel(a)}
+                          </label>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <div className="mt-2 text-xs text-gray-500">
+                    Selected personnel are used as row-identifier values for Employees.
+                  </div>
+                  <div className="mt-2 rounded-xl border p-3 bg-gray-50">
+                    <div className="text-xs font-semibold text-gray-700">Preview: Selected Personnel</div>
+                    {requestedApplicantIds.length === 0 ? (
+                      <div className="mt-1 text-xs text-gray-500">No personnel selected.</div>
+                    ) : (
+                      <ul className="mt-1 text-xs text-gray-700 list-disc pl-4 space-y-0.5">
+                        {requestedApplicantIds.map((id) => (
+                          <li key={id}>{applicantLabelById.get(id) ?? id}</li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                </div>
+              ) : null}
 
               <div>
                 <div className="text-xs text-gray-500 mb-1">Reason (optional)</div>
@@ -517,7 +1112,7 @@ export default function RequestsPage() {
 
               <button
                 onClick={submitRequest}
-                disabled={disabled}
+               // disabled={disabled}
                 className={`px-4 py-2 rounded-xl font-semibold ${
                   disabled ? "bg-gray-100 text-gray-400" : "bg-[#FFDA03] text-black"
                 }`}
@@ -550,8 +1145,44 @@ export default function RequestsPage() {
                         <div className="text-sm font-semibold text-black">{r.requested_module_key}</div>
                         <div className="text-xs text-gray-500">{new Date(r.created_at).toLocaleString()}</div>
                       </div>
-                      {r.requested_column_key ? (
-                        <div className="mt-1 text-xs text-gray-600">Column: {r.requested_column_key}</div>
+                      <div className="mt-1 text-xs text-gray-600">
+                        Scope: {[r.request_scope_row ? "ROW" : null, r.request_scope_column ? "COLUMN" : null].filter(Boolean).join(" + ") || "—"}
+                      </div>
+                      {Array.from(
+                        new Set([...(r.requested_column_keys ?? []), String(r.requested_column_key ?? "").trim()].filter(Boolean))
+                      ).length > 0 ? (
+                        <div className="mt-1 text-xs text-gray-600">
+                          Columns: {Array.from(new Set([...(r.requested_column_keys ?? []), String(r.requested_column_key ?? "").trim()].filter(Boolean))).join(", ")}
+                        </div>
+                      ) : null}
+                      {(r.requested_row_identifier_key ?? "").trim() &&
+                      Array.from(
+                        new Set([...(r.requested_row_identifier_values ?? []), String(r.requested_row_identifier_value ?? "").trim()].filter(Boolean))
+                      ).length > 0 ? (
+                        <div className="mt-1 text-xs text-gray-600">
+                          Row Identifier: {r.requested_row_identifier_key}: {Array.from(new Set([...(r.requested_row_identifier_values ?? []), String(r.requested_row_identifier_value ?? "").trim()].filter(Boolean))).join(", ")}
+                        </div>
+                      ) : null}
+                      {r.requested_row_identifier_key && r.requested_row_identifier_value ? (
+                        <div className="mt-1 text-xs text-gray-600">
+                          Row Identifier: {r.requested_row_identifier_key}: {r.requested_row_identifier_value}
+                        </div>
+                      ) : null}
+                      {Array.from(
+                        new Set([...(r.requested_applicant_ids ?? []), String(r.requested_applicant_id ?? "").trim()].filter(Boolean))
+                      ).length > 0 ? (
+                        <div className="mt-1 text-xs text-gray-600">
+                          Personnel: {Array.from(
+                            new Set([...(r.requested_applicant_ids ?? []), String(r.requested_applicant_id ?? "").trim()].filter(Boolean))
+                          )
+                            .map((id) => applicantLabelById.get(id) ?? id)
+                            .join(", ")}
+                        </div>
+                      ) : null}
+                      {(r.approver_full_name || r.approver_username || r.approver_admin_id) ? (
+                        <div className="mt-1 text-xs text-gray-600">
+                          Reviewer: {(r.approver_full_name ?? "").trim() || (r.approver_username ?? "").trim() || r.approver_admin_id}
+                        </div>
                       ) : null}
                       <div className="mt-1 text-xs text-gray-600">Status: {r.status ?? "PENDING"}</div>
                       {r.reason ? <div className="mt-1 text-xs text-gray-600">Reason: {r.reason}</div> : null}

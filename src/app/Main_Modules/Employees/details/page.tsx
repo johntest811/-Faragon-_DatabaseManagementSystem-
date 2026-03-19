@@ -19,7 +19,7 @@ import {
   ZoomOut,
 } from "lucide-react";
 import { supabase } from "../../../Client/SupabaseClients";
-import { useAuthRole, useMyColumnAccess } from "../../../Client/useRbac";
+import { useAuthRole, useMyApplicantColumnAccess, useMyApplicantRowAccess, useMyColumnAccess } from "../../../Client/useRbac";
 import EmployeeEditorModal from "../../../Components/EmployeeEditorModal";
 import LoadingCircle from "../../../Components/LoadingCircle";
 
@@ -342,10 +342,23 @@ function EmployeeDetailsInner() {
     restricted: employeeColumnsRestricted,
     loading: loadingEmployeeColumns,
   } = useMyColumnAccess("employees");
+  const {
+    allowedColumns: allowedApplicantColumns,
+    restricted: applicantColumnsRestricted,
+    loading: loadingApplicantColumns,
+  } = useMyApplicantColumnAccess("employees", id);
+  const {
+    hasAccess: hasApplicantRowAccess,
+    restricted: applicantRowsRestricted,
+    loading: loadingApplicantRows,
+  } = useMyApplicantRowAccess("employees", id);
   const canEdit = sessionRole !== "employee";
 
-  const canViewEmployeeColumn = (columnKey: string) =>
-    !employeeColumnsRestricted || allowedEmployeeColumns.has(columnKey);
+  const canViewEmployeeColumn = (columnKey: string) => {
+    const hasModuleAccess = !employeeColumnsRestricted || allowedEmployeeColumns.has(columnKey);
+    const hasApplicantAccess = applicantColumnsRestricted && allowedApplicantColumns.has(columnKey);
+    return hasModuleAccess || hasApplicantAccess;
+  };
 
   const showName =
     canViewEmployeeColumn("first_name") ||
@@ -389,7 +402,14 @@ function EmployeeDetailsInner() {
 
   useEffect(() => {
     const run = async () => {
-      if (loadingEmployeeColumns) return;
+      if (loadingEmployeeColumns || loadingApplicantColumns || loadingApplicantRows) return;
+
+      if (applicantRowsRestricted && !hasApplicantRowAccess) {
+        setLoading(false);
+        setError("You do not have access to this personnel record.");
+        setApplicant(null);
+        return;
+      }
 
       setLoading(true);
       setError("");
@@ -512,7 +532,18 @@ function EmployeeDetailsInner() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [id, loadingEmployeeColumns, employeeColumnsRestricted, allowedEmployeeColumns]);
+  }, [
+    id,
+    loadingEmployeeColumns,
+    loadingApplicantColumns,
+    loadingApplicantRows,
+    hasApplicantRowAccess,
+    applicantRowsRestricted,
+    employeeColumnsRestricted,
+    applicantColumnsRestricted,
+    allowedEmployeeColumns,
+    allowedApplicantColumns,
+  ]);
 
   const profile = useMemo(() => {
     if (!applicant) return null;

@@ -163,6 +163,13 @@ export type ColumnAccessResult = {
   error: string;
 };
 
+export type ApplicantRowAccessResult = {
+  hasAccess: boolean;
+  restricted: boolean;
+  loading: boolean;
+  error: string;
+};
+
 function normalizeModuleKey(value: unknown) {
   return String(value ?? "").trim().toLowerCase();
 }
@@ -486,4 +493,270 @@ export function useMyColumnAccess(moduleKey: string): ColumnAccessResult {
   }, [moduleKey]);
 
   return { allowedColumns, restricted, loading, error };
+}
+
+export function useMyApplicantColumnAccess(moduleKey: string, applicantId: string | null): ColumnAccessResult {
+  const [allowedColumns, setAllowedColumns] = useState<Set<string>>(new Set());
+  const [restricted, setRestricted] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    const key = normalizeModuleKey(moduleKey);
+    const applicantKey = String(applicantId ?? "").trim();
+
+    async function run() {
+      setLoading(true);
+      setError("");
+
+      if (!key || !applicantKey) {
+        if (!cancelled) {
+          setAllowedColumns(new Set());
+          setRestricted(false);
+          setLoading(false);
+        }
+        return;
+      }
+
+      try {
+        const legacySession = readAdminSession();
+
+        if (legacySession) {
+          const roleName = normalizeRoleName(legacySession.role);
+          if (roleName === "superadmin") {
+            if (!cancelled) {
+              setAllowedColumns(new Set());
+              setRestricted(false);
+              setLoading(false);
+            }
+            return;
+          }
+
+          const { data, error: colErr } = await supabase
+            .from("admin_applicant_column_access_overrides")
+            .select("column_key, can_read")
+            .eq("admin_id", legacySession.id)
+            .eq("module_key", key)
+            .eq("applicant_id", applicantKey);
+          if (colErr) throw colErr;
+
+          const rows =
+            (((data as Array<{ column_key: string; can_read: boolean | null }> | null) ?? []) || []);
+          const next = new Set(
+            rows
+              .filter((r) => r && r.can_read !== false)
+              .map((r) => normalizeColumnKey(r.column_key))
+              .filter(Boolean)
+          );
+
+          if (!cancelled) {
+            setAllowedColumns(next);
+            setRestricted(rows.length > 0);
+            setLoading(false);
+          }
+          return;
+        }
+
+        const { data: sessionData, error: sessErr } = await supabase.auth.getSession();
+        if (sessErr) throw sessErr;
+        const userId = sessionData.session?.user?.id ?? null;
+
+        if (!userId) {
+          if (!cancelled) {
+            setAllowedColumns(new Set());
+            setRestricted(false);
+            setLoading(false);
+          }
+          return;
+        }
+
+        const { data: roleData } = await supabase.rpc("current_role_name");
+        const roleName = normalizeRoleName(roleData);
+        if (roleName === "superadmin") {
+          if (!cancelled) {
+            setAllowedColumns(new Set());
+            setRestricted(false);
+            setLoading(false);
+          }
+          return;
+        }
+
+        const { data, error: colErr } = await supabase
+          .from("user_applicant_column_access_overrides")
+          .select("column_key, can_read")
+          .eq("user_id", userId)
+          .eq("module_key", key)
+          .eq("applicant_id", applicantKey);
+        if (colErr) throw colErr;
+
+        const rows =
+          (((data as Array<{ column_key: string; can_read: boolean | null }> | null) ?? []) || []);
+        const next = new Set(
+          rows
+            .filter((r) => r && r.can_read !== false)
+            .map((r) => normalizeColumnKey(r.column_key))
+            .filter(Boolean)
+        );
+
+        if (!cancelled) {
+          setAllowedColumns(next);
+          setRestricted(rows.length > 0);
+          setLoading(false);
+        }
+      } catch (e: unknown) {
+        if (!cancelled) {
+          setError(e instanceof Error ? e.message : "Failed to load applicant column permissions");
+          setAllowedColumns(new Set());
+          setRestricted(false);
+          setLoading(false);
+        }
+      }
+    }
+
+    run();
+
+    const { data: authSub } = supabase.auth.onAuthStateChange(() => {
+      run();
+    });
+
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === "adminSession") run();
+    };
+    window.addEventListener("storage", onStorage);
+
+    return () => {
+      cancelled = true;
+      authSub.subscription.unsubscribe();
+      window.removeEventListener("storage", onStorage);
+    };
+  }, [moduleKey, applicantId]);
+
+  return { allowedColumns, restricted, loading, error };
+}
+
+export function useMyApplicantRowAccess(moduleKey: string, applicantId: string | null): ApplicantRowAccessResult {
+  const [hasAccess, setHasAccess] = useState(false);
+  const [restricted, setRestricted] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    const key = normalizeModuleKey(moduleKey);
+    const applicantKey = String(applicantId ?? "").trim();
+
+    async function run() {
+      setLoading(true);
+      setError("");
+
+      if (!key || !applicantKey) {
+        if (!cancelled) {
+          setHasAccess(false);
+          setRestricted(false);
+          setLoading(false);
+        }
+        return;
+      }
+
+      try {
+        const legacySession = readAdminSession();
+
+        if (legacySession) {
+          const roleName = normalizeRoleName(legacySession.role);
+          if (roleName === "superadmin") {
+            if (!cancelled) {
+              setHasAccess(true);
+              setRestricted(false);
+              setLoading(false);
+            }
+            return;
+          }
+
+          const { data, error: rowErr } = await supabase
+            .from("admin_applicant_access_overrides")
+            .select("applicant_id, can_read")
+            .eq("admin_id", legacySession.id)
+            .eq("module_key", key);
+          if (rowErr) throw rowErr;
+
+          const rows = (((data as Array<{ applicant_id: string; can_read: boolean | null }> | null) ?? []) || []);
+          const allowed = new Set(rows.filter((r) => r && r.can_read !== false).map((r) => String(r.applicant_id)));
+
+          if (!cancelled) {
+            setRestricted(rows.length > 0);
+            setHasAccess(rows.length === 0 ? true : allowed.has(applicantKey));
+            setLoading(false);
+          }
+          return;
+        }
+
+        const { data: sessionData, error: sessErr } = await supabase.auth.getSession();
+        if (sessErr) throw sessErr;
+        const userId = sessionData.session?.user?.id ?? null;
+
+        if (!userId) {
+          if (!cancelled) {
+            setHasAccess(false);
+            setRestricted(false);
+            setLoading(false);
+          }
+          return;
+        }
+
+        const { data: roleData } = await supabase.rpc("current_role_name");
+        const roleName = normalizeRoleName(roleData);
+        if (roleName === "superadmin") {
+          if (!cancelled) {
+            setHasAccess(true);
+            setRestricted(false);
+            setLoading(false);
+          }
+          return;
+        }
+
+        const { data, error: rowErr } = await supabase
+          .from("user_applicant_access_overrides")
+          .select("applicant_id, can_read")
+          .eq("user_id", userId)
+          .eq("module_key", key);
+        if (rowErr) throw rowErr;
+
+        const rows = (((data as Array<{ applicant_id: string; can_read: boolean | null }> | null) ?? []) || []);
+        const allowed = new Set(rows.filter((r) => r && r.can_read !== false).map((r) => String(r.applicant_id)));
+
+        if (!cancelled) {
+          setRestricted(rows.length > 0);
+          setHasAccess(rows.length === 0 ? true : allowed.has(applicantKey));
+          setLoading(false);
+        }
+      } catch (e: unknown) {
+        if (!cancelled) {
+          setError(e instanceof Error ? e.message : "Failed to load applicant row permissions");
+          setHasAccess(false);
+          setRestricted(false);
+          setLoading(false);
+        }
+      }
+    }
+
+    run();
+
+    const { data: authSub } = supabase.auth.onAuthStateChange(() => {
+      run();
+    });
+
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === "adminSession") run();
+    };
+    window.addEventListener("storage", onStorage);
+
+    return () => {
+      cancelled = true;
+      authSub.subscription.unsubscribe();
+      window.removeEventListener("storage", onStorage);
+    };
+  }, [moduleKey, applicantId]);
+
+  return { hasAccess, restricted, loading, error };
 }
