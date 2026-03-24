@@ -360,7 +360,7 @@ export default function EmployeesPage() {
 				setEmployees([]);
 				setLicensureByApplicantId({});
 			} else {
-				const list = (data as Applicant[]) || [];
+				const list = ((data ?? []) as unknown as Applicant[]);
 				setEmployees(list);
 
 				// Optional: load licensure expirations for "Sort by expiring licenses".

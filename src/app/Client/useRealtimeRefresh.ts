@@ -1,14 +1,16 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "./SupabaseClients";
 
 export function useRealtimeRefresh(tables: string[]) {
   const router = useRouter();
+  const tablesKey = useMemo(() => tables.join("|"), [tables]);
+  const stableTables = useMemo(() => tablesKey.split("|").filter(Boolean), [tablesKey]);
 
   useEffect(() => {
-    const channels = tables.map((table) =>
+    const channels = stableTables.map((table) =>
       supabase
         .channel(`realtime:${table}`)
         .on(
@@ -22,5 +24,5 @@ export function useRealtimeRefresh(tables: string[]) {
     return () => {
       channels.forEach((ch) => supabase.removeChannel(ch));
     };
-  }, [router, tables.join("|")]);
+  }, [router, stableTables]);
 }

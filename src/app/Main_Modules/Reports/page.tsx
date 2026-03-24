@@ -159,7 +159,7 @@ export default function LogisticsReportsPage() {
           .limit(1000);
         if (res.error) throw res.error;
         if (cancelled) return;
-        setInventoryRows((res.data as InventoryFixedAssetRow[]) ?? []);
+        setInventoryRows(((res.data ?? []) as unknown as InventoryFixedAssetRow[]));
       } catch (e: unknown) {
         if (cancelled) return;
         setInventoryRows([]);
@@ -179,7 +179,7 @@ export default function LogisticsReportsPage() {
           .limit(2000);
         if (res.error) throw res.error;
         if (cancelled) return;
-        setParaInvRows((res.data as ParaphernaliaInventoryRow[]) ?? []);
+        setParaInvRows(((res.data ?? []) as unknown as ParaphernaliaInventoryRow[]));
       } catch (e: unknown) {
         if (cancelled) return;
         setParaInvRows([]);
@@ -203,7 +203,7 @@ export default function LogisticsReportsPage() {
           .limit(3000);
         if (res.error) throw res.error;
         if (cancelled) return;
-        setRestockRows((res.data as RestockRow[]) ?? []);
+        setRestockRows(((res.data ?? []) as unknown as RestockRow[]));
       } catch (e: unknown) {
         if (cancelled) return;
         setRestockRows([]);

@@ -94,7 +94,7 @@ export default function InventoryDetailClient({ id }: { id: string }) {
           .maybeSingle();
 
         if (res.error) throw res.error;
-        setRow((res.data as InventoryDetailRow) ?? null);
+        setRow(((res.data ?? null) as unknown as InventoryDetailRow | null));
       } catch (e: unknown) {
         setError(e instanceof Error ? e.message : "Failed to load inventory details");
         setRow(null);

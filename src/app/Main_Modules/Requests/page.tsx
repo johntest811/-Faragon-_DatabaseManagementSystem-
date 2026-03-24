@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "../../Client/SupabaseClients";
 import { useAuthRole } from "../../Client/useRbac";
@@ -8,14 +8,6 @@ import LoadingCircle from "../../Components/LoadingCircle";
 import { columnsForModule, normalizeModuleKey } from "../Components/permissionCatalog";
 
 type ModuleRow = { module_key: string; display_name: string; path: string };
-
-const ROW_IDENTIFIER_OPTIONS: Record<string, string[]> = {
-  employees: ["applicant_id", "full_name", "custom_id"],
-  client: ["contract_no", "client_name", "project_name"],
-  inventory: ["particular", "date", "id"],
-  paraphernalia: ["names", "items", "id_paraphernalia"],
-  reports: ["report_type", "date", "id"],
-};
 
 type ApplicantOption = {
   applicant_id: string;
@@ -97,11 +89,7 @@ function applicantLabel(a: ApplicantOption) {
   return `${name} — ${a.applicant_id.slice(0, 8).toUpperCase()}`;
 }
 
-function rowIdentifierOptionsFor(moduleKey: string) {
-  return ROW_IDENTIFIER_OPTIONS[normalizeModuleKey(moduleKey)] ?? ["id", "name", "reference_no"];
-}
-
-export default function RequestsPage() {
+function RequestsPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { role } = useAuthRole();
@@ -119,9 +107,6 @@ export default function RequestsPage() {
   const [scopeColumn, setScopeColumn] = useState(false);
   const [requestedColumnKeys, setRequestedColumnKeys] = useState<string[]>([]);
   const [requestedApplicantIds, setRequestedApplicantIds] = useState<string[]>([]);
-  const [requestedRowIdentifierKey, setRequestedRowIdentifierKey] = useState<string>("");
-  const [requestedRowIdentifierValues, setRequestedRowIdentifierValues] = useState<string[]>([]);
-  const [rowIdentifierInput, setRowIdentifierInput] = useState<string>("");
   const [personnelSearch, setPersonnelSearch] = useState<string>("");
   const [approverAdminId, setApproverAdminId] = useState<string>("");
   const [reason, setReason] = useState<string>("");
@@ -304,11 +289,6 @@ export default function RequestsPage() {
     return columnsForModule(requestedModuleKey);
   }, [requestedModuleKey]);
 
-  const rowIdentifierOptions = useMemo(
-    () => rowIdentifierOptionsFor(requestedModuleKey),
-    [requestedModuleKey]
-  );
-
   const isEmployeesModule = normalizeModuleKey(requestedModuleKey) === "employees";
 
   const applicantLabelById = useMemo(() => {
@@ -336,19 +316,6 @@ export default function RequestsPage() {
     );
   }
 
-  function addRowIdentifierValue(value: string) {
-    const clean = String(value ?? "").trim();
-    if (!clean) return;
-    setRequestedRowIdentifierValues((prev) => (prev.includes(clean) ? prev : [...prev, clean]));
-    setRowIdentifierInput("");
-  }
-
-  function removeRowIdentifierValue(value: string) {
-    const clean = String(value ?? "").trim();
-    if (!clean) return;
-    setRequestedRowIdentifierValues((prev) => prev.filter((v) => v !== clean));
-  }
-
   function toggleRequestedApplicant(applicantId: string) {
     const id = String(applicantId ?? "").trim();
     if (!id) return;
@@ -363,10 +330,6 @@ export default function RequestsPage() {
 
     const moduleKey = normalizeModuleKey(requestedModuleKey);
     if (!moduleKey) return setError("Please choose a page/module to request.");
-
-    if (!scopeRow && !scopeColumn) {
-      return setError("Choose at least one scope: Row or Column.");
-    }
 
     const applicantIds = Array.from(
       new Set(
@@ -390,30 +353,12 @@ export default function RequestsPage() {
       return setError("Please choose a specific column for column-level access.");
     }
 
-    const initialRowIdentifierKey = String(requestedRowIdentifierKey ?? "").trim() || null;
-    const initialRowIdentifierValues = Array.from(
-      new Set(
-        requestedRowIdentifierValues
-          .map((v) => String(v ?? "").trim())
-          .filter(Boolean)
-      )
-    );
-    const cleanRowIdentifierKey =
-      scopeRow && moduleKey === "employees" && applicantIds.length > 0 && !initialRowIdentifierKey ? "applicant_id" : initialRowIdentifierKey;
-    const cleanRowIdentifierValues =
-      scopeRow && moduleKey === "employees"
-        ? applicantIds.length > 0
-          ? applicantIds
-          : initialRowIdentifierValues
-        : initialRowIdentifierValues;
-
     if (scopeRow) {
-      if (moduleKey === "employees") {
-        if (applicantIds.length === 0 && (!cleanRowIdentifierKey || !cleanRowIdentifierValues.length)) {
-          return setError("For row-level Employees access, choose Specific Personnel or provide an identifier key/value.");
-        }
-      } else if (!cleanRowIdentifierKey || !cleanRowIdentifierValues.length) {
-        return setError("For row-level access, provide an identifier key and value (e.g. contract_no / particular).");
+      if (moduleKey !== "employees") {
+        return setError("Row-level requests are only available for Employees using personnel checkboxes.");
+      }
+      if (applicantIds.length === 0) {
+        return setError("Select at least one employee when requesting row-level access.");
       }
     }
 
@@ -439,9 +384,9 @@ export default function RequestsPage() {
         requested_column_key: scopeColumn ? cleanColumns[0] ?? null : null,
         requested_applicant_ids: applicantIds.length > 0 ? applicantIds : null,
         requested_applicant_id: applicantIds[0] ?? null,
-        requested_row_identifier_key: scopeRow ? cleanRowIdentifierKey : null,
-        requested_row_identifier_values: scopeRow ? cleanRowIdentifierValues : null,
-        requested_row_identifier_value: scopeRow ? cleanRowIdentifierValues[0] ?? null : null,
+        requested_row_identifier_key: null,
+        requested_row_identifier_values: null,
+        requested_row_identifier_value: null,
         requested_path: requestedPath,
         reason: reason.trim() || null,
         requester_user_id: userId,
@@ -462,9 +407,6 @@ export default function RequestsPage() {
       setScopeColumn(false);
       setRequestedColumnKeys([]);
       setRequestedApplicantIds([]);
-      setRequestedRowIdentifierKey("");
-      setRequestedRowIdentifierValues([]);
-      setRowIdentifierInput("");
       setPersonnelSearch("");
       loadMyRequests();
       loadPendingRequests();
@@ -493,7 +435,6 @@ export default function RequestsPage() {
     }
 
     const requestedKey = normalizeModuleKey(req.requested_module_key);
-    const rowScope = req.request_scope_row !== false && (Boolean(req.request_scope_row) || Boolean(req.requested_applicant_id) || Boolean(req.requested_row_identifier_value));
     const requestedColumns = Array.from(
       new Set(
         [
@@ -515,6 +456,7 @@ export default function RequestsPage() {
           .filter(Boolean)
       )
     );
+    const rowScope = Boolean(req.request_scope_row) || requestedApplicantIds.length > 0;
     const requestedRowIdentifierKey = String(req.requested_row_identifier_key ?? "").trim();
     const requestedRowIdentifierValues = Array.from(
       new Set(
@@ -774,8 +716,7 @@ export default function RequestsPage() {
         <div className="mb-5 rounded-2xl border p-4">
           <div className="text-sm font-semibold text-black">Pending Requests (Reviewer Queue)</div>
           <div className="mt-2 text-xs text-gray-500">
-            Approve grants access based on selected scope (Row, Column, or both). Row requests include identifier key/value such as
-            name, contract_no, or particular.
+            Approve grants access based on selected scope (page, columns, and optional employee row scope).
           </div>
 
           {loadingPending ? (
@@ -796,7 +737,6 @@ export default function RequestsPage() {
                     <th className="px-3 py-2">Scope</th>
                     <th className="px-3 py-2">Column</th>
                     <th className="px-3 py-2">Personnel</th>
-                    <th className="px-3 py-2">Row Identifier</th>
                     <th className="px-3 py-2">Reviewer</th>
                     <th className="px-3 py-2">Reason</th>
                     <th className="px-3 py-2">Actions</th>
@@ -820,17 +760,12 @@ export default function RequestsPage() {
                       (r.approver_username ?? "").trim() ||
                       (r.approver_admin_id ? `admin:${r.approver_admin_id}` : "—");
                     const scopeLabel = [
+                      !r.request_scope_row && !r.request_scope_column ? "PAGE" : null,
                       r.request_scope_row ? "ROW" : null,
                       r.request_scope_column ? "COLUMN" : null,
                     ]
                       .filter(Boolean)
                       .join(" + ") || "—";
-                    const rowIdentifierLabel =
-                      (r.requested_row_identifier_key ?? "").trim() &&
-                      ([...(r.requested_row_identifier_values ?? []), String(r.requested_row_identifier_value ?? "").trim()].filter(Boolean)
-                        .length > 0)
-                        ? `${r.requested_row_identifier_key}: ${Array.from(new Set([...(r.requested_row_identifier_values ?? []), String(r.requested_row_identifier_value ?? "").trim()].filter(Boolean))).join(", " )}`
-                        : "—";
                     const columnsLabel = Array.from(
                       new Set([...(r.requested_column_keys ?? []), String(r.requested_column_key ?? "").trim()].filter(Boolean))
                     ).join(", ");
@@ -846,7 +781,6 @@ export default function RequestsPage() {
                         <td className="px-3 py-2 text-xs text-gray-700 whitespace-nowrap">{scopeLabel}</td>
                         <td className="px-3 py-2 text-xs text-gray-700 whitespace-nowrap">{columnsLabel || "—"}</td>
                         <td className="px-3 py-2 text-xs text-gray-700 whitespace-nowrap">{personLabel}</td>
-                        <td className="px-3 py-2 text-xs text-gray-700 whitespace-nowrap">{rowIdentifierLabel}</td>
                         <td className="px-3 py-2 text-xs text-gray-700 whitespace-nowrap">{reviewerLabel}</td>
                         <td className="px-3 py-2 text-xs text-gray-600">{r.reason ?? ""}</td>
                         <td className="px-3 py-2">
@@ -897,12 +831,10 @@ export default function RequestsPage() {
                   onChange={(e) => {
                     setRequestedModuleKey(e.target.value);
                     setRequestedColumnKeys([]);
-                    setRequestedRowIdentifierKey("");
-                    setRequestedRowIdentifierValues([]);
-                    setRowIdentifierInput("");
                     setPersonnelSearch("");
                     if (normalizeModuleKey(e.target.value) !== "employees") {
                       setRequestedApplicantIds([]);
+                      setScopeRow(false);
                     }
                   }}
                   disabled={disabled}
@@ -945,9 +877,9 @@ export default function RequestsPage() {
                       type="checkbox"
                       checked={scopeRow}
                       onChange={(e) => setScopeRow(e.target.checked)}
-                      disabled={disabled}
+                      disabled={disabled || !isEmployeesModule}
                     />
-                    Row-level access
+                    Employee row access (Employees only)
                   </label>
                   <label className="inline-flex items-center gap-2 border rounded-xl px-3 py-2 text-sm text-black bg-white">
                     <input
@@ -959,7 +891,9 @@ export default function RequestsPage() {
                     Column-level access
                   </label>
                 </div>
-                <div className="mt-2 text-xs text-gray-500">Choose one or both.</div>
+                <div className="mt-2 text-xs text-gray-500">
+                  Leave both unchecked to request full page access only.
+                </div>
               </div>
 
               <div>
@@ -986,68 +920,6 @@ export default function RequestsPage() {
                   )}
                 </div>
               </div>
-
-              {scopeRow && !isEmployeesModule ? (
-                <div className="rounded-xl border p-3 space-y-2">
-                  <div className="text-xs font-semibold text-gray-700">Row Identifier</div>
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-                    <select
-                      value={requestedRowIdentifierKey}
-                      onChange={(e) => setRequestedRowIdentifierKey(e.target.value)}
-                      disabled={disabled || !requestedModuleKey}
-                      className="w-full border rounded-xl px-3 py-2 text-black bg-white"
-                    >
-                      <option value="">Identifier key…</option>
-                      {rowIdentifierOptions.map((key) => (
-                        <option key={key} value={key}>
-                          {key}
-                        </option>
-                      ))}
-                    </select>
-                    <input
-                      value={rowIdentifierInput}
-                      onChange={(e) => setRowIdentifierInput(e.target.value)}
-                      disabled={disabled || !requestedModuleKey}
-                      placeholder="Add identifier value"
-                      className="w-full border rounded-xl px-3 py-2 text-black"
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          e.preventDefault();
-                          addRowIdentifierValue(rowIdentifierInput);
-                        }
-                      }}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => addRowIdentifierValue(rowIdentifierInput)}
-                      disabled={disabled || !requestedModuleKey || !rowIdentifierInput.trim()}
-                      className="px-3 py-2 rounded-xl border bg-white text-sm"
-                    >
-                      Add Value
-                    </button>
-                  </div>
-                  {requestedRowIdentifierValues.length > 0 ? (
-                    <div className="flex flex-wrap gap-2">
-                      {requestedRowIdentifierValues.map((val) => (
-                        <button
-                          type="button"
-                          key={val}
-                          onClick={() => removeRowIdentifierValue(val)}
-                          className="px-2 py-1 rounded-full border text-xs bg-gray-50 text-gray-700"
-                          title="Remove"
-                        >
-                          {val} ×
-                        </button>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="text-xs text-gray-500">Add one or more identifier values (array).</div>
-                  )}
-                  <div className="text-xs text-gray-500">
-                    Example identifiers: name, contract_no, particular. Add multiple values to request an array of rows.
-                  </div>
-                </div>
-              ) : null}
 
               {scopeRow && isEmployeesModule ? (
                 <div>
@@ -1146,26 +1018,13 @@ export default function RequestsPage() {
                         <div className="text-xs text-gray-500">{new Date(r.created_at).toLocaleString()}</div>
                       </div>
                       <div className="mt-1 text-xs text-gray-600">
-                        Scope: {[r.request_scope_row ? "ROW" : null, r.request_scope_column ? "COLUMN" : null].filter(Boolean).join(" + ") || "—"}
+                        Scope: {[!r.request_scope_row && !r.request_scope_column ? "PAGE" : null, r.request_scope_row ? "ROW" : null, r.request_scope_column ? "COLUMN" : null].filter(Boolean).join(" + ") || "—"}
                       </div>
                       {Array.from(
                         new Set([...(r.requested_column_keys ?? []), String(r.requested_column_key ?? "").trim()].filter(Boolean))
                       ).length > 0 ? (
                         <div className="mt-1 text-xs text-gray-600">
                           Columns: {Array.from(new Set([...(r.requested_column_keys ?? []), String(r.requested_column_key ?? "").trim()].filter(Boolean))).join(", ")}
-                        </div>
-                      ) : null}
-                      {(r.requested_row_identifier_key ?? "").trim() &&
-                      Array.from(
-                        new Set([...(r.requested_row_identifier_values ?? []), String(r.requested_row_identifier_value ?? "").trim()].filter(Boolean))
-                      ).length > 0 ? (
-                        <div className="mt-1 text-xs text-gray-600">
-                          Row Identifier: {r.requested_row_identifier_key}: {Array.from(new Set([...(r.requested_row_identifier_values ?? []), String(r.requested_row_identifier_value ?? "").trim()].filter(Boolean))).join(", ")}
-                        </div>
-                      ) : null}
-                      {r.requested_row_identifier_key && r.requested_row_identifier_value ? (
-                        <div className="mt-1 text-xs text-gray-600">
-                          Row Identifier: {r.requested_row_identifier_key}: {r.requested_row_identifier_value}
                         </div>
                       ) : null}
                       {Array.from(
@@ -1195,5 +1054,19 @@ export default function RequestsPage() {
         </div>
       )}
     </section>
+  );
+}
+
+export default function RequestsPage() {
+  return (
+    <Suspense
+      fallback={
+        <section className="bg-white rounded-2xl shadow-sm border p-5">
+          <LoadingCircle label="Loading requests..." />
+        </section>
+      }
+    >
+      <RequestsPageContent />
+    </Suspense>
   );
 }
