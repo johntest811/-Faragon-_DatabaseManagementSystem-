@@ -2,13 +2,14 @@
 
 import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { Download, Plus, FileDown, FileSpreadsheet, FileText, Search, Upload } from "lucide-react";
+import { Download, Plus, FileDown, FileSpreadsheet, FileText, Search, Trash2, Upload } from "lucide-react";
 import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { supabase } from "@/app/Client/SupabaseClients";
 import { useAuthRole, useMyColumnAccess } from "@/app/Client/useRbac";
 import LoadingCircle from "@/app/Components/LoadingCircle";
+import { useToast } from "@/app/Components/ToastProvider";
 import ImportSummaryModal, { ImportSummaryData } from "../Components/ImportSummaryModal";
 import SpreadsheetImportModal from "@/app/Components/SpreadsheetImportModal";
 
@@ -202,6 +203,8 @@ function toDatetimeLocalValue(v: string | null) {
 export default function ClientsPage() {
   const { role } = useAuthRole();
   const { allowedColumns, restricted, loading: loadingColumnAccess } = useMyColumnAccess("client");
+  const toast = useToast();
+  const lastToastRef = useRef<{ error: string; save: string }>({ error: "", save: "" });
 
   const isAdmin = role === "admin" || role === "superadmin";
   const canViewColumnPermission = (columnKey: string) => !restricted || allowedColumns.has(columnKey);
@@ -214,6 +217,22 @@ export default function ClientsPage() {
   const [rows, setRows] = useState<ClientRow[]>([]);
   const [savingKey, setSavingKey] = useState<string | null>(null);
   const [saveState, setSaveState] = useState<SaveState>({ type: "", message: "" });
+
+  useEffect(() => {
+    if (!error) return;
+    if (lastToastRef.current.error === error) return;
+    lastToastRef.current.error = error;
+    toast.error(error);
+  }, [error, toast]);
+
+  useEffect(() => {
+    if (!saveState.message) return;
+    const key = `${saveState.type}:${saveState.message}`;
+    if (lastToastRef.current.save === key) return;
+    lastToastRef.current.save = key;
+    if (saveState.type === "error") toast.error(saveState.message);
+    else toast.success(saveState.message);
+  }, [saveState, toast]);
 
   const [search, setSearch] = useState("");
   const [sortBy, setSortBy] = useState<"created_at" | "contract_no" | "client_name">("created_at");
@@ -690,6 +709,44 @@ const [templateOpen, setTemplateOpen] = useState(false);
     setLoading(false);
   }
 
+  async function deleteContract(contractId: string) {
+    if (!isAdmin) {
+      setSaveState({ type: "error", message: "Only admins can delete contracts." });
+      return;
+    }
+
+    const id = String(contractId ?? "").trim();
+    if (!id) {
+      setSaveState({ type: "error", message: "Missing contract ID for delete." });
+      return;
+    }
+
+    const ok = confirm("Delete this contract? This cannot be undone.");
+    if (!ok) return;
+
+    setError("");
+    setSaveState({ type: "", message: "" });
+    setSavingKey("delete-contract");
+    try {
+      // Best-effort cleanup: the join table has ON DELETE CASCADE in the migration,
+      // but some DBs may not have it yet.
+      await supabase.from("contract_employees").delete().eq("contract_id", id);
+
+      const delRes = await supabase.from("contracts").delete().eq("contract_id", id);
+      if (delRes.error) {
+        setSaveState({ type: "error", message: `Contract delete failed: ${delRes.error.message}` });
+        return;
+      }
+
+      setSaveState({ type: "success", message: "Contract deleted." });
+      setEditorOpen(false);
+      setDetailsRow(null);
+      await loadConnectedData();
+    } finally {
+      setSavingKey(null);
+    }
+  }
+
   async function loadApplicants() {
     setApplicantsLoading(true);
     setApplicantsError("");
@@ -736,6 +793,12 @@ const [templateOpen, setTemplateOpen] = useState(false);
 
   async function submitContract(e: FormEvent) {
     e.preventDefault();
+
+    if (!isAdmin) {
+      setSaveState({ type: "error", message: "Only admins can create or edit contracts." });
+      return;
+    }
+
     setSavingKey("contract");
     setSaveState({ type: "", message: "" });
 
@@ -1129,34 +1192,28 @@ const [templateOpen, setTemplateOpen] = useState(false);
         </div>
       </div>
 
-      {saveState.message ? (
-        <div
-          className={`rounded-2xl border px-4 py-3 text-sm ${
-            saveState.type === "error" ? "bg-red-50 text-red-700" : "bg-emerald-50 text-emerald-700"
-          }`}
-        >
-          {saveState.message}
-        </div>
-      ) : null}
-
       <div className="rounded-2xl border bg-white p-4 space-y-3">
         <div className="font-semibold text-black">Create Contracts</div>
         <div className="text-sm text-gray-500">Create a connected contract record with full fields.</div>
         <div className="flex flex-wrap gap-2">
-          <button
-            type="button"
-            onClick={() => {
-              setEditorMode("create");
-              setEditingContractId(null);
-              setContractForm(EMPTY_FORM);
-              setSelectedApplicantIds([]);
-              setApplicantSearch("");
-              setEditorOpen(true);
-            }}
-            className="rounded-xl bg-[#FFDA03] px-4 py-2 text-sm font-semibold text-black"
-          >
-            Create Contract
-          </button>
+          {isAdmin ? (
+            <button
+              type="button"
+              onClick={() => {
+                setEditorMode("create");
+                setEditingContractId(null);
+                setContractForm(EMPTY_FORM);
+                setSelectedApplicantIds([]);
+                setApplicantSearch("");
+                setEditorOpen(true);
+              }}
+              className="rounded-xl bg-[#FFDA03] px-4 py-2 text-sm font-semibold text-black"
+            >
+              Create Contract
+            </button>
+          ) : (
+            <div className="text-sm text-gray-500">Only admins can create/edit/delete contracts.</div>
+          )}
 
           <div className="flex items-start justify-between gap-4">
 
@@ -1461,8 +1518,6 @@ const [templateOpen, setTemplateOpen] = useState(false);
         </form>
       </ModalShell>
 
-      {error ? <div className="rounded-2xl border bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
-
       <div className="relative overflow-x-auto rounded-2xl border bg-white">
         <table className="w-full text-sm text-black border-separate border-spacing-y-2">
           <thead className="sticky top-0 z-10">
@@ -1558,17 +1613,31 @@ const [templateOpen, setTemplateOpen] = useState(false);
         {detailsRow ? (
           <div className="space-y-4 text-sm text-black">
             <div className="flex justify-end">
-              <button
-                type="button"
-                onClick={() => {
-                  const row = detailsRow;
-                  setDetailsRow(null);
-                  if (row) void openEditModal(row);
-                }}
-                className="rounded-xl bg-[#FFDA03] px-4 py-2 text-sm font-semibold text-black"
-              >
-                Edit Contract
-              </button>
+              {isAdmin ? (
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const row = detailsRow;
+                      setDetailsRow(null);
+                      if (row) void openEditModal(row);
+                    }}
+                    className="rounded-xl bg-[#FFDA03] px-4 py-2 text-sm font-semibold text-black"
+                  >
+                    Edit Contract
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => void deleteContract(detailsRow.contract_id)}
+                    disabled={savingKey === "delete-contract"}
+                    className="inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-semibold text-red-600 bg-white disabled:opacity-60"
+                    title="Delete contract"
+                  >
+                    <Trash2 className="w-4 h-4" /> Delete
+                  </button>
+                </div>
+              ) : null}
             </div>
             <div className="rounded-2xl border bg-white p-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

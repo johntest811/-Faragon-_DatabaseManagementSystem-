@@ -3,7 +3,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../Client/SupabaseClients";
-import { Pencil, SlidersHorizontal, Trash2, Upload, LayoutGrid, Table, Search, FileDown, FileText, CreditCard, Users } from "lucide-react";
+import { Pencil, SlidersHorizontal, Upload, LayoutGrid, Table, Search, FileDown, FileText, CreditCard, Users } from "lucide-react";
 import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -325,9 +325,6 @@ export default function EmployeesPage() {
 
 	const [archiveOpen, setArchiveOpen] = useState(false);
 	const [archiveEmployee, setArchiveEmployee] = useState<Applicant | null>(null);
-
-	const [trashOpen, setTrashOpen] = useState(false);
-	const [trashEmployee, setTrashEmployee] = useState<Applicant | null>(null);
 
 	async function fetchEmployees() {
 		if (loadingEmployeeColumns) {
@@ -715,39 +712,6 @@ if (hiredMonthFilter !== "ALL") {
 		setArchiveEmployee(null);
 	}
 
-	function openTrash(employee: Applicant) {
-		setTrashEmployee(employee);
-		setTrashOpen(true);
-	}
-
-	async function confirmTrash() {
-		if (!trashEmployee) return;
-		setError("");
-		const normalizedStatus = normalizeStatus(trashEmployee.status);
-
-		const { error: updateError } = await supabase
-			.from("applicants")
-			.update({
-				is_trashed: true,
-				trashed_at: new Date().toISOString(),
-				trashed_by: null,
-				is_archived: false,
-				archived_at: null,
-				archived_by: null,
-				status: normalizedStatus,
-			})
-			.eq("applicant_id", trashEmployee.applicant_id);
-
-		if (updateError) {
-			console.error(updateError);
-			setError(updateError.message || "Failed to move employee to Trash");
-			return;
-		}
-
-		setEmployees((prev) => prev.filter((e) => e.applicant_id !== trashEmployee.applicant_id));
-		setTrashOpen(false);
-		setTrashEmployee(null);
-	}
 
 	async function onSaved(applicantId: string, savedStatus: string) {
 		await fetchEmployees();
@@ -1070,18 +1034,7 @@ if (hiredMonthFilter !== "ALL") {
 									</button>
 									)}
 
-									{sessionRole === "superadmin" && (
-										<button
-											onClick={(ev) => {
-												ev.stopPropagation();
-											openTrash(e);
-										}}
-										className="h-9 w-9 rounded-xl border bg-white flex items-center justify-center text-red-600"
-										title="Move to Trash"
-									>
-										<Trash2 className="w-4 h-4" />
-									</button>
-									)}
+									{/* Trash page removed */}
 								</div>
 							</div>
 						</div>
@@ -1202,18 +1155,7 @@ if (hiredMonthFilter !== "ALL") {
 										>
 											Archive
 										</button>
-										{sessionRole === "superadmin" ? (
-											<button
-												onClick={(ev) => {
-													ev.stopPropagation();
-													openTrash(e);
-												}}
-												className="p-2 rounded-lg hover:bg-gray-100"
-												title="Move to Trash"
-											>
-												<Trash2 className="w-5 h-5 text-red-600" />
-											</button>
-										) : null}
+										{/* Trash page removed */}
 									</div>
 								</td>
 							) : null}
@@ -1226,30 +1168,6 @@ if (hiredMonthFilter !== "ALL") {
 )}
 
 
-			{trashOpen ? (
-				<div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
-					<div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6">
-						<div className="text-lg font-bold text-black">Move to Trash?</div>
-						<div className="mt-2 text-sm text-gray-600">
-							This will hide the employee from Employees/Archive. You can restore it from Trash.
-						</div>
-						<div className="mt-5 flex items-center justify-end gap-2">
-							<button
-								onClick={() => {
-									setTrashOpen(false);
-									setTrashEmployee(null);
-								}}
-								className="px-4 py-2 rounded-xl bg-white border"
-							>
-								Cancel
-							</button>
-							<button onClick={confirmTrash} className="px-4 py-2 rounded-xl bg-red-600 text-white font-semibold">
-								Move to Trash
-							</button>
-						</div>
-					</div>
-				</div>
-			) : null}
 
 			{exportOpen && canExportEmployees ? (
 				<div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">

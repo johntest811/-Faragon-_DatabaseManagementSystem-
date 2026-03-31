@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import SplashScreen from "./SplashScreen";
+import ToastProvider from "./ToastProvider";
 
 export default function ClientRoot({
   children,
@@ -75,13 +76,13 @@ export default function ClientRoot({
   }
 
   return (
-    <>
+    <ToastProvider>
       <div className={`transition-opacity duration-500 ${showSplash && !shouldSkipSplash ? "opacity-0" : "opacity-100"}`}>
         {children}
       </div>
       {showSplash && !shouldSkipSplash ? (
         <SplashScreen fadingOut={splashFadingOut} onFinish={handleSplashFinish} />
       ) : null}
-    </>
+    </ToastProvider>
   );
 }

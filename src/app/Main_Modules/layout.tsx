@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
 import { supabase } from "../Client/SupabaseClients";
 import { useAuthRole, useMyModules } from "../Client/useRbac";
@@ -15,7 +16,6 @@ import {
   Archive,
   Shield,
   Settings,
-  Trash2,
   ChevronLeft,
   ChevronDown,
   Truck,
@@ -47,7 +47,6 @@ const ALL_MENU = [
   { key: "archive", name: "Archive", href: "/Main_Modules/Archive/", icon: Archive },
   { key: "logistics", name: "Logistics", href: "/Main_Modules/Logistics/", icon: Truck },
   { key: "requests", name: "Requests", href: "/Main_Modules/Requests/", icon: ClipboardCheck },
-  { key: "trash", name: "Trash", href: "/Main_Modules/Trash/", icon: Trash2 },
   { key: "access", name: "Admin Accounts", href: "/Main_Modules/AdminAccounts/", icon: Shield },
   { key: "audit", name: "Audit", href: "/Main_Modules/Audit/", icon: ClipboardList },
   { key: "settings", name: "Settings", href: "/Main_Modules/Settings/", icon: Settings },
@@ -65,7 +64,6 @@ type ModuleKey =
   | "paraphernalia"
   | "reports"
   | "requests"
-  | "trash"
   | "audit"
   | "settings"
   | "access"
@@ -99,7 +97,6 @@ function accessRequirementForPath(pathname: string): AccessRequirement | null {
   if (p.startsWith("/Main_Modules/Paraphernalia/")) return { kind: "module", moduleKey: "paraphernalia" };
   if (p.startsWith("/Main_Modules/Reports/")) return { kind: "module", moduleKey: "reports" };
   if (p.startsWith("/Main_Modules/Requests/")) return { kind: "module", moduleKey: "requests" };
-  if (p.startsWith("/Main_Modules/Trash/")) return { kind: "module", moduleKey: "trash" };
   if (p.startsWith("/Main_Modules/Audit/")) return { kind: "module", moduleKey: "audit" };
   if (p.startsWith("/Main_Modules/Settings/")) return { kind: "module", moduleKey: "settings" };
 
@@ -550,7 +547,6 @@ export default function MainModulesLayout({ children }: LayoutProps) {
         "paraphernalia",
         "reports",
         "requests",
-        "trash",
         "audit",
         "settings",
         "access",
@@ -586,7 +582,6 @@ export default function MainModulesLayout({ children }: LayoutProps) {
         "paraphernalia",
         "reports",
         "logistics",
-        "trash",
         "settings",
         "audit",
         "requests",
@@ -702,19 +697,16 @@ export default function MainModulesLayout({ children }: LayoutProps) {
           ${collapsed ? "w-20" : "w-72"}`}
       >
         <div className="px-5 pt-6 pb-4">
-          <div
-            className={`transition-all duration-300
-              ${collapsed ? "opacity-0 -translate-x-4 h-0" : "opacity-100 translate-x-0"}`}
-          >
-            {!collapsed && (
+          <div className={`flex items-center gap-3 ${collapsed ? "justify-center" : ""}`}>
+            <Image src="/Logo.png" alt="Faragon logo" width={40} height={40} className="h-10 w-10 shrink-0" priority />
+
+            {!collapsed ? (
               <div className="leading-tight">
                 <div className="text-sm font-semibold text-gray-900">Faragon Security</div>
                 <div className="text-sm font-semibold text-gray-900">Agency, Inc.</div>
-                <div className="mt-1 text-[11px] text-gray-500">
-                  Role: {sessionRole ?? "—"}
-                </div>
+                <div className="mt-1 text-[11px] text-gray-500">Role: {sessionRole ?? "—"}</div>
               </div>
-            )}
+            ) : null}
           </div>
         </div>
 

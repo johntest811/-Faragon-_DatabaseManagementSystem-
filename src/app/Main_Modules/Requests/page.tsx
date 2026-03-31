@@ -1,10 +1,11 @@
 "use client";
 
-import React, { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import React, { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "../../Client/SupabaseClients";
 import { useAuthRole } from "../../Client/useRbac";
 import LoadingCircle from "../../Components/LoadingCircle";
+import { useToast } from "../../Components/ToastProvider";
 import { columnsForModule, normalizeModuleKey } from "../Components/permissionCatalog";
 
 type ModuleRow = { module_key: string; display_name: string; path: string };
@@ -93,6 +94,8 @@ function RequestsPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { role } = useAuthRole();
+  const toast = useToast();
+  const lastToastRef = useRef<{ error: string; success: string }>({ error: "", success: "" });
 
   const preselectModule = normalizeModuleKey(searchParams?.get("module") ?? "");
 
@@ -101,6 +104,20 @@ function RequestsPageContent() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string>("");
   const [success, setSuccess] = useState<string>("");
+
+  useEffect(() => {
+    if (!error) return;
+    if (lastToastRef.current.error === error) return;
+    lastToastRef.current.error = error;
+    toast.error(error);
+  }, [error, toast]);
+
+  useEffect(() => {
+    if (!success) return;
+    if (lastToastRef.current.success === success) return;
+    lastToastRef.current.success = success;
+    toast.success(success);
+  }, [success, toast]);
 
   const [requestedModuleKey, setRequestedModuleKey] = useState<string>(preselectModule);
   const [scopeRow, setScopeRow] = useState(false);
@@ -306,7 +323,7 @@ function RequestsPageContent() {
     });
   }, [applicants, personnelSearch]);
 
-  const disabled = submitting || loadingModules;
+  const disabled = submitting || loadingModules || loadingApprovers;
 
   function toggleRequestedColumn(columnKey: string) {
     const key = String(columnKey ?? "").trim();
@@ -376,7 +393,7 @@ function RequestsPageContent() {
 
       const requestedPath = selectedModule?.path ?? null;
 
-      const { error: insErr } = await supabase.from("access_requests").insert({
+      const insertPayload: Record<string, unknown> = {
         request_scope_row: scopeRow,
         request_scope_column: scopeColumn,
         requested_module_key: moduleKey,
@@ -397,9 +414,52 @@ function RequestsPageContent() {
         approver_admin_id: approverId,
         approver_username: approvers.find((a) => a.id === approverId)?.username ?? null,
         approver_full_name: approvers.find((a) => a.id === approverId)?.full_name ?? null,
-      });
+      };
 
-      if (insErr) throw insErr;
+      function extractMissingColumn(message: string): string {
+        const msg = String(message ?? "");
+
+        // Postgres error format
+        //   column "foo" does not exist
+        const pgMatch = msg.match(/column\s+"?([a-zA-Z0-9_]+)"?\s+does not exist/i);
+        if (pgMatch?.[1]) return pgMatch[1];
+
+        // PostgREST schema cache format
+        //   Could not find the 'foo' column of 'access_requests' in the schema cache
+        const cacheMatch = msg.match(/Could not find the '([a-zA-Z0-9_]+)' column/i);
+        if (cacheMatch?.[1]) return cacheMatch[1];
+
+        // Another common Postgres format
+        //   column "foo" of relation "access_requests" does not exist
+        const relMatch = msg.match(/column\s+"?([a-zA-Z0-9_]+)"?\s+of\s+relation\s+"?[a-zA-Z0-9_]+"?\s+does not exist/i);
+        if (relMatch?.[1]) return relMatch[1];
+
+        return "";
+      }
+
+      async function insertAccessRequestWithFallback(payload: Record<string, unknown>) {
+        const workingPayload: Record<string, unknown> = { ...payload };
+        const triedMissingColumns = new Set<string>();
+
+        for (let attempt = 0; attempt < 12; attempt += 1) {
+          const { error } = await supabase.from("access_requests").insert(workingPayload);
+          if (!error) return;
+
+          const message = String(error.message ?? "");
+          const missingColumn = extractMissingColumn(message);
+
+          if (!missingColumn) throw error;
+          if (triedMissingColumns.has(missingColumn)) throw error;
+          if (!(missingColumn in workingPayload)) throw error;
+
+          triedMissingColumns.add(missingColumn);
+          delete workingPayload[missingColumn];
+        }
+
+        throw new Error("Failed to submit request: schema mismatch");
+      }
+
+      await insertAccessRequestWithFallback(insertPayload);
 
       setSuccess("Request submitted.");
       setReason("");
@@ -709,9 +769,6 @@ function RequestsPageContent() {
         </button>
       </div>
 
-      {error ? <div className="mb-3 text-red-600 text-sm">{error}</div> : null}
-      {success ? <div className="mb-3 text-emerald-700 text-sm">{success}</div> : null}
-
       {canReviewRequests ? (
         <div className="mb-5 rounded-2xl border p-4">
           <div className="text-sm font-semibold text-black">Pending Requests (Reviewer Queue)</div>
@@ -983,8 +1040,12 @@ function RequestsPageContent() {
               </div>
 
               <button
-                onClick={submitRequest}
-               // disabled={disabled}
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault();
+                  void submitRequest();
+                }}
+                disabled={disabled}
                 className={`px-4 py-2 rounded-xl font-semibold ${
                   disabled ? "bg-gray-100 text-gray-400" : "bg-[#FFDA03] text-black"
                 }`}

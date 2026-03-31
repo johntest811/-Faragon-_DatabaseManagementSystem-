@@ -82,13 +82,6 @@ export const MODULE_CATALOG: ModuleCatalogItem[] = [
     columns: ["applicant_id", "first_name", "last_name", "archived_at", "archived_by", "status"],
   },
   {
-    moduleKey: "trash",
-    displayName: "Trash",
-    path: "/Main_Modules/Trash/",
-    group: "workforce",
-    columns: ["applicant_id", "first_name", "last_name", "is_trashed", "trashed_at", "trashed_by"],
-  },
-  {
     moduleKey: "client",
     displayName: "Client",
     path: "/Main_Modules/Client/",
