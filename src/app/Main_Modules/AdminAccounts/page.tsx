@@ -59,8 +59,6 @@ export default function AdminAccountsPage() {
 	const [accountRole, setAccountRole] = useState("admin");
 	const [creatingAccount, setCreatingAccount] = useState(false);
 
-	const [accountTab, setAccountTab] = useState<"employee" | "admin">("employee");
-
 	const currentAdminId = useMemo(() => {
 		try {
 			const raw = localStorage.getItem("adminSession");
@@ -267,36 +265,48 @@ export default function AdminAccountsPage() {
 			<div className="rounded-2xl border p-4">
 				<div className="text-sm font-semibold text-black">Create Account</div>
 				<div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-2">
-					<input
-						value={accountUsername}
-						onChange={(e) => setAccountUsername(e.target.value)}
-						placeholder="username"
-						className="border rounded-xl px-3 py-2 text-black"
-						disabled={!canManage || creatingAccount}
-					/>
-					<input
-						type="password"
-						value={accountPassword}
-						onChange={(e) => setAccountPassword(e.target.value)}
-						placeholder="password"
-						className="border rounded-xl px-3 py-2 text-black"
-						disabled={!canManage || creatingAccount}
-					/>
-					<input
-						value={accountFullName}
-						onChange={(e) => setAccountFullName(e.target.value)}
-						placeholder="full name (optional)"
-						className="border rounded-xl px-3 py-2 text-black"
-						disabled={!canManage || creatingAccount}
-					/>
-					<input
-						value={accountRole}
-						onChange={(e) => setAccountRole(e.target.value)}
-						list="role-list"
-						placeholder="role"
-						className="border rounded-xl px-3 py-2 text-black"
-						disabled={!canManage || creatingAccount}
-					/>
+					<div>
+						<div className="mb-1 text-xs font-semibold uppercase tracking-wide text-gray-600">Username</div>
+						<input
+							value={accountUsername}
+							onChange={(e) => setAccountUsername(e.target.value)}
+							placeholder="username"
+							className="w-full border rounded-xl px-3 py-2 text-black"
+							disabled={!canManage || creatingAccount}
+						/>
+					</div>
+					<div>
+						<div className="mb-1 text-xs font-semibold uppercase tracking-wide text-gray-600">Password</div>
+						<input
+							type="password"
+							value={accountPassword}
+							onChange={(e) => setAccountPassword(e.target.value)}
+							placeholder="password"
+							className="w-full border rounded-xl px-3 py-2 text-black"
+							disabled={!canManage || creatingAccount}
+						/>
+					</div>
+					<div>
+						<div className="mb-1 text-xs font-semibold uppercase tracking-wide text-gray-600">Full Name</div>
+						<input
+							value={accountFullName}
+							onChange={(e) => setAccountFullName(e.target.value)}
+							placeholder="full name (optional)"
+							className="w-full border rounded-xl px-3 py-2 text-black"
+							disabled={!canManage || creatingAccount}
+						/>
+					</div>
+					<div>
+						<div className="mb-1 text-xs font-semibold uppercase tracking-wide text-gray-600">Role</div>
+						<input
+							value={accountRole}
+							onChange={(e) => setAccountRole(e.target.value)}
+							list="role-list"
+							placeholder="role"
+							className="w-full border rounded-xl px-3 py-2 text-black"
+							disabled={!canManage || creatingAccount}
+						/>
+					</div>
 					<datalist id="role-list">
 						{roleNames.map((r) => (
 							<option key={r} value={r} />
@@ -320,32 +330,9 @@ export default function AdminAccountsPage() {
 			</div>
 
 			<div className="mt-5 rounded-2xl border p-4">
-				<div className="flex items-center justify-between gap-3">
-					<div>
-						<div className="text-sm font-semibold text-black">Accounts</div>
-						<div className="mt-1 text-xs text-gray-500">
-							Employees are <span className="font-mono">role=employee</span>; admins include{" "}
-							<span className="font-mono">role=admin/superadmin</span> (or your custom roles).
-						</div>
-					</div>
-					<div className="flex items-center gap-2">
-						<button
-							onClick={() => setAccountTab("employee")}
-							className={`px-3 py-1.5 rounded-full border text-sm ${
-								accountTab === "employee" ? "bg-[#FFDA03] text-black" : "bg-white text-gray-700"
-							}`}
-						>
-							Employees
-						</button>
-						<button
-							onClick={() => setAccountTab("admin")}
-							className={`px-3 py-1.5 rounded-full border text-sm ${
-								accountTab === "admin" ? "bg-[#FFDA03] text-black" : "bg-white text-gray-700"
-							}`}
-						>
-							Admins
-						</button>
-					</div>
+				<div>
+					<div className="text-sm font-semibold text-black">Accounts</div>
+					<div className="mt-1 text-xs text-gray-500">All accounts are shown in one table.</div>
 				</div>
 
 				<div className="mt-4 overflow-x-auto">
@@ -361,9 +348,7 @@ export default function AdminAccountsPage() {
 							</tr>
 						</thead>
 						<tbody>
-							{admins
-								.filter((a) => (accountTab === "employee" ? a.role === "employee" : a.role !== "employee"))
-								.map((a) => {
+							{admins.map((a) => {
 									const self = currentAdminId ? a.id === currentAdminId : false;
 									return (
 										<tr key={a.id} className="border-t">

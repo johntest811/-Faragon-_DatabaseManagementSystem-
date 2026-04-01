@@ -286,8 +286,7 @@ function RequestsPageContent() {
     loadApplicants();
     loadApprovers();
     loadMyRequests();
-    loadPendingRequests();
-  }, [loadModules, loadApplicants, loadApprovers, loadMyRequests, loadPendingRequests]);
+  }, [loadModules, loadApplicants, loadApprovers, loadMyRequests]);
 
   const selectableModules = useMemo(() => {
     return modules.map((m) => ({
@@ -469,7 +468,6 @@ function RequestsPageContent() {
       setRequestedApplicantIds([]);
       setPersonnelSearch("");
       loadMyRequests();
-      loadPendingRequests();
 
       // Keep URL in sync so the page can be bookmarked.
       router.replace(`/Main_Modules/Requests/?module=${encodeURIComponent(moduleKey)}`);
@@ -764,12 +762,32 @@ function RequestsPageContent() {
           <div className="text-lg font-semibold text-black">Request Access</div>
           <div className="text-sm text-gray-500">Request access to pages you can’t open yet.</div>
         </div>
-        <button onClick={() => router.push("/Main_Modules/Dashboard/")} className="px-4 py-2 rounded-xl bg-white border">
-          Back
-        </button>
+        <div className="flex items-center gap-2">
+          {canReviewRequests ? (
+            <button
+              type="button"
+              onClick={() => router.push("/Main_Modules/Requests/Queue/")}
+              className="px-4 py-2 rounded-xl font-semibold bg-[#FFDA03] text-black"
+            >
+              Reviewer Queue
+            </button>
+          ) : null}
+          <button onClick={() => router.push("/Main_Modules/Dashboard/")} className="px-4 py-2 rounded-xl bg-white border">
+            Back
+          </button>
+        </div>
       </div>
 
       {canReviewRequests ? (
+        <div className="mb-5 rounded-2xl border p-4 bg-gray-50">
+          <div className="text-sm font-semibold text-black">Pending Requests have moved.</div>
+          <div className="mt-1 text-xs text-gray-600">
+            Use the Reviewer Queue button to approve or reject access requests.
+          </div>
+        </div>
+      ) : null}
+
+      {false ? (
         <div className="mb-5 rounded-2xl border p-4">
           <div className="text-sm font-semibold text-black">Pending Requests (Reviewer Queue)</div>
           <div className="mt-2 text-xs text-gray-500">
