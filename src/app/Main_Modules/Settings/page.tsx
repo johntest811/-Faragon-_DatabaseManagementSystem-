@@ -42,13 +42,14 @@ type RecipientRow = {
 	created_at: string;
 };
 
-type OtherExpirationType = "CAR_OCR" | "CAR_REGISTRATION" | "DRIVERS_LICENSE";
+type OtherExpirationType = string;
 
 type OtherExpirationRow = {
 	id: number;
 	item_name: string;
 	expiration_type: OtherExpirationType;
 	expires_on: string;
+	days_before_expiry?: number | null;
 	recipient_email: string | null;
 	notes: string | null;
 	is_active: boolean;
@@ -472,7 +473,8 @@ export default function SettingsPage() {
 	const [otherSaving, setOtherSaving] = useState(false);
 	const [addOtherOpen, setAddOtherOpen] = useState(false);
 	const [otherItemName, setOtherItemName] = useState("");
-	const [otherType, setOtherType] = useState<OtherExpirationType>("CAR_OCR");
+	const [otherType, setOtherType] = useState<OtherExpirationType>("Car OCR");
+	const [otherDaysBeforeInput, setOtherDaysBeforeInput] = useState("30");
 	const [otherExpiresOn, setOtherExpiresOn] = useState("");
 	const [otherRecipientEmail, setOtherRecipientEmail] = useState("");
 	const [otherNotes, setOtherNotes] = useState("");
@@ -556,10 +558,29 @@ export default function SettingsPage() {
 		try {
 			const res = await supabase
 				.from("other_expiration_items")
-				.select("id, item_name, expiration_type, expires_on, recipient_email, notes, is_active, created_at")
+				.select("id, item_name, expiration_type, expires_on, days_before_expiry, recipient_email, notes, is_active, created_at")
 				.order("expires_on", { ascending: true })
 				.limit(300);
-			if (res.error) throw res.error;
+
+			if (res.error) {
+				const msg = safeText((res.error as any)?.message || res.error);
+				if (!/days_before_expiry/i.test(msg)) throw res.error;
+
+				const fallback = await supabase
+					.from("other_expiration_items")
+					.select("id, item_name, expiration_type, expires_on, recipient_email, notes, is_active, created_at")
+					.order("expires_on", { ascending: true })
+					.limit(300);
+				if (fallback.error) throw fallback.error;
+
+				const mapped = (((fallback.data as OtherExpirationRow[]) ?? []) || []).map((row) => ({
+					...row,
+					days_before_expiry: null,
+				}));
+				setOtherRows(mapped);
+				return;
+			}
+
 			setOtherRows((res.data as OtherExpirationRow[]) ?? []);
 		} catch (e: unknown) {
 			setError(errorMessage(e));
@@ -619,24 +640,47 @@ export default function SettingsPage() {
 		setSuccess("");
 		try {
 			const itemName = safeText(otherItemName);
+			const typeName = safeText(otherType);
+			const daysBeforeItem = Number(otherDaysBeforeInput);
 			const expiresOn = safeText(otherExpiresOn);
 			if (!itemName) throw new Error("Item name is required.");
+			if (!typeName) throw new Error("Type is required.");
+			if (!Number.isFinite(daysBeforeItem) || daysBeforeItem < 1 || daysBeforeItem > 365) {
+				throw new Error("Days before expiry must be between 1 and 365.");
+			}
 			if (!expiresOn) throw new Error("Expiration date is required.");
-			const ins = await supabase.from("other_expiration_items").insert({
+
+			const insertPayload: Record<string, unknown> = {
 				item_name: itemName,
-				expiration_type: otherType,
+				expiration_type: typeName,
 				expires_on: expiresOn,
+				days_before_expiry: Math.trunc(daysBeforeItem),
 				recipient_email: safeText(otherRecipientEmail).toLowerCase() || null,
 				notes: safeText(otherNotes) || null,
 				is_active: true,
-			});
-			if (ins.error) throw ins.error;
+			};
+
+			const ins = await supabase.from("other_expiration_items").insert(insertPayload);
+			if (ins.error) {
+				const msg = safeText((ins.error as any)?.message || ins.error);
+				if (!/days_before_expiry/i.test(msg)) throw ins.error;
+
+				const fallbackPayload = { ...insertPayload };
+				delete fallbackPayload.days_before_expiry;
+				const fallback = await supabase.from("other_expiration_items").insert(fallbackPayload);
+				if (fallback.error) throw fallback.error;
+				setSuccess("Other expiration item added. Run the days_before_expiry migration to persist per-item days.");
+			} else {
+				setSuccess("Other expiration item added.");
+			}
+
 			setOtherItemName("");
+			setOtherType("Car OCR");
+			setOtherDaysBeforeInput("30");
 			setOtherExpiresOn("");
 			setOtherRecipientEmail("");
 			setOtherNotes("");
 			setAddOtherOpen(false);
-			setSuccess("Other expiration item added.");
 			await loadOtherExpirationRows();
 		} catch (e: unknown) {
 			setError(errorMessage(e));
@@ -803,18 +847,39 @@ export default function SettingsPage() {
 			const out: ExpiringRow[] = [];
 			const res = await supabase
 				.from("other_expiration_items")
-				.select("id, item_name, expiration_type, expires_on, recipient_email, is_active")
+				.select("id, item_name, expiration_type, expires_on, days_before_expiry, recipient_email, is_active")
 				.eq("is_active", true)
 				.limit(300);
-			if (res.error) throw res.error;
 
-			for (const row of (res.data as Array<{ id: number; item_name: string; expiration_type: string; expires_on: string; recipient_email: string | null }> | null) ?? []) {
+			let rows: Array<{ id: number; item_name: string; expiration_type: string; expires_on: string; days_before_expiry?: number | null; recipient_email: string | null }> = [];
+			if (res.error) {
+				const msg = safeText((res.error as any)?.message || res.error);
+				if (!/days_before_expiry/i.test(msg)) throw res.error;
+				const fallback = await supabase
+					.from("other_expiration_items")
+					.select("id, item_name, expiration_type, expires_on, recipient_email, is_active")
+					.eq("is_active", true)
+					.limit(300);
+				if (fallback.error) throw fallback.error;
+				rows = ((fallback.data as Array<{ id: number; item_name: string; expiration_type: string; expires_on: string; recipient_email: string | null }>) ?? []).map((row) => ({
+					...row,
+					days_before_expiry: null,
+				}));
+			} else {
+				rows = (res.data as Array<{ id: number; item_name: string; expiration_type: string; expires_on: string; days_before_expiry?: number | null; recipient_email: string | null }>) ?? [];
+			}
+
+			for (const row of rows) {
 				const exp = safeText(row.expires_on);
 				const du = daysUntilYmd(exp);
+				const perItemDaysBefore = Math.max(
+					1,
+					Math.min(365, Number(row.days_before_expiry ?? daysBeforeExpiry) || daysBeforeExpiry)
+				);
 				if (
 					exp &&
 					du !== null &&
-					((du >= 0 && du <= daysBeforeExpiry) || (allowExpired && du < 0 && Math.abs(du) <= expiredWindow))
+					((du >= 0 && du <= perItemDaysBefore) || (allowExpired && du < 0 && Math.abs(du) <= expiredWindow))
 				) {
 					out.push({
 						applicant_id: `other:${row.id}`,
@@ -1678,7 +1743,7 @@ export default function SettingsPage() {
 
 						<div className="rounded-2xl border p-4 space-y-3">
 							<div className="font-semibold text-black">Other expiration records</div>
-							<div className="text-xs text-gray-500">Manage car OCR, car registration, and driver’s license expiration items.</div>
+							<div className="text-xs text-gray-500">Manage additional expiration items with custom type names and per-item lead days.</div>
 							<div className="flex items-center justify-end">
 								<button
 									type="button"
@@ -1698,6 +1763,7 @@ export default function SettingsPage() {
 										<tr className="border-b text-left">
 											<th className="py-2 px-3">Item</th>
 											<th className="py-2 px-3">Type</th>
+											<th className="py-2 px-3">Days Before</th>
 											<th className="py-2 px-3">Expires</th>
 											<th className="py-2 px-3">Active</th>
 											<th className="py-2 px-3">Action</th>
@@ -1709,6 +1775,7 @@ export default function SettingsPage() {
 												<tr key={row.id} className="border-b">
 													<td className="py-2 px-3">{row.item_name}</td>
 													<td className="py-2 px-3">{row.expiration_type}</td>
+													<td className="py-2 px-3">{row.days_before_expiry ?? daysBeforeInput}</td>
 													<td className="py-2 px-3">{row.expires_on}</td>
 													<td className="py-2 px-3">
 														<input
@@ -1726,7 +1793,7 @@ export default function SettingsPage() {
 											))
 										) : (
 											<tr>
-												<td colSpan={5} className="py-3 px-3 text-gray-500">No additional expiration items yet.</td>
+												<td colSpan={6} className="py-3 px-3 text-gray-500">No additional expiration items yet.</td>
 											</tr>
 										)}
 									</tbody>
@@ -1854,11 +1921,36 @@ export default function SettingsPage() {
 										</div>
 										<div>
 											<label className="block text-sm mb-1 text-black">Type</label>
-											<select value={otherType} onChange={(e) => setOtherType(e.target.value as OtherExpirationType)} className="w-full rounded-xl border px-3 py-2 text-black">
-												<option value="CAR_OCR">Car OCR</option>
-												<option value="CAR_REGISTRATION">Car Registration</option>
-												<option value="DRIVERS_LICENSE">Driver&apos;s License</option>
-											</select>
+											<input value={otherType} onChange={(e) => setOtherType(e.target.value)} placeholder="e.g. Car OCR" className="w-full rounded-xl border px-3 py-2 text-black" />
+										</div>
+										<div>
+											<label className="block text-sm mb-1 text-black">Days before expiry</label>
+											<input
+												type="text"
+												inputMode="numeric"
+												pattern="[0-9]*"
+												value={otherDaysBeforeInput}
+												onChange={(e) => {
+													const next = e.target.value;
+													if (next === "" || /^\d+$/.test(next)) setOtherDaysBeforeInput(next);
+												}}
+												onBlur={() => {
+													const trimmed = otherDaysBeforeInput.trim();
+													if (!trimmed) {
+														setOtherDaysBeforeInput("30");
+														return;
+													}
+													const n = Number(trimmed);
+													if (!Number.isFinite(n)) {
+														setOtherDaysBeforeInput("30");
+														return;
+													}
+													const clamped = Math.min(365, Math.max(1, Math.trunc(n)));
+													setOtherDaysBeforeInput(String(clamped));
+												}}
+												placeholder="30"
+												className="w-full rounded-xl border px-3 py-2 text-black"
+											/>
 										</div>
 										<div>
 											<label className="block text-sm mb-1 text-black">Expiration date</label>

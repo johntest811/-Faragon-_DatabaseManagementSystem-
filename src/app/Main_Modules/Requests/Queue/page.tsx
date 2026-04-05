@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../../Client/SupabaseClients";
-import { useAuthRole } from "../../../Client/useRbac";
+import { useAuthRole, useMyModules } from "../../../Client/useRbac";
 import LoadingCircle from "../../../Components/LoadingCircle";
 import { useToast } from "../../../Components/ToastProvider";
 
@@ -82,6 +82,7 @@ function applicantLabel(a: ApplicantOption) {
 export default function RequestsQueuePage() {
   const router = useRouter();
   const { role } = useAuthRole();
+  const { modules: myModules, loading: loadingMyModules } = useMyModules();
   const toast = useToast();
 
   const [error, setError] = useState<string>("");
@@ -109,7 +110,10 @@ export default function RequestsQueuePage() {
 
   const legacySession = useMemo(() => readLegacyAdminSession(), []);
   const reviewerAdminId = legacySession?.id ?? "";
-  const canReviewRequests = role === "superadmin" || role === "admin";
+  const canReviewRequests = useMemo(() => {
+    if (role === "superadmin") return true;
+    return myModules.some((m) => String(m.module_key ?? "").trim().toLowerCase() === "access");
+  }, [myModules, role]);
 
   const applicantLabelById = useMemo(() => {
     const map = new Map<string, string>();
@@ -455,7 +459,11 @@ export default function RequestsQueuePage() {
         <div className="flex items-start justify-between gap-3 mb-3">
           <div>
             <div className="text-lg font-semibold text-black">Reviewer Queue</div>
-            <div className="text-sm text-gray-500">Only admins and superadmins can review pending requests.</div>
+            <div className="text-sm text-gray-500">
+              {loadingMyModules
+                ? "Checking access permissions..."
+                : "Only accounts with Admin Accounts permission can review pending requests."}
+            </div>
           </div>
           <button onClick={() => router.push("/Main_Modules/Requests/")} className="px-4 py-2 rounded-xl bg-white border">
             Back
@@ -517,7 +525,7 @@ export default function RequestsQueuePage() {
                 const requesterLabel =
                   (r.requester_username ?? "").trim() ||
                   (r.requester_email ?? "").trim() ||
-                  (r.requester_admin_id ? `admin:${r.requester_admin_id}` : r.requester_user_id ? `user:${r.requester_user_id}` : "—");
+                  "Unknown requester";
                 const personIds = Array.from(
                   new Set([...(r.requested_applicant_ids ?? []), String(r.requested_applicant_id ?? "").trim()].filter(Boolean))
                 );
@@ -527,7 +535,7 @@ export default function RequestsQueuePage() {
                 const reviewerLabel =
                   (r.approver_full_name ?? "").trim() ||
                   (r.approver_username ?? "").trim() ||
-                  (r.approver_admin_id ? `admin:${r.approver_admin_id}` : "—");
+                  "Unassigned reviewer";
                 const scopeLabel = [
                   !r.request_scope_row && !r.request_scope_column ? "PAGE" : null,
                   r.request_scope_row ? "ROW" : null,

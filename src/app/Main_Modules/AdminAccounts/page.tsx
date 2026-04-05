@@ -264,6 +264,7 @@ export default function AdminAccountsPage() {
 
 			<div className="rounded-2xl border p-4">
 				<div className="text-sm font-semibold text-black">Create Account</div>
+				<div className="mt-1 text-xs text-gray-500">Create login accounts for your team. Internal IDs are hidden.</div>
 				<div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-2">
 					<div>
 						<div className="mb-1 text-xs font-semibold uppercase tracking-wide text-gray-600">Username</div>
@@ -312,9 +313,6 @@ export default function AdminAccountsPage() {
 							<option key={r} value={r} />
 						))}
 					</datalist>
-					<div className="md:col-span-2 text-xs text-gray-500">
-						Uses <span className="font-mono">public.admins</span>.
-					</div>
 				</div>
 				<div className="mt-3 flex justify-end">
 					<button

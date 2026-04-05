@@ -3,7 +3,7 @@
 import React, { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "../../Client/SupabaseClients";
-import { useAuthRole } from "../../Client/useRbac";
+import { useAuthRole, useMyModules } from "../../Client/useRbac";
 import LoadingCircle from "../../Components/LoadingCircle";
 import { useToast } from "../../Components/ToastProvider";
 import { columnsForModule, normalizeModuleKey } from "../Components/permissionCatalog";
@@ -94,8 +94,11 @@ function RequestsPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { role } = useAuthRole();
+  const { modules: myModules, loading: loadingMyModules } = useMyModules();
   const toast = useToast();
   const lastToastRef = useRef<{ error: string; success: string }>({ error: "", success: "" });
+  const notifiedApprovedRequestIdsRef = useRef<Set<string>>(new Set());
+  const initializedApprovedTrackingRef = useRef(false);
 
   const preselectModule = normalizeModuleKey(searchParams?.get("module") ?? "");
 
@@ -142,7 +145,10 @@ function RequestsPageContent() {
 
   const legacySession = useMemo(() => readLegacyAdminSession(), []);
   const reviewerAdminId = legacySession?.id ?? "";
-  const canReviewRequests = role === "superadmin" || role === "admin";
+  const canReviewRequests = useMemo(() => {
+    if (role === "superadmin") return true;
+    return myModules.some((m) => normalizeModuleKey(m.module_key) === "access");
+  }, [myModules, role]);
 
   useEffect(() => {
     // Keep selection in sync with query string.
@@ -188,14 +194,51 @@ function RequestsPageContent() {
   const loadApprovers = useCallback(async () => {
     setLoadingApprovers(true);
     try {
-      const { data, error: fetchErr } = await supabase
-        .from("admins")
-        .select("id, username, full_name, role, is_active")
-        .eq("is_active", true)
-        .in("role", ["admin", "superadmin"])
-        .order("username", { ascending: true });
-      if (fetchErr) throw fetchErr;
-      const rows = (data as ApproverRow[]) || [];
+      const [adminsRes, rolesRes, roleAccessRes, overrideRes] = await Promise.all([
+        supabase
+          .from("admins")
+          .select("id, username, full_name, role, is_active")
+          .eq("is_active", true)
+          .order("username", { ascending: true }),
+        supabase.from("app_roles").select("role_id, role_name"),
+        supabase
+          .from("role_module_access")
+          .select("role_id")
+          .eq("module_key", "access")
+          .eq("can_read", true),
+        supabase
+          .from("admin_module_access_overrides")
+          .select("admin_id")
+          .eq("module_key", "access")
+          .eq("can_read", true),
+      ]);
+
+      if (adminsRes.error) throw adminsRes.error;
+      if (rolesRes.error) throw rolesRes.error;
+      if (roleAccessRes.error) throw roleAccessRes.error;
+      if (overrideRes.error) throw overrideRes.error;
+
+      const roleIdToName = new Map<string, string>();
+      for (const row of ((rolesRes.data as Array<{ role_id: string; role_name: string }> | null) ?? [])) {
+        roleIdToName.set(String(row.role_id), normalizeRoleNameLoose(row.role_name));
+      }
+
+      const allowedRoleNames = new Set<string>();
+      for (const row of ((roleAccessRes.data as Array<{ role_id: string }> | null) ?? [])) {
+        const roleName = roleIdToName.get(String(row.role_id));
+        if (roleName) allowedRoleNames.add(roleName);
+      }
+
+      const overrideAdminIds = new Set<string>(
+        (((overrideRes.data as Array<{ admin_id: string }> | null) ?? []) || []).map((row) => String(row.admin_id))
+      );
+
+      const rows = (((adminsRes.data as ApproverRow[]) || []) || []).filter((adminRow) => {
+        const roleName = normalizeRoleNameLoose(adminRow.role);
+        if (roleName === "superadmin") return true;
+        return allowedRoleNames.has(roleName) || overrideAdminIds.has(String(adminRow.id));
+      });
+
       setApprovers(rows);
       setApproverAdminId((prev) => {
         if (prev && rows.some((r) => r.id === prev)) return prev;
@@ -203,6 +246,7 @@ function RequestsPageContent() {
       });
     } catch {
       setApprovers([]);
+      setApproverAdminId("");
     } finally {
       setLoadingApprovers(false);
     }
@@ -237,14 +281,31 @@ function RequestsPageContent() {
 
       const { data, error: reqErr } = await query;
       if (reqErr) throw reqErr;
-      setMyRequests((data as AccessRequestRow[]) || []);
+      const rows = (data as AccessRequestRow[]) || [];
+      setMyRequests(rows);
+
+      const approvedRows = rows.filter((r) => String(r.status ?? "").toUpperCase() === "APPROVED");
+      if (!initializedApprovedTrackingRef.current) {
+        for (const row of approvedRows) {
+          notifiedApprovedRequestIdsRef.current.add(String(row.id));
+        }
+        initializedApprovedTrackingRef.current = true;
+      } else {
+        for (const row of approvedRows) {
+          const rowId = String(row.id);
+          if (!rowId || notifiedApprovedRequestIdsRef.current.has(rowId)) continue;
+          notifiedApprovedRequestIdsRef.current.add(rowId);
+          const moduleLabel = String(row.requested_module_key ?? "requested page").replace(/_/g, " ");
+          toast.success(`Your request for ${moduleLabel} was approved.`);
+        }
+      }
     } catch {
       // Don't block the page if the table doesn't exist yet.
       setMyRequests([]);
     } finally {
       setLoadingRequests(false);
     }
-  }, []);
+  }, [toast]);
 
   const loadPendingRequests = useCallback(async () => {
     if (!canReviewRequests) {
@@ -287,6 +348,57 @@ function RequestsPageContent() {
     loadApprovers();
     loadMyRequests();
   }, [loadModules, loadApplicants, loadApprovers, loadMyRequests]);
+
+  useEffect(() => {
+    const channels: Array<ReturnType<typeof supabase.channel>> = [];
+
+    async function subscribeToMyRequestUpdates() {
+      const legacy = readLegacyAdminSession();
+      const session = await supabase.auth.getSession();
+      const userId = String(session.data.session?.user?.id ?? "").trim();
+      const adminId = String(legacy?.id ?? "").trim();
+
+      const registerChannel = (filter: string, name: string) => {
+        const channel = supabase
+          .channel(name)
+          .on(
+            "postgres_changes",
+            { event: "UPDATE", schema: "public", table: "access_requests", filter },
+            (payload) => {
+              const row = (payload.new ?? {}) as Partial<AccessRequestRow>;
+              const rowId = String(row.id ?? "").trim();
+              const status = String(row.status ?? "").trim().toUpperCase();
+
+              if (status === "APPROVED" && rowId && !notifiedApprovedRequestIdsRef.current.has(rowId)) {
+                notifiedApprovedRequestIdsRef.current.add(rowId);
+                const moduleLabel = String(row.requested_module_key ?? "requested page").replace(/_/g, " ");
+                toast.success(`Your request for ${moduleLabel} was approved.`);
+              }
+
+              void loadMyRequests();
+            }
+          )
+          .subscribe();
+
+        channels.push(channel);
+      };
+
+      if (userId) {
+        registerChannel(`requester_user_id=eq.${userId}`, `realtime:my-requests:user:${userId}`);
+      }
+      if (adminId) {
+        registerChannel(`requester_admin_id=eq.${adminId}`, `realtime:my-requests:admin:${adminId}`);
+      }
+    }
+
+    void subscribeToMyRequestUpdates();
+
+    return () => {
+      for (const channel of channels) {
+        supabase.removeChannel(channel);
+      }
+    };
+  }, [loadMyRequests, toast]);
 
   const selectableModules = useMemo(() => {
     return modules.map((m) => ({
@@ -767,9 +879,10 @@ function RequestsPageContent() {
             <button
               type="button"
               onClick={() => router.push("/Main_Modules/Requests/Queue/")}
+              disabled={loadingMyModules}
               className="px-4 py-2 rounded-xl font-semibold bg-[#FFDA03] text-black"
             >
-              Reviewer Queue
+              {loadingMyModules ? "Checking access..." : "Reviewer Queue"}
             </button>
           ) : null}
           <button onClick={() => router.push("/Main_Modules/Dashboard/")} className="px-4 py-2 rounded-xl bg-white border">
@@ -823,7 +936,7 @@ function RequestsPageContent() {
                     const requesterLabel =
                       (r.requester_username ?? "").trim() ||
                       (r.requester_email ?? "").trim() ||
-                      (r.requester_admin_id ? `admin:${r.requester_admin_id}` : r.requester_user_id ? `user:${r.requester_user_id}` : "—");
+                      "Unknown requester";
                     const personIds = Array.from(
                       new Set([...(r.requested_applicant_ids ?? []), String(r.requested_applicant_id ?? "").trim()].filter(Boolean))
                     );
@@ -833,7 +946,7 @@ function RequestsPageContent() {
                     const reviewerLabel =
                       (r.approver_full_name ?? "").trim() ||
                       (r.approver_username ?? "").trim() ||
-                      (r.approver_admin_id ? `admin:${r.approver_admin_id}` : "—");
+                      "Unassigned reviewer";
                     const scopeLabel = [
                       !r.request_scope_row && !r.request_scope_column ? "PAGE" : null,
                       r.request_scope_row ? "ROW" : null,
@@ -942,6 +1055,9 @@ function RequestsPageContent() {
                     </option>
                   ))}
                 </select>
+                <div className="mt-1 text-xs text-gray-500">
+                  Only accounts with Admin Accounts permission can review and approve requests.
+                </div>
               </div>
 
               <div>
