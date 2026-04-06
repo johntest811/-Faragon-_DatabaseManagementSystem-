@@ -94,7 +94,16 @@ export default function AdminAccountsPage() {
 			.select("role_id, role_name")
 			.order("role_name");
 		if (fetchErr) throw fetchErr;
-		setRoles((data as RoleRow[]) || []);
+		const rows = (((data as RoleRow[]) || []) as RoleRow[])
+			.map((r) => ({ ...r, role_name: String(r.role_name ?? "").trim().toLowerCase() }))
+			.filter((r) => r.role_name.length > 0);
+		setRoles(rows);
+		setAccountRole((prev) => {
+			const current = String(prev ?? "").trim().toLowerCase();
+			if (rows.some((r) => r.role_name === current)) return current;
+			const adminRole = rows.find((r) => r.role_name === "admin")?.role_name;
+			return adminRole ?? rows[0]?.role_name ?? (current || "admin");
+		});
 	}, []);
 
 	const loadAccounts = useCallback(async () => {
@@ -148,6 +157,11 @@ export default function AdminAccountsPage() {
 		try {
 			const username = accountUsername.trim();
 			const roleName = accountRole.trim().toLowerCase();
+			const { error: roleUpsertErr } = await supabase
+				.from("app_roles")
+				.upsert({ role_name: roleName }, { onConflict: "role_name" });
+			if (roleUpsertErr) return setError(roleUpsertErr.message);
+
 			const { error: insErr } = await supabase.from("admins").insert({
 				username,
 				password: accountPassword,
@@ -161,8 +175,10 @@ export default function AdminAccountsPage() {
 			setAccountUsername("");
 			setAccountPassword("");
 			setAccountFullName("");
+			setAccountRole(roleName);
 			logAudit("ADMIN_CREATE_ACCOUNT", { username, role: roleName });
 			loadAccounts();
+			loadRoles();
 		} catch (e: unknown) {
 			setError(getErrorMessage(e));
 		} finally {
@@ -192,11 +208,17 @@ export default function AdminAccountsPage() {
 		if (!nextRole.trim()) return setError("Role is required");
 		const roleName = nextRole.trim().toLowerCase();
 
+		const { error: roleUpsertErr } = await supabase
+			.from("app_roles")
+			.upsert({ role_name: roleName }, { onConflict: "role_name" });
+		if (roleUpsertErr) return setError(roleUpsertErr.message);
+
 		const { error: upErr } = await supabase.from("admins").update({ role: roleName }).eq("id", a.id);
 		if (upErr) return setError(upErr.message);
 		setSuccess("Role updated.");
 		logAudit("ADMIN_UPDATE_ACCOUNT_ROLE", { id: a.id, username: a.username, role: roleName });
 		setAdmins((prev) => prev.map((row) => (row.id === a.id ? { ...row, role: roleName } : row)));
+		loadRoles();
 	}
 
 	async function deleteAccount(a: AdminRow) {
@@ -299,20 +321,20 @@ export default function AdminAccountsPage() {
 					</div>
 					<div>
 						<div className="mb-1 text-xs font-semibold uppercase tracking-wide text-gray-600">Role</div>
-						<input
+						<select
 							value={accountRole}
 							onChange={(e) => setAccountRole(e.target.value)}
-							list="role-list"
-							placeholder="role"
-							className="w-full border rounded-xl px-3 py-2 text-black"
+							className="w-full border rounded-xl px-3 py-2 text-black bg-white"
 							disabled={!canManage || creatingAccount}
-						/>
+						>
+							{roleNames.length === 0 ? <option value="admin">admin</option> : null}
+							{roleNames.map((r) => (
+								<option key={r} value={r}>
+									{r}
+								</option>
+							))}
+						</select>
 					</div>
-					<datalist id="role-list">
-						{roleNames.map((r) => (
-							<option key={r} value={r} />
-						))}
-					</datalist>
 				</div>
 				<div className="mt-3 flex justify-end">
 					<button

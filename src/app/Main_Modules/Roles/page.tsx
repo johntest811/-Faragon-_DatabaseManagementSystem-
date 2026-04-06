@@ -10,22 +10,8 @@ import { groupedCatalog, normalizeModuleKey } from "../Components/permissionCata
 type RoleRow = { role_id: string; role_name: string };
 type ModuleRow = { module_key: string; display_name: string };
 type AccessRow = { role_id: string; module_key: string };
-type AdminRow = {
-	id: string;
-	username: string;
-	role: string | null;
-	full_name: string | null;
-	is_active: boolean | null;
-};
-
-type AdminModuleOverrideRow = {
-	admin_id: string;
-	module_key: string;
-	can_read: boolean | null;
-};
-
-type AdminColumnOverrideRow = {
-	admin_id: string;
+type RoleColumnAccessRow = {
+	role_id: string;
 	module_key: string;
 	column_key: string;
 	can_read: boolean | null;
@@ -77,18 +63,11 @@ export default function RolesPage() {
 	const [roles, setRoles] = useState<RoleRow[]>([]);
 	const [modules, setModules] = useState<ModuleRow[]>([]);
 	const [access, setAccess] = useState<Record<string, Set<string>>>({});
+	const [roleColumnAccess, setRoleColumnAccess] = useState<Record<string, Record<string, Set<string>>>>({});
 	const [selectedRoleId, setSelectedRoleId] = useState<string>("");
 	const [savingKey, setSavingKey] = useState<string>("");
 	const [roleSearch, setRoleSearch] = useState("");
 	const [moduleSearch, setModuleSearch] = useState("");
-
-	const [admins, setAdmins] = useState<AdminRow[]>([]);
-	const [selectedAdminId, setSelectedAdminId] = useState<string>("");
-	const [adminSearch, setAdminSearch] = useState("");
-	const [loadingAdmins, setLoadingAdmins] = useState(false);
-	const [adminModuleAccess, setAdminModuleAccess] = useState<Set<string>>(new Set());
-	const [adminColumnAccess, setAdminColumnAccess] = useState<Record<string, Set<string>>>({});
-	const [savingIndividualKey, setSavingIndividualKey] = useState("");
 
 	const [newRoleName, setNewRoleName] = useState("");
 	const [creatingRole, setCreatingRole] = useState(false);
@@ -115,18 +94,26 @@ export default function RolesPage() {
 		setError("");
 		setSuccess("");
 		try {
-			const [rRes, mRes, aRes] = await Promise.all([
+			const [rRes, mRes, aRes, cRes] = await Promise.all([
 				supabase.from("app_roles").select("role_id, role_name").order("role_name"),
 				supabase.from("modules").select("module_key, display_name").order("module_key"),
 				supabase.from("role_module_access").select("role_id, module_key"),
+				supabase.from("role_column_access").select("role_id, module_key, column_key, can_read"),
 			]);
 
 			if (rRes.error) return setError(rRes.error.message);
 			if (mRes.error) return setError(mRes.error.message);
 			if (aRes.error) return setError(aRes.error.message);
+			if (cRes.error) return setError(cRes.error.message);
 
-			const loadedRoles = ((rRes.data as RoleRow[]) ?? []) || [];
-			const loadedModules = ((mRes.data as ModuleRow[]) ?? []) || [];
+			const loadedRoles = ((((rRes.data as RoleRow[]) ?? []) || []) as RoleRow[]).map((r) => ({
+				...r,
+				role_name: String(r.role_name ?? "").trim().toLowerCase(),
+			}));
+			const loadedModules = ((((mRes.data as ModuleRow[]) ?? []) || []) as ModuleRow[]).map((m) => ({
+				...m,
+				module_key: normalizeModuleKey(m.module_key),
+			}));
 
 			setRoles(loadedRoles);
 			setModules(loadedModules);
@@ -134,9 +121,21 @@ export default function RolesPage() {
 			const map: Record<string, Set<string>> = {};
 			for (const row of ((aRes.data as AccessRow[]) ?? []) || []) {
 				if (!map[row.role_id]) map[row.role_id] = new Set();
-				map[row.role_id].add(row.module_key);
+				map[row.role_id].add(normalizeModuleKey(row.module_key));
 			}
 			setAccess(map);
+
+			const colMap: Record<string, Record<string, Set<string>>> = {};
+			for (const row of ((cRes.data as RoleColumnAccessRow[]) ?? []) || []) {
+				if (row.can_read === false) continue;
+				const moduleKey = normalizeModuleKey(row.module_key);
+				const col = String(row.column_key ?? "").trim();
+				if (!col) continue;
+				if (!colMap[row.role_id]) colMap[row.role_id] = {};
+				if (!colMap[row.role_id][moduleKey]) colMap[row.role_id][moduleKey] = new Set<string>();
+				colMap[row.role_id][moduleKey].add(col);
+			}
+			setRoleColumnAccess(colMap);
 
 			setSelectedRoleId((prev) => {
 				if (prev && loadedRoles.some((r) => r.role_id === prev)) return prev;
@@ -147,90 +146,21 @@ export default function RolesPage() {
 		}
 	}, []);
 
-	const loadAdmins = useCallback(async () => {
-		setLoadingAdmins(true);
-		try {
-			const { data, error: adminErr } = await supabase
-				.from("admins")
-				.select("id, username, role, full_name, is_active")
-				.order("username");
-			if (adminErr) throw adminErr;
-
-			const rows = ((data as AdminRow[]) ?? []) || [];
-			setAdmins(rows);
-			setSelectedAdminId((prev) => {
-				if (prev && rows.some((r) => r.id === prev)) return prev;
-				return rows[0]?.id ?? "";
-			});
-		} catch {
-			setAdmins([]);
-		} finally {
-			setLoadingAdmins(false);
-		}
-	}, []);
-
-	const loadAdminOverrides = useCallback(async (adminId: string) => {
-		if (!adminId) {
-			setAdminModuleAccess(new Set());
-			setAdminColumnAccess({});
-			return;
-		}
-
-		try {
-			const [moduleRes, columnRes] = await Promise.all([
-				supabase
-					.from("admin_module_access_overrides")
-					.select("admin_id, module_key, can_read")
-					.eq("admin_id", adminId),
-				supabase
-					.from("admin_column_access_overrides")
-					.select("admin_id, module_key, column_key, can_read")
-					.eq("admin_id", adminId),
-			]);
-
-			if (moduleRes.error) throw moduleRes.error;
-			if (columnRes.error) throw columnRes.error;
-
-			const moduleSet = new Set(
-				(((moduleRes.data as AdminModuleOverrideRow[]) ?? []) || [])
-					.filter((r) => r.can_read !== false)
-					.map((r) => normalizeModuleKey(r.module_key))
-			);
-			setAdminModuleAccess(moduleSet);
-
-			const colMap: Record<string, Set<string>> = {};
-			for (const row of ((columnRes.data as AdminColumnOverrideRow[]) ?? []) || []) {
-				if (row.can_read === false) continue;
-				const key = normalizeModuleKey(row.module_key);
-				if (!colMap[key]) colMap[key] = new Set<string>();
-				colMap[key].add(String(row.column_key));
-			}
-			setAdminColumnAccess(colMap);
-		} catch {
-			setAdminModuleAccess(new Set());
-			setAdminColumnAccess({});
-		}
-	}, []);
-
 	useEffect(() => {
 		load();
-		loadAdmins();
 
 		const channel = supabase
 			.channel("realtime:rbac-roles")
 			.on("postgres_changes", { event: "*", schema: "public", table: "app_roles" }, () => load())
 			.on("postgres_changes", { event: "*", schema: "public", table: "role_module_access" }, () => load())
+			.on("postgres_changes", { event: "*", schema: "public", table: "role_column_access" }, () => load())
 			.on("postgres_changes", { event: "*", schema: "public", table: "modules" }, () => load())
 			.subscribe();
 
 		return () => {
 			supabase.removeChannel(channel);
 		};
-	}, [load, loadAdmins]);
-
-	useEffect(() => {
-		loadAdminOverrides(selectedAdminId);
-	}, [loadAdminOverrides, selectedAdminId]);
+	}, [load]);
 
 	async function createRole() {
 		setError("");
@@ -249,7 +179,7 @@ export default function RolesPage() {
 
 	const moduleByKey = useMemo(() => {
 		const map = new Map<string, ModuleRow>();
-		for (const m of modules) map.set(m.module_key, m);
+		for (const m of modules) map.set(normalizeModuleKey(m.module_key), m);
 		return map;
 	}, [modules]);
 
@@ -258,29 +188,21 @@ export default function RolesPage() {
 		[roles, selectedRoleId]
 	);
 
-	const selectedAdmin = useMemo(() => admins.find((a) => a.id === selectedAdminId) ?? null, [admins, selectedAdminId]);
-
 	const filteredRoles = useMemo(() => {
 		const q = roleSearch.trim().toLowerCase();
 		if (!q) return roles;
 		return roles.filter((r) => r.role_name.toLowerCase().includes(q));
 	}, [roleSearch, roles]);
 
-	const filteredAdmins = useMemo(() => {
-		const q = adminSearch.trim().toLowerCase();
-		if (!q) return admins;
-		return admins.filter(
-			(a) =>
-				a.username.toLowerCase().includes(q) ||
-				(a.full_name ?? "").toLowerCase().includes(q) ||
-				(a.role ?? "").toLowerCase().includes(q)
-		);
-	}, [adminSearch, admins]);
-
 	const selectedAccess = useMemo(() => {
 		if (!selectedRole) return new Set<string>();
 		return access[selectedRole.role_id] ?? new Set<string>();
 	}, [access, selectedRole]);
+
+	const selectedColumnAccess = useMemo(() => {
+		if (!selectedRole) return {} as Record<string, Set<string>>;
+		return roleColumnAccess[selectedRole.role_id] ?? {};
+	}, [roleColumnAccess, selectedRole]);
 
 	const groupedModules = useMemo(() => {
 		return groupedCatalog(moduleSearch)
@@ -305,29 +227,36 @@ export default function RolesPage() {
 		setError("");
 		setSuccess("");
 		if (!canManage) return setError("Only Superadmin can change module access.");
-
-		const opKey = `${roleId}:${moduleKey}`;
+		const key = normalizeModuleKey(moduleKey);
+		const opKey = `role-module:${roleId}:${key}`;
 		setSavingKey(opKey);
 
 		try {
-			const current = access[roleId]?.has(moduleKey) ?? false;
+			const current = access[roleId]?.has(key) ?? false;
 
 			if (current) {
+				const { error: delColsErr } = await supabase
+					.from("role_column_access")
+					.delete()
+					.eq("role_id", roleId)
+					.eq("module_key", key);
+				if (delColsErr) throw delColsErr;
+
 				const { error: delErr } = await supabase
 					.from("role_module_access")
 					.delete()
 					.eq("role_id", roleId)
-					.eq("module_key", moduleKey);
+					.eq("module_key", key);
 				if (delErr) throw delErr;
 			} else {
 				const { error: insErr } = await supabase
 					.from("role_module_access")
-					.insert({ role_id: roleId, module_key: moduleKey });
+					.insert({ role_id: roleId, module_key: key });
 				if (insErr) throw insErr;
 			}
 
 			setSuccess("Access updated.");
-			logAudit("RBAC_TOGGLE_ACCESS", { role_id: roleId, module_key: moduleKey, enabled: !current });
+			logAudit("RBAC_TOGGLE_ACCESS", { role_id: roleId, module_key: key, enabled: !current });
 			load();
 		} catch (e: unknown) {
 			setError(getErrorMessage(e));
@@ -336,102 +265,59 @@ export default function RolesPage() {
 		}
 	}
 
-	async function toggleAdminModule(moduleKey: string) {
+	async function toggleRoleColumn(roleId: string, moduleKey: string, columnKey: string) {
 		setError("");
 		setSuccess("");
-		if (!canManage) return setError("Only Superadmin can change individual access.");
-		if (!selectedAdminId) return setError("Please select an account.");
-
+		if (!canManage) return setError("Only Superadmin can change column access.");
 		const key = normalizeModuleKey(moduleKey);
-		const busyKey = `admin-module:${selectedAdminId}:${key}`;
-		setSavingIndividualKey(busyKey);
+		const column = String(columnKey ?? "").trim();
+		if (!key || !column) return;
 
+		const busyKey = `role-column:${roleId}:${key}:${column}`;
+		setSavingKey(busyKey);
 		try {
-			const enabled = adminModuleAccess.has(key);
-			if (enabled) {
-				const { error: delErr } = await supabase
-					.from("admin_module_access_overrides")
-					.delete()
-					.eq("admin_id", selectedAdminId)
-					.eq("module_key", key);
-				if (delErr) throw delErr;
-
-				const { error: delColsErr } = await supabase
-					.from("admin_column_access_overrides")
-					.delete()
-					.eq("admin_id", selectedAdminId)
-					.eq("module_key", key);
-				if (delColsErr) throw delColsErr;
-			} else {
-				const { error: insErr } = await supabase
-					.from("admin_module_access_overrides")
-					.upsert({ admin_id: selectedAdminId, module_key: key, can_read: true }, { onConflict: "admin_id,module_key" });
-				if (insErr) throw insErr;
-			}
-
-			setSuccess("Individual page access updated.");
-			logAudit("RBAC_TOGGLE_INDIVIDUAL_MODULE", {
-				admin_id: selectedAdminId,
-				module_key: key,
-				enabled: !enabled,
-			});
-			loadAdminOverrides(selectedAdminId);
-		} catch (e: unknown) {
-			setError(getErrorMessage(e));
-		} finally {
-			setSavingIndividualKey("");
-		}
-	}
-
-	async function toggleAdminColumn(moduleKey: string, columnKey: string) {
-		setError("");
-		setSuccess("");
-		if (!canManage) return setError("Only Superadmin can change individual access.");
-		if (!selectedAdminId) return setError("Please select an account.");
-
-		const moduleKeyNormalized = normalizeModuleKey(moduleKey);
-		const column = String(columnKey);
-		const busyKey = `admin-column:${selectedAdminId}:${moduleKeyNormalized}:${column}`;
-		setSavingIndividualKey(busyKey);
-
-		try {
-			const enabled = adminColumnAccess[moduleKeyNormalized]?.has(column) ?? false;
+			const currentCols = roleColumnAccess[roleId]?.[key] ?? new Set<string>();
+			const enabled = currentCols.has(column);
 
 			if (enabled) {
 				const { error: delErr } = await supabase
-					.from("admin_column_access_overrides")
+					.from("role_column_access")
 					.delete()
-					.eq("admin_id", selectedAdminId)
-					.eq("module_key", moduleKeyNormalized)
+					.eq("role_id", roleId)
+					.eq("module_key", key)
 					.eq("column_key", column);
 				if (delErr) throw delErr;
 			} else {
-				const { error: moduleUpsertErr } = await supabase
-					.from("admin_module_access_overrides")
-					.upsert({ admin_id: selectedAdminId, module_key: moduleKeyNormalized, can_read: true }, { onConflict: "admin_id,module_key" });
-				if (moduleUpsertErr) throw moduleUpsertErr;
+				// Ensure module is enabled first.
+				const moduleEnabled = access[roleId]?.has(key) ?? false;
+				if (!moduleEnabled) {
+					const { error: insModuleErr } = await supabase
+						.from("role_module_access")
+						.insert({ role_id: roleId, module_key: key });
+					if (insModuleErr) throw insModuleErr;
+				}
 
 				const { error: insErr } = await supabase
-					.from("admin_column_access_overrides")
+					.from("role_column_access")
 					.upsert(
-						{ admin_id: selectedAdminId, module_key: moduleKeyNormalized, column_key: column, can_read: true },
-						{ onConflict: "admin_id,module_key,column_key" }
+						{ role_id: roleId, module_key: key, column_key: column, can_read: true },
+						{ onConflict: "role_id,module_key,column_key" }
 					);
 				if (insErr) throw insErr;
 			}
 
-			setSuccess("Individual column access updated.");
-			logAudit("RBAC_TOGGLE_INDIVIDUAL_COLUMN", {
-				admin_id: selectedAdminId,
-				module_key: moduleKeyNormalized,
+			setSuccess("Column access updated.");
+			logAudit("RBAC_TOGGLE_ROLE_COLUMN", {
+				role_id: roleId,
+				module_key: key,
 				column_key: column,
 				enabled: !enabled,
 			});
-			loadAdminOverrides(selectedAdminId);
+			load();
 		} catch (e: unknown) {
 			setError(getErrorMessage(e));
 		} finally {
-			setSavingIndividualKey("");
+			setSavingKey("");
 		}
 	}
 
@@ -562,6 +448,29 @@ export default function RolesPage() {
 								<div className="text-xl font-semibold text-black">{selectedAccess.size}</div>
 								<div className="text-xs text-gray-500">Across all grouped pages/modules</div>
 							</div>
+
+							<div className="rounded-xl border p-3">
+								<div className="text-xs text-gray-500">Permitted Pages & Columns</div>
+								<div className="mt-2 max-h-48 overflow-auto space-y-2">
+									{Array.from(selectedAccess)
+										.sort()
+										.map((moduleKey) => {
+											const cols = selectedColumnAccess[moduleKey] ?? new Set<string>();
+											const label = moduleByKey.get(normalizeModuleKey(moduleKey))?.display_name ?? moduleKey;
+											const colLabel = cols.size > 0 ? Array.from(cols).sort().join(", ") : "All columns";
+											return (
+												<div key={`summary-${moduleKey}`} className="text-xs">
+													<div className="font-semibold text-black">{label}</div>
+													<div className="text-gray-500 font-mono">{moduleKey}</div>
+													<div className="text-gray-600">{colLabel}</div>
+												</div>
+											);
+										})}
+									{selectedAccess.size === 0 ? (
+										<div className="text-xs text-gray-500">No permitted pages yet.</div>
+									) : null}
+								</div>
+							</div>
 						</div>
 					) : (
 						<div className="mt-4 text-sm text-gray-500">No role selected.</div>
@@ -601,28 +510,57 @@ export default function RolesPage() {
 								<div className="mt-3 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2">
 									{group.rows.map((m) => {
 										const checked = selectedAccess.has(m.module_key);
-										const opKey = `${selectedRole.role_id}:${m.module_key}`;
+										const opKey = `role-module:${selectedRole.role_id}:${m.module_key}`;
 										const busy = savingKey === opKey;
+										const selectedCols = selectedColumnAccess[m.module_key] ?? new Set<string>();
 
 										return (
 											<div
 												key={m.module_key}
-												className={`rounded-xl border px-3 py-2 flex items-center gap-3 ${
+												className={`rounded-xl border px-3 py-2 ${
 													checked ? "bg-[#FFF7CC] border-[#FFDA03]" : "bg-white"
 												}`}
 											>
-												<input
-													type="checkbox"
-													checked={checked}
-													onChange={() => toggleAccess(selectedRole.role_id, m.module_key)}
-													disabled={!canManage || busy}
-												/>
-												<div className="min-w-0">
-													<div className="text-sm text-black font-medium truncate">{m.display_name}</div>
-													<div className="text-xs text-gray-500 font-mono">{m.module_key}</div>
-													<div className="mt-1 text-[11px] text-gray-500 truncate">
-														Columns: {m.columns.join(", ")}
+												<div className="flex items-start gap-3">
+													<input
+														type="checkbox"
+														checked={checked}
+														onChange={() => toggleAccess(selectedRole.role_id, m.module_key)}
+														disabled={!canManage || busy}
+													/>
+													<div className="min-w-0">
+														<div className="text-sm text-black font-medium truncate">{m.display_name}</div>
+														<div className="text-xs text-gray-500 font-mono">{m.module_key}</div>
 													</div>
+												</div>
+
+												<div className="mt-2 flex flex-wrap gap-2">
+													{checked && selectedCols.size === 0 ? (
+														<span className="text-xs px-2 py-1 rounded-full border bg-white text-gray-700">
+															All columns
+														</span>
+													) : null}
+													{m.columns.map((col) => {
+														const colBusy =
+															savingKey === `role-column:${selectedRole.role_id}:${m.module_key}:${col}`;
+														const colOn = selectedCols.has(col);
+														return (
+															<label
+																key={`role-col-${m.module_key}-${col}`}
+																className={`text-xs px-2 py-1 rounded-full border flex items-center gap-1 ${
+																colOn ? "bg-[#FFF7CC] border-[#FFDA03] text-black" : "bg-white text-gray-700"
+															}`}
+														>
+															<input
+																type="checkbox"
+																checked={colOn}
+																onChange={() => toggleRoleColumn(selectedRole.role_id, m.module_key, col)}
+																disabled={!canManage || colBusy}
+															/>
+															<span>{col}</span>
+														</label>
+														);
+													})}
 												</div>
 											</div>
 										);
@@ -634,111 +572,6 @@ export default function RolesPage() {
 						{groupedModules.length === 0 ? (
 							<div className="rounded-xl border p-3 text-sm text-gray-500">No pages match the current filter.</div>
 						) : null}
-					</div>
-				)}
-			</div>
-
-			<div className="mt-5 rounded-2xl border p-4">
-				<div className="flex items-start justify-between gap-3">
-					<div>
-						<div className="text-sm font-semibold text-black">Individual Access Overrides</div>
-						<div className="mt-1 text-xs text-gray-500">
-							Superadmin can grant/revoke individual page and column access for specific admin accounts.
-						</div>
-					</div>
-					<div className="text-xs rounded-full border px-3 py-1 text-gray-600 bg-gray-50">Connected with Requests approval</div>
-				</div>
-
-				<div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-2">
-					<input
-						value={adminSearch}
-						onChange={(e) => setAdminSearch(e.target.value)}
-						placeholder="Search account (username/full name/role)"
-						className="border rounded-xl px-3 py-2 text-sm text-black"
-					/>
-					<select
-						value={selectedAdminId}
-						onChange={(e) => setSelectedAdminId(e.target.value)}
-						className="border rounded-xl px-3 py-2 text-sm text-black bg-white"
-					>
-						<option value="">Select account…</option>
-						{filteredAdmins.map((a) => (
-							<option key={a.id} value={a.id}>
-								{a.username} ({a.role ?? "no-role"})
-							</option>
-						))}
-					</select>
-					<div className="text-xs text-gray-500 flex items-center px-2">
-						{loadingAdmins ? "Loading accounts…" : `${filteredAdmins.length} account(s)`}
-					</div>
-				</div>
-
-				{selectedAdmin ? (
-					<div className="mt-4 rounded-xl border p-3">
-						<div className="text-sm font-semibold text-black">{selectedAdmin.username}</div>
-						<div className="text-xs text-gray-500">
-							{selectedAdmin.full_name || "(No full name)"} · role: {selectedAdmin.role ?? "(none)"}
-						</div>
-					</div>
-				) : null}
-
-				{!selectedAdminId ? (
-					<div className="mt-4 text-sm text-gray-500">Select an account to manage individual overrides.</div>
-				) : (
-					<div className="mt-4 space-y-4">
-						{groupedModules.map((group) => (
-							<div key={`individual-${group.title}`} className="rounded-xl border p-3">
-								<div className="text-sm font-semibold text-black">{group.title}</div>
-								<div className="mt-3 space-y-2">
-									{group.rows.map((m) => {
-										const moduleOn = adminModuleAccess.has(m.module_key);
-										const moduleBusy = savingIndividualKey === `admin-module:${selectedAdminId}:${m.module_key}`;
-										const selectedCols = adminColumnAccess[m.module_key] ?? new Set<string>();
-
-										return (
-											<div key={`individual-${m.module_key}`} className="rounded-xl border p-3 bg-white">
-												<div className="flex items-center gap-3">
-													<input
-														type="checkbox"
-														checked={moduleOn}
-														onChange={() => toggleAdminModule(m.module_key)}
-														disabled={!canManage || moduleBusy}
-													/>
-													<div>
-														<div className="text-sm font-medium text-black">{m.display_name}</div>
-														<div className="text-xs text-gray-500 font-mono">{m.module_key}</div>
-													</div>
-												</div>
-
-												<div className="mt-2 flex flex-wrap gap-2">
-													{m.columns.map((col) => {
-														const colBusy =
-															savingIndividualKey === `admin-column:${selectedAdminId}:${m.module_key}:${col}`;
-														const colOn = selectedCols.has(col);
-														return (
-															<label
-																key={`col-${m.module_key}-${col}`}
-																className={`text-xs px-2 py-1 rounded-full border flex items-center gap-1 ${
-																	colOn ? "bg-[#FFF7CC] border-[#FFDA03] text-black" : "bg-white text-gray-700"
-																}`}
-															>
-																<input
-																	type="checkbox"
-																	checked={colOn}
-																	onChange={() => toggleAdminColumn(m.module_key, col)}
-																	disabled={!canManage || colBusy}
-																/>
-																<span>{col}</span>
-															</label>
-														);
-													})}
-												</div>
-											</div>
-										);
-									})}
-								</div>
-							</div>
-						))}
 					</div>
 				)}
 			</div>

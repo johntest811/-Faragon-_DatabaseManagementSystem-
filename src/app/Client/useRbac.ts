@@ -394,25 +394,64 @@ export function useMyColumnAccess(moduleKey: string): ColumnAccessResult {
             return;
           }
 
-          const { data, error: colErr } = await supabase
-            .from("admin_column_access_overrides")
-            .select("column_key, can_read")
-            .eq("admin_id", legacySession.id)
-            .eq("module_key", key);
-          if (colErr) throw colErr;
+          const [roleColsRes, overrideColsRes] = await Promise.all([
+            roleName
+              ? (async () => {
+                  const { data: roleRow, error: roleErr } = await supabase
+                    .from("app_roles")
+                    .select("role_id")
+                    .eq("role_name", roleName)
+                    .single();
+                  if (roleErr || !roleRow?.role_id) return [] as Array<{ column_key: string; can_read: boolean | null }>;
 
-          const rows =
-            (((data as Array<{ column_key: string; can_read: boolean | null }> | null) ?? []) || []);
-          const next = new Set(
-            rows
+                  const { data: cols, error: colsErr } = await supabase
+                    .from("role_column_access")
+                    .select("column_key, can_read")
+                    .eq("role_id", roleRow.role_id)
+                    .eq("module_key", key);
+                  if (colsErr) throw colsErr;
+                  return (((cols as Array<{ column_key: string; can_read: boolean | null }> | null) ?? []) || []);
+                })()
+              : Promise.resolve([] as Array<{ column_key: string; can_read: boolean | null }>),
+            (async () => {
+              const { data, error: colErr } = await supabase
+                .from("admin_column_access_overrides")
+                .select("column_key, can_read")
+                .eq("admin_id", legacySession.id)
+                .eq("module_key", key);
+              if (colErr) throw colErr;
+              return (((data as Array<{ column_key: string; can_read: boolean | null }> | null) ?? []) || []);
+            })(),
+          ]);
+
+          const roleRows = roleColsRes;
+          const overrideRows = overrideColsRes;
+
+          const roleAllowed = new Set(
+            roleRows
+              .filter((r) => r && r.can_read !== false)
+              .map((r) => normalizeColumnKey(r.column_key))
+              .filter(Boolean)
+          );
+          const overrideAllowed = new Set(
+            overrideRows
               .filter((r) => r && r.can_read !== false)
               .map((r) => normalizeColumnKey(r.column_key))
               .filter(Boolean)
           );
 
+          const roleRestricted = roleRows.length > 0;
+          const overrideRestricted = overrideRows.length > 0;
+
+          const next = roleRestricted
+            ? new Set<string>([...Array.from(roleAllowed), ...Array.from(overrideAllowed)])
+            : overrideRestricted
+              ? overrideAllowed
+              : new Set<string>();
+
           if (!cancelled) {
             setAllowedColumns(next);
-            setRestricted(rows.length > 0);
+            setRestricted(roleRestricted || overrideRestricted);
             setLoading(false);
           }
           return;
@@ -431,9 +470,10 @@ export function useMyColumnAccess(moduleKey: string): ColumnAccessResult {
           return;
         }
 
-        let roleName: RoleName = null;
-        const { data: roleData } = await supabase.rpc("current_role_name");
-        roleName = normalizeRoleName(roleData);
+        const { data: roleData, error: roleRpcErr } = await supabase.rpc("current_role_name");
+        if (roleRpcErr) throw roleRpcErr;
+
+        const roleName = normalizeRoleName(roleData);
         if (roleName === "superadmin") {
           if (!cancelled) {
             setAllowedColumns(new Set());
@@ -443,25 +483,64 @@ export function useMyColumnAccess(moduleKey: string): ColumnAccessResult {
           return;
         }
 
-        const { data, error: colErr } = await supabase
-          .from("user_column_access_overrides")
-          .select("column_key, can_read")
-          .eq("user_id", userId)
-          .eq("module_key", key);
-        if (colErr) throw colErr;
+        const [roleColsRes, overrideColsRes] = await Promise.all([
+          roleName
+            ? (async () => {
+                const { data: roleRow, error: roleErr } = await supabase
+                  .from("app_roles")
+                  .select("role_id")
+                  .eq("role_name", roleName)
+                  .single();
+                if (roleErr || !roleRow?.role_id) return [] as Array<{ column_key: string; can_read: boolean | null }>;
 
-        const rows =
-          (((data as Array<{ column_key: string; can_read: boolean | null }> | null) ?? []) || []);
-        const next = new Set(
-          rows
+                const { data: cols, error: colsErr } = await supabase
+                  .from("role_column_access")
+                  .select("column_key, can_read")
+                  .eq("role_id", roleRow.role_id)
+                  .eq("module_key", key);
+                if (colsErr) throw colsErr;
+                return (((cols as Array<{ column_key: string; can_read: boolean | null }> | null) ?? []) || []);
+              })()
+            : Promise.resolve([] as Array<{ column_key: string; can_read: boolean | null }>),
+          (async () => {
+            const { data: cols, error: colErr } = await supabase
+              .from("user_column_access_overrides")
+              .select("column_key, can_read")
+              .eq("user_id", userId)
+              .eq("module_key", key);
+            if (colErr) throw colErr;
+            return (((cols as Array<{ column_key: string; can_read: boolean | null }> | null) ?? []) || []);
+          })(),
+        ]);
+
+        const roleRows = roleColsRes;
+        const overrideRows = overrideColsRes;
+
+        const roleAllowed = new Set(
+          roleRows
+            .filter((r) => r && r.can_read !== false)
+            .map((r) => normalizeColumnKey(r.column_key))
+            .filter(Boolean)
+        );
+        const overrideAllowed = new Set(
+          overrideRows
             .filter((r) => r && r.can_read !== false)
             .map((r) => normalizeColumnKey(r.column_key))
             .filter(Boolean)
         );
 
+        const roleRestricted = roleRows.length > 0;
+        const overrideRestricted = overrideRows.length > 0;
+
+        const next = roleRestricted
+          ? new Set<string>([...Array.from(roleAllowed), ...Array.from(overrideAllowed)])
+          : overrideRestricted
+            ? overrideAllowed
+            : new Set<string>();
+
         if (!cancelled) {
           setAllowedColumns(next);
-          setRestricted(rows.length > 0);
+          setRestricted(roleRestricted || overrideRestricted);
           setLoading(false);
         }
       } catch (e: unknown) {
