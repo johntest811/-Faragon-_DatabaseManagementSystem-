@@ -145,10 +145,11 @@ function RequestsPageContent() {
 
   const legacySession = useMemo(() => readLegacyAdminSession(), []);
   const reviewerAdminId = legacySession?.id ?? "";
-  const canReviewRequests = useMemo(() => {
-    if (role === "superadmin") return true;
-    return myModules.some((m) => normalizeModuleKey(m.module_key) === "access");
-  }, [myModules, role]);
+  const hasAccessModulePermission = useMemo(
+    () => myModules.some((m) => normalizeModuleKey(m.module_key) === "access"),
+    [myModules]
+  );
+  const canReviewRequests = role === "superadmin" && hasAccessModulePermission;
 
   useEffect(() => {
     // Keep selection in sync with query string.
@@ -235,8 +236,8 @@ function RequestsPageContent() {
 
       const rows = (((adminsRes.data as ApproverRow[]) || []) || []).filter((adminRow) => {
         const roleName = normalizeRoleNameLoose(adminRow.role);
-        if (roleName === "superadmin") return true;
-        return allowedRoleNames.has(roleName) || overrideAdminIds.has(String(adminRow.id));
+        const hasAccessPermission = allowedRoleNames.has(roleName) || overrideAdminIds.has(String(adminRow.id));
+        return roleName === "superadmin" && hasAccessPermission;
       });
 
       setApprovers(rows);
@@ -407,6 +408,10 @@ function RequestsPageContent() {
     }));
   }, [modules]);
 
+  const myModuleKeySet = useMemo(() => {
+    return new Set(myModules.map((m) => normalizeModuleKey(m.module_key)).filter(Boolean));
+  }, [myModules]);
+
   const selectedModule = useMemo(
     () => selectableModules.find((m) => normalizeModuleKey(m.module_key) === normalizeModuleKey(requestedModuleKey)) ?? null,
     [requestedModuleKey, selectableModules]
@@ -434,7 +439,7 @@ function RequestsPageContent() {
     });
   }, [applicants, personnelSearch]);
 
-  const disabled = submitting || loadingModules || loadingApprovers;
+  const disabled = submitting || loadingModules || loadingApprovers || loadingMyModules;
 
   function toggleRequestedColumn(columnKey: string) {
     const key = String(columnKey ?? "").trim();
@@ -490,9 +495,20 @@ function RequestsPageContent() {
       }
     }
 
+    const requestGrantKeys = moduleKeysForRequest(moduleKey);
+    if (
+      !scopeRow &&
+      !scopeColumn &&
+      requestGrantKeys.length > 0 &&
+      requestGrantKeys.every((k) => myModuleKeySet.has(k))
+    ) {
+      const moduleLabel = selectedModule?.display_name?.trim() || moduleKey;
+      return setError(`You already have permission for ${moduleLabel}.`);
+    }
+
     const approverId = String(approverAdminId ?? "").trim() || null;
     if (!approverId) {
-      return setError("Please choose a supervisor approver.");
+      return setError("Please choose a superadmin reviewer.");
     }
 
     setSubmitting(true);
@@ -594,7 +610,7 @@ function RequestsPageContent() {
     setError("");
     setSuccess("");
     if (!canReviewRequests) {
-      setError("Only Supervisor or Superadmin can review requests.");
+      setError("Only superadmin reviewers can review requests.");
       return;
     }
     if (role !== "superadmin") {
@@ -653,11 +669,6 @@ function RequestsPageContent() {
 
     if (!requestedKey) {
       setError("Invalid requested module.");
-      return;
-    }
-
-    if (requestedKey === "access") {
-      setError("Admin Accounts / Roles / Permissions are Superadmin-only and cannot be granted by request.");
       return;
     }
 
@@ -1036,12 +1047,12 @@ function RequestsPageContent() {
                   ))}
                 </select>
                 <div className="mt-2 text-xs text-gray-500">
-                  All pages are requestable. Supervisor approval is required.
+                  All pages are requestable. Superadmin reviewer approval is required.
                 </div>
               </div>
 
               <div>
-                <div className="text-xs text-gray-500 mb-1">Supervisor / Reviewer</div>
+                <div className="text-xs text-gray-500 mb-1">Superadmin Reviewer</div>
                 <select
                   value={approverAdminId}
                   onChange={(e) => setApproverAdminId(e.target.value)}
@@ -1056,7 +1067,7 @@ function RequestsPageContent() {
                   ))}
                 </select>
                 <div className="mt-1 text-xs text-gray-500">
-                  Only accounts with Admin Accounts permission can review and approve requests.
+                  Only superadmin accounts with Admin Accounts permission can review and approve requests.
                 </div>
               </div>
 

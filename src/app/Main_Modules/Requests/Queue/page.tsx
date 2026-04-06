@@ -110,10 +110,11 @@ export default function RequestsQueuePage() {
 
   const legacySession = useMemo(() => readLegacyAdminSession(), []);
   const reviewerAdminId = legacySession?.id ?? "";
-  const canReviewRequests = useMemo(() => {
-    if (role === "superadmin") return true;
-    return myModules.some((m) => String(m.module_key ?? "").trim().toLowerCase() === "access");
-  }, [myModules, role]);
+  const hasAccessModulePermission = useMemo(
+    () => myModules.some((m) => String(m.module_key ?? "").trim().toLowerCase() === "access"),
+    [myModules]
+  );
+  const canReviewRequests = role === "superadmin" && hasAccessModulePermission;
 
   const applicantLabelById = useMemo(() => {
     const map = new Map<string, string>();
@@ -181,7 +182,7 @@ export default function RequestsQueuePage() {
     setError("");
     setSuccess("");
     if (!canReviewRequests) {
-      setError("Only Supervisor or Superadmin can review requests.");
+      setError("Only superadmin reviewers can review requests.");
       return;
     }
     if (role !== "superadmin") {
@@ -240,11 +241,6 @@ export default function RequestsQueuePage() {
 
     if (!requestedKey) {
       setError("Invalid requested module.");
-      return;
-    }
-
-    if (requestedKey === "access") {
-      setError("Admin Accounts / Roles / Permissions are Superadmin-only and cannot be granted by request.");
       return;
     }
 
@@ -462,7 +458,7 @@ export default function RequestsQueuePage() {
             <div className="text-sm text-gray-500">
               {loadingMyModules
                 ? "Checking access permissions..."
-                : "Only accounts with Admin Accounts permission can review pending requests."}
+                : "Only superadmin accounts with Admin Accounts permission can review pending requests."}
             </div>
           </div>
           <button onClick={() => router.push("/Main_Modules/Requests/")} className="px-4 py-2 rounded-xl bg-white border">

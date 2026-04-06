@@ -346,6 +346,7 @@ CREATE TABLE public.other_expiration_items (
   is_active boolean NOT NULL DEFAULT true,
   created_at timestamp with time zone NOT NULL DEFAULT now(),
   updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  days_before_expiry integer NOT NULL DEFAULT 30 CHECK (days_before_expiry >= 1 AND days_before_expiry <= 365),
   CONSTRAINT other_expiration_items_pkey PRIMARY KEY (id)
 );
 CREATE TABLE public.paraphernalia (
