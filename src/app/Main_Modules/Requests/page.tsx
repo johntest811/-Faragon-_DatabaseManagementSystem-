@@ -64,6 +64,101 @@ function moduleKeysForRequest(moduleKey: string): string[] {
   return [key];
 }
 
+function extractMissingColumn(message: string): string {
+  const msg = String(message ?? "");
+
+  const pgMatch = msg.match(/column\s+"?([a-zA-Z0-9_]+)"?\s+does not exist/i);
+  if (pgMatch?.[1]) return pgMatch[1];
+
+  const cacheMatch = msg.match(/Could not find the '([a-zA-Z0-9_]+)' column/i);
+  if (cacheMatch?.[1]) return cacheMatch[1];
+
+  const relMatch = msg.match(/column\s+"?([a-zA-Z0-9_]+)"?\s+of\s+relation\s+"?[a-zA-Z0-9_]+"?\s+does not exist/i);
+  if (relMatch?.[1]) return relMatch[1];
+
+  return "";
+}
+
+async function runAccessRequestSelectWithFallback(
+  columns: string[],
+  runQuery: (selectClause: string) => Promise<{ data: unknown[] | null; error: { message?: string } | null }>
+) {
+  const workingColumns = [...columns];
+  const removedColumns = new Set<string>();
+
+  for (let attempt = 0; attempt < columns.length + 1; attempt += 1) {
+    if (!workingColumns.length) {
+      throw new Error("No selectable access request columns are available.");
+    }
+
+    const { data, error } = await runQuery(workingColumns.join(", "));
+    if (!error) return (data ?? []) as unknown[];
+
+    const missingColumn = extractMissingColumn(String(error.message ?? ""));
+    if (!missingColumn || removedColumns.has(missingColumn)) throw error;
+
+    const index = workingColumns.findIndex((col) => col.trim() === missingColumn);
+    if (index < 0) throw error;
+
+    removedColumns.add(missingColumn);
+    workingColumns.splice(index, 1);
+  }
+
+  throw new Error("Failed to load access requests.");
+}
+
+const MY_REQUEST_COLUMNS = [
+  "id",
+  "created_at",
+  "status",
+  "request_scope_row",
+  "request_scope_column",
+  "requested_module_key",
+  "requested_column_keys",
+  "requested_column_key",
+  "requested_applicant_ids",
+  "requested_applicant_id",
+  "requested_row_identifier_key",
+  "requested_row_identifier_values",
+  "requested_row_identifier_value",
+  "requested_path",
+  "reason",
+  "requester_user_id",
+  "requester_email",
+  "requester_admin_id",
+  "requester_username",
+  "requester_role",
+  "approver_admin_id",
+  "approver_username",
+  "approver_full_name",
+] as const;
+
+const PENDING_REQUEST_COLUMNS = [
+  "id",
+  "created_at",
+  "status",
+  "request_scope_row",
+  "request_scope_column",
+  "requested_module_key",
+  "requested_column_keys",
+  "requested_column_key",
+  "requested_applicant_ids",
+  "requested_applicant_id",
+  "requested_row_identifier_key",
+  "requested_row_identifier_values",
+  "requested_row_identifier_value",
+  "requested_path",
+  "reason",
+  "requester_user_id",
+  "requester_email",
+  "requester_admin_id",
+  "requester_username",
+  "requester_role",
+  "approver_admin_id",
+  "approver_username",
+  "approver_full_name",
+] as const;
+
 type LegacyAdminSession = {
   id: string;
   username: string;
@@ -82,6 +177,42 @@ function readLegacyAdminSession(): LegacyAdminSession | null {
   } catch {
     return null;
   }
+}
+
+type RequestIdentityColumn = "requester_user_id" | "requester_admin_id" | "requester_email" | "requester_username";
+
+function toEpochMs(value: string | null | undefined) {
+  const t = new Date(String(value ?? "")).getTime();
+  return Number.isFinite(t) ? t : 0;
+}
+
+type RequestIdentitySnapshot = {
+  userId: string;
+  adminId: string;
+  email: string;
+  username: string;
+};
+
+function normalizeIdentityValue(value: string | null | undefined) {
+  return String(value ?? "").trim().toLowerCase();
+}
+
+function normalizeRequestStatus(value: string | null | undefined) {
+  const normalized = String(value ?? "").trim().toUpperCase();
+  return normalized || "PENDING";
+}
+
+function requestBelongsToIdentity(row: AccessRequestRow, identity: RequestIdentitySnapshot) {
+  const requesterUserId = normalizeIdentityValue(row.requester_user_id);
+  const requesterAdminId = normalizeIdentityValue(row.requester_admin_id);
+  const requesterEmail = normalizeIdentityValue(row.requester_email);
+  const requesterUsername = normalizeIdentityValue(row.requester_username);
+
+  if (identity.userId && requesterUserId === identity.userId) return true;
+  if (identity.adminId && requesterAdminId === identity.adminId) return true;
+  if (identity.email && requesterEmail === identity.email) return true;
+  if (identity.username && requesterUsername === identity.username) return true;
+  return false;
 }
 
 function applicantLabel(a: ApplicantOption) {
@@ -138,18 +269,16 @@ function RequestsPageContent() {
 
   const [myRequests, setMyRequests] = useState<AccessRequestRow[]>([]);
   const [loadingRequests, setLoadingRequests] = useState(true);
+  const [cancellingId, setCancellingId] = useState<string | null>(null);
 
   const [pendingRequests, setPendingRequests] = useState<AccessRequestRow[]>([]);
   const [loadingPending, setLoadingPending] = useState(false);
   const [resolvingId, setResolvingId] = useState<string | null>(null);
 
   const legacySession = useMemo(() => readLegacyAdminSession(), []);
+  const legacyRole = normalizeRoleNameLoose(legacySession?.role);
   const reviewerAdminId = legacySession?.id ?? "";
-  const hasAccessModulePermission = useMemo(
-    () => myModules.some((m) => normalizeModuleKey(m.module_key) === "access"),
-    [myModules]
-  );
-  const canReviewRequests = role === "superadmin" && hasAccessModulePermission;
+  const canReviewRequests = role === "superadmin" || legacyRole === "superadmin";
 
   useEffect(() => {
     // Keep selection in sync with query string.
@@ -195,50 +324,16 @@ function RequestsPageContent() {
   const loadApprovers = useCallback(async () => {
     setLoadingApprovers(true);
     try {
-      const [adminsRes, rolesRes, roleAccessRes, overrideRes] = await Promise.all([
-        supabase
-          .from("admins")
-          .select("id, username, full_name, role, is_active")
-          .eq("is_active", true)
-          .order("username", { ascending: true }),
-        supabase.from("app_roles").select("role_id, role_name"),
-        supabase
-          .from("role_module_access")
-          .select("role_id")
-          .eq("module_key", "access")
-          .eq("can_read", true),
-        supabase
-          .from("admin_module_access_overrides")
-          .select("admin_id")
-          .eq("module_key", "access")
-          .eq("can_read", true),
-      ]);
+      const { data, error: fetchErr } = await supabase
+        .from("admins")
+        .select("id, username, full_name, role, is_active")
+        .eq("is_active", true)
+        .order("username", { ascending: true });
+      if (fetchErr) throw fetchErr;
 
-      if (adminsRes.error) throw adminsRes.error;
-      if (rolesRes.error) throw rolesRes.error;
-      if (roleAccessRes.error) throw roleAccessRes.error;
-      if (overrideRes.error) throw overrideRes.error;
-
-      const roleIdToName = new Map<string, string>();
-      for (const row of ((rolesRes.data as Array<{ role_id: string; role_name: string }> | null) ?? [])) {
-        roleIdToName.set(String(row.role_id), normalizeRoleNameLoose(row.role_name));
-      }
-
-      const allowedRoleNames = new Set<string>();
-      for (const row of ((roleAccessRes.data as Array<{ role_id: string }> | null) ?? [])) {
-        const roleName = roleIdToName.get(String(row.role_id));
-        if (roleName) allowedRoleNames.add(roleName);
-      }
-
-      const overrideAdminIds = new Set<string>(
-        (((overrideRes.data as Array<{ admin_id: string }> | null) ?? []) || []).map((row) => String(row.admin_id))
+      const rows = (((data as ApproverRow[]) || []) || []).filter(
+        (adminRow) => normalizeRoleNameLoose(adminRow.role) === "superadmin"
       );
-
-      const rows = (((adminsRes.data as ApproverRow[]) || []) || []).filter((adminRow) => {
-        const roleName = normalizeRoleNameLoose(adminRow.role);
-        const hasAccessPermission = allowedRoleNames.has(roleName) || overrideAdminIds.has(String(adminRow.id));
-        return roleName === "superadmin" && hasAccessPermission;
-      });
 
       setApprovers(rows);
       setApproverAdminId((prev) => {
@@ -257,32 +352,90 @@ function RequestsPageContent() {
     setLoadingRequests(true);
     try {
       const session = await supabase.auth.getSession();
-      const userId = session.data.session?.user?.id ?? null;
-      const email = session.data.session?.user?.email ?? null;
+      const userId = String(session.data.session?.user?.id ?? "").trim();
+      const email = String(session.data.session?.user?.email ?? "").trim();
       const legacy = readLegacyAdminSession();
+      const adminId = String(legacy?.id ?? "").trim();
 
-      let query = supabase
-        .from("access_requests")
-        .select(
-          "id, created_at, status, request_scope_row, request_scope_column, requested_module_key, requested_column_keys, requested_column_key, requested_applicant_ids, requested_applicant_id, requested_row_identifier_key, requested_row_identifier_values, requested_row_identifier_value, requested_path, reason, approver_admin_id, approver_username, approver_full_name"
-        )
-        .order("created_at", { ascending: false })
-        .limit(100);
+      const username = String(legacy?.username ?? "").trim();
+      const identities: Array<{ column: RequestIdentityColumn; value: string }> = [];
+      if (userId) identities.push({ column: "requester_user_id", value: userId });
+      if (adminId) identities.push({ column: "requester_admin_id", value: adminId });
+      if (email) identities.push({ column: "requester_email", value: email });
+      if (username) identities.push({ column: "requester_username", value: username });
 
-      if (userId) {
-        query = query.eq("requester_user_id", userId);
-      } else if (legacy?.id) {
-        query = query.eq("requester_admin_id", legacy.id);
-      } else if (email) {
-        query = query.eq("requester_email", email);
-      } else {
+      if (!identities.length) {
         setMyRequests([]);
         return;
       }
 
-      const { data, error: reqErr } = await query;
-      if (reqErr) throw reqErr;
-      const rows = (data as AccessRequestRow[]) || [];
+      const identitySnapshot: RequestIdentitySnapshot = {
+        userId: normalizeIdentityValue(userId),
+        adminId: normalizeIdentityValue(adminId),
+        email: normalizeIdentityValue(email),
+        username: normalizeIdentityValue(username),
+      };
+
+      const rowsById = new Map<string, AccessRequestRow>();
+
+      for (const identity of identities) {
+        try {
+          const data = await runAccessRequestSelectWithFallback([...MY_REQUEST_COLUMNS], async (selectClause) => {
+            const result = await supabase
+              .from("access_requests")
+              .select(selectClause)
+              .eq(identity.column, identity.value)
+              .order("created_at", { ascending: false })
+              .limit(100);
+            return { data: (result.data as unknown[] | null) ?? null, error: result.error };
+          });
+
+          for (const row of (data as AccessRequestRow[]) || []) {
+            const rowId = String(row.id ?? "").trim();
+            if (!rowId) continue;
+
+            const existing = rowsById.get(rowId);
+            if (!existing || toEpochMs(row.created_at) >= toEpochMs(existing.created_at)) {
+              rowsById.set(rowId, row);
+            }
+          }
+        } catch (e: unknown) {
+          const message = e instanceof Error ? e.message : "";
+          const missingColumn = extractMissingColumn(message);
+          if (missingColumn && missingColumn === identity.column) {
+            // Older deployments can miss newer identity columns.
+            continue;
+          }
+          throw e;
+        }
+      }
+
+      if (!rowsById.size) {
+        const broadData = await runAccessRequestSelectWithFallback([...MY_REQUEST_COLUMNS], async (selectClause) => {
+          const result = await supabase
+            .from("access_requests")
+            .select(selectClause)
+            .order("created_at", { ascending: false })
+            .limit(300);
+          return { data: (result.data as unknown[] | null) ?? null, error: result.error };
+        });
+
+        for (const row of (broadData as AccessRequestRow[]) || []) {
+          if (!requestBelongsToIdentity(row, identitySnapshot)) continue;
+          const rowId = String(row.id ?? "").trim();
+          if (!rowId) continue;
+
+          const existing = rowsById.get(rowId);
+          if (!existing || toEpochMs(row.created_at) >= toEpochMs(existing.created_at)) {
+            rowsById.set(rowId, row);
+          }
+        }
+      }
+
+      const rows = Array.from(rowsById.values())
+        .sort((a, b) => toEpochMs(b.created_at) - toEpochMs(a.created_at))
+        .slice(0, 100);
+
       setMyRequests(rows);
 
       const approvedRows = rows.filter((r) => String(r.status ?? "").toUpperCase() === "APPROVED");
@@ -316,32 +469,23 @@ function RequestsPageContent() {
 
     setLoadingPending(true);
     try {
-      let query = supabase
-        .from("access_requests")
-        .select(
-          "id, created_at, status, request_scope_row, request_scope_column, requested_module_key, requested_column_keys, requested_column_key, requested_applicant_ids, requested_applicant_id, requested_row_identifier_key, requested_row_identifier_values, requested_row_identifier_value, requested_path, reason, requester_user_id, requester_email, requester_admin_id, requester_username, requester_role, approver_admin_id, approver_username, approver_full_name"
-        )
-        .eq("status", "PENDING")
-        .order("created_at", { ascending: false })
-        .limit(200);
+      const data = await runAccessRequestSelectWithFallback([...PENDING_REQUEST_COLUMNS], async (selectClause) => {
+        const result = await supabase
+          .from("access_requests")
+          .select(selectClause)
+          .or("status.eq.PENDING,status.eq.pending,status.is.null")
+          .order("created_at", { ascending: false })
+          .limit(200);
+        return { data: (result.data as unknown[] | null) ?? null, error: result.error };
+      });
 
-      if (role !== "superadmin") {
-        if (!reviewerAdminId) {
-          setPendingRequests([]);
-          return;
-        }
-        query = query.eq("approver_admin_id", reviewerAdminId);
-      }
-
-      const { data, error: reqErr } = await query;
-      if (reqErr) throw reqErr;
       setPendingRequests((data as AccessRequestRow[]) || []);
     } catch {
       setPendingRequests([]);
     } finally {
       setLoadingPending(false);
     }
-  }, [canReviewRequests, reviewerAdminId, role]);
+  }, [canReviewRequests]);
 
   useEffect(() => {
     loadModules();
@@ -358,13 +502,15 @@ function RequestsPageContent() {
       const session = await supabase.auth.getSession();
       const userId = String(session.data.session?.user?.id ?? "").trim();
       const adminId = String(legacy?.id ?? "").trim();
+      const username = String(legacy?.username ?? "").trim();
+      const encodedUsername = encodeURIComponent(username);
 
       const registerChannel = (filter: string, name: string) => {
         const channel = supabase
           .channel(name)
           .on(
             "postgres_changes",
-            { event: "UPDATE", schema: "public", table: "access_requests", filter },
+            { event: "*", schema: "public", table: "access_requests", filter },
             (payload) => {
               const row = (payload.new ?? {}) as Partial<AccessRequestRow>;
               const rowId = String(row.id ?? "").trim();
@@ -389,6 +535,12 @@ function RequestsPageContent() {
       }
       if (adminId) {
         registerChannel(`requester_admin_id=eq.${adminId}`, `realtime:my-requests:admin:${adminId}`);
+      }
+      if (username) {
+        registerChannel(
+          `requester_username=eq.${username}`,
+          `realtime:my-requests:username:${encodedUsername}`
+        );
       }
     }
 
@@ -521,6 +673,7 @@ function RequestsPageContent() {
       const requestedPath = selectedModule?.path ?? null;
 
       const insertPayload: Record<string, unknown> = {
+        status: "PENDING",
         request_scope_row: scopeRow,
         request_scope_column: scopeColumn,
         requested_module_key: moduleKey,
@@ -542,27 +695,6 @@ function RequestsPageContent() {
         approver_username: approvers.find((a) => a.id === approverId)?.username ?? null,
         approver_full_name: approvers.find((a) => a.id === approverId)?.full_name ?? null,
       };
-
-      function extractMissingColumn(message: string): string {
-        const msg = String(message ?? "");
-
-        // Postgres error format
-        //   column "foo" does not exist
-        const pgMatch = msg.match(/column\s+"?([a-zA-Z0-9_]+)"?\s+does not exist/i);
-        if (pgMatch?.[1]) return pgMatch[1];
-
-        // PostgREST schema cache format
-        //   Could not find the 'foo' column of 'access_requests' in the schema cache
-        const cacheMatch = msg.match(/Could not find the '([a-zA-Z0-9_]+)' column/i);
-        if (cacheMatch?.[1]) return cacheMatch[1];
-
-        // Another common Postgres format
-        //   column "foo" of relation "access_requests" does not exist
-        const relMatch = msg.match(/column\s+"?([a-zA-Z0-9_]+)"?\s+of\s+relation\s+"?[a-zA-Z0-9_]+"?\s+does not exist/i);
-        if (relMatch?.[1]) return relMatch[1];
-
-        return "";
-      }
 
       async function insertAccessRequestWithFallback(payload: Record<string, unknown>) {
         const workingPayload: Record<string, unknown> = { ...payload };
@@ -603,6 +735,60 @@ function RequestsPageContent() {
       setError(e instanceof Error ? e.message : "Failed to submit request");
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  async function cancelMyRequest(req: AccessRequestRow) {
+    setError("");
+    setSuccess("");
+
+    const currentStatus = normalizeRequestStatus(req.status);
+    if (currentStatus !== "PENDING") {
+      setError("Only pending requests can be cancelled.");
+      return;
+    }
+
+    const rowId = String(req.id ?? "").trim();
+    if (!rowId) {
+      setError("Invalid request id.");
+      return;
+    }
+
+    setCancellingId(rowId);
+    try {
+      const session = await supabase.auth.getSession();
+      const legacy = readLegacyAdminSession();
+      const identitySnapshot: RequestIdentitySnapshot = {
+        userId: normalizeIdentityValue(session.data.session?.user?.id ?? ""),
+        adminId: normalizeIdentityValue(legacy?.id ?? ""),
+        email: normalizeIdentityValue(session.data.session?.user?.email ?? ""),
+        username: normalizeIdentityValue(legacy?.username ?? ""),
+      };
+
+      if (!requestBelongsToIdentity(req, identitySnapshot)) {
+        setError("You can only cancel your own requests.");
+        return;
+      }
+
+      const resolverUserId = session.data.session?.user?.id ?? null;
+      const { error: cancelErr } = await supabase
+        .from("access_requests")
+        .update({
+          status: "CANCELLED",
+          resolved_at: new Date().toISOString(),
+          resolved_by: resolverUserId,
+        })
+        .eq("id", rowId)
+        .or("status.eq.PENDING,status.eq.pending,status.is.null");
+
+      if (cancelErr) throw cancelErr;
+
+      setSuccess("Request cancelled.");
+      await loadMyRequests();
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Failed to cancel request");
+    } finally {
+      setCancellingId(null);
     }
   }
 
@@ -886,16 +1072,6 @@ function RequestsPageContent() {
           <div className="text-sm text-gray-500">Request access to pages you can’t open yet.</div>
         </div>
         <div className="flex items-center gap-2">
-          {canReviewRequests ? (
-            <button
-              type="button"
-              onClick={() => router.push("/Main_Modules/Requests/Queue/")}
-              disabled={loadingMyModules}
-              className="px-4 py-2 rounded-xl font-semibold bg-[#FFDA03] text-black"
-            >
-              {loadingMyModules ? "Checking access..." : "Reviewer Queue"}
-            </button>
-          ) : null}
           <button onClick={() => router.push("/Main_Modules/Dashboard/")} className="px-4 py-2 rounded-xl bg-white border">
             Back
           </button>
@@ -904,9 +1080,9 @@ function RequestsPageContent() {
 
       {canReviewRequests ? (
         <div className="mb-5 rounded-2xl border p-4 bg-gray-50">
-          <div className="text-sm font-semibold text-black">Pending Requests have moved.</div>
+          <div className="text-sm font-semibold text-black">Pending Requests are in Admin Accounts.</div>
           <div className="mt-1 text-xs text-gray-600">
-            Use the Reviewer Queue button to approve or reject access requests.
+            Open Reviewer Queue from the left sidebar under Admin Accounts.
           </div>
         </div>
       ) : null}
@@ -1217,42 +1393,62 @@ function RequestsPageContent() {
             ) : (
               <div className="mt-4 max-h-72 overflow-auto">
                 <ul className="space-y-2">
-                  {myRequests.map((r) => (
-                    <li key={r.id} className="px-3 py-2 rounded-xl border">
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="text-sm font-semibold text-black">{r.requested_module_key}</div>
-                        <div className="text-xs text-gray-500">{new Date(r.created_at).toLocaleString()}</div>
-                      </div>
-                      <div className="mt-1 text-xs text-gray-600">
-                        Scope: {[!r.request_scope_row && !r.request_scope_column ? "PAGE" : null, r.request_scope_row ? "ROW" : null, r.request_scope_column ? "COLUMN" : null].filter(Boolean).join(" + ") || "—"}
-                      </div>
-                      {Array.from(
-                        new Set([...(r.requested_column_keys ?? []), String(r.requested_column_key ?? "").trim()].filter(Boolean))
-                      ).length > 0 ? (
-                        <div className="mt-1 text-xs text-gray-600">
-                          Columns: {Array.from(new Set([...(r.requested_column_keys ?? []), String(r.requested_column_key ?? "").trim()].filter(Boolean))).join(", ")}
+                  {myRequests.map((r) => {
+                    const normalizedStatus = normalizeRequestStatus(r.status);
+                    const canCancel = normalizedStatus === "PENDING";
+                    const busy = cancellingId === r.id;
+
+                    return (
+                      <li key={r.id} className="px-3 py-2 rounded-xl border">
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="text-sm font-semibold text-black">{r.requested_module_key}</div>
+                          <div className="text-xs text-gray-500">{new Date(r.created_at).toLocaleString()}</div>
                         </div>
-                      ) : null}
-                      {Array.from(
-                        new Set([...(r.requested_applicant_ids ?? []), String(r.requested_applicant_id ?? "").trim()].filter(Boolean))
-                      ).length > 0 ? (
                         <div className="mt-1 text-xs text-gray-600">
-                          Personnel: {Array.from(
-                            new Set([...(r.requested_applicant_ids ?? []), String(r.requested_applicant_id ?? "").trim()].filter(Boolean))
-                          )
-                            .map((id) => applicantLabelById.get(id) ?? id)
-                            .join(", ")}
+                          Scope: {[!r.request_scope_row && !r.request_scope_column ? "PAGE" : null, r.request_scope_row ? "ROW" : null, r.request_scope_column ? "COLUMN" : null].filter(Boolean).join(" + ") || "—"}
                         </div>
-                      ) : null}
-                      {(r.approver_full_name || r.approver_username || r.approver_admin_id) ? (
-                        <div className="mt-1 text-xs text-gray-600">
-                          Reviewer: {(r.approver_full_name ?? "").trim() || (r.approver_username ?? "").trim() || r.approver_admin_id}
-                        </div>
-                      ) : null}
-                      <div className="mt-1 text-xs text-gray-600">Status: {r.status ?? "PENDING"}</div>
-                      {r.reason ? <div className="mt-1 text-xs text-gray-600">Reason: {r.reason}</div> : null}
-                    </li>
-                  ))}
+                        {Array.from(
+                          new Set([...(r.requested_column_keys ?? []), String(r.requested_column_key ?? "").trim()].filter(Boolean))
+                        ).length > 0 ? (
+                          <div className="mt-1 text-xs text-gray-600">
+                            Columns: {Array.from(new Set([...(r.requested_column_keys ?? []), String(r.requested_column_key ?? "").trim()].filter(Boolean))).join(", ")}
+                          </div>
+                        ) : null}
+                        {Array.from(
+                          new Set([...(r.requested_applicant_ids ?? []), String(r.requested_applicant_id ?? "").trim()].filter(Boolean))
+                        ).length > 0 ? (
+                          <div className="mt-1 text-xs text-gray-600">
+                            Personnel: {Array.from(
+                              new Set([...(r.requested_applicant_ids ?? []), String(r.requested_applicant_id ?? "").trim()].filter(Boolean))
+                            )
+                              .map((id) => applicantLabelById.get(id) ?? id)
+                              .join(", ")}
+                          </div>
+                        ) : null}
+                        {(r.approver_full_name || r.approver_username || r.approver_admin_id) ? (
+                          <div className="mt-1 text-xs text-gray-600">
+                            Reviewer: {(r.approver_full_name ?? "").trim() || (r.approver_username ?? "").trim() || r.approver_admin_id}
+                          </div>
+                        ) : null}
+                        <div className="mt-1 text-xs text-gray-600">Status: {normalizedStatus}</div>
+                        {r.reason ? <div className="mt-1 text-xs text-gray-600">Reason: {r.reason}</div> : null}
+                        {canCancel ? (
+                          <div className="mt-2">
+                            <button
+                              type="button"
+                              onClick={() => void cancelMyRequest(r)}
+                              disabled={busy}
+                              className={`px-3 py-1.5 rounded-xl text-xs font-semibold border ${
+                                busy ? "bg-gray-100 text-gray-400" : "bg-white text-gray-700"
+                              }`}
+                            >
+                              {busy ? "Cancelling..." : "Cancel Request"}
+                            </button>
+                          </div>
+                        ) : null}
+                      </li>
+                    );
+                  })}
                 </ul>
               </div>
             )}

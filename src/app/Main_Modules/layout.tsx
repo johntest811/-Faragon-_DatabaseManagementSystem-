@@ -81,7 +81,8 @@ function accessRequirementForPath(pathname: string): AccessRequirement | null {
   if (
     p.startsWith("/Main_Modules/AdminAccounts/") ||
     p.startsWith("/Main_Modules/Roles/") ||
-    p.startsWith("/Main_Modules/Permissions/")
+    p.startsWith("/Main_Modules/Permissions/") ||
+    p.startsWith("/Main_Modules/Requests/Queue/")
   ) {
     return { kind: "superadmin" };
   }
@@ -126,6 +127,8 @@ export default function MainModulesLayout({ children }: LayoutProps) {
   const [workforceFlyoutOpen, setWorkforceFlyoutOpen] = useState(false);
   const [logisticsOpen, setLogisticsOpen] = useState(false);
   const [logisticsFlyoutOpen, setLogisticsFlyoutOpen] = useState(false);
+  const [accessOpen, setAccessOpen] = useState(false);
+  const [accessFlyoutOpen, setAccessFlyoutOpen] = useState(false);
   const [activityOpen, setActivityOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [expiringOpen, setExpiringOpen] = useState(false);
@@ -633,6 +636,15 @@ export default function MainModulesLayout({ children }: LayoutProps) {
     []
   );
 
+  const ACCESS_ITEMS = useMemo(
+    () =>
+      [
+        { key: "access_accounts", name: "Admin Accounts", href: "/Main_Modules/AdminAccounts/", icon: Shield },
+        { key: "access_reviewer_queue", name: "Reviewer Queue", href: "/Main_Modules/Requests/Queue/", icon: ClipboardCheck },
+      ] as const,
+    []
+  );
+
   const workforceItems = useMemo(
     () => menu.filter((m) => WORKFORCE_KEYS.has(m.key)),
     [menu, WORKFORCE_KEYS]
@@ -660,6 +672,10 @@ export default function MainModulesLayout({ children }: LayoutProps) {
   }, [collapsed]);
 
   useEffect(() => {
+    if (!collapsed) setAccessFlyoutOpen(false);
+  }, [collapsed]);
+
+  useEffect(() => {
     if (!collapsed && workforceActive) setWorkforceOpen(true);
   }, [collapsed, workforceActive]);
 
@@ -682,6 +698,20 @@ export default function MainModulesLayout({ children }: LayoutProps) {
   useEffect(() => {
     if (!collapsed && logisticsActive) setLogisticsOpen(true);
   }, [collapsed, logisticsActive]);
+
+  const accessActive = useMemo(() => {
+    if (sessionRole !== "superadmin") return false;
+    return [
+      "/Main_Modules/AdminAccounts/",
+      "/Main_Modules/Roles/",
+      "/Main_Modules/Permissions/",
+      "/Main_Modules/Requests/Queue/",
+    ].some((prefix) => pathname === prefix || pathname.startsWith(prefix));
+  }, [pathname, sessionRole]);
+
+  useEffect(() => {
+    if (!collapsed && accessActive) setAccessOpen(true);
+  }, [collapsed, accessActive]);
 
   function navLinkClass(active: boolean) {
     return `flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 ${
@@ -859,8 +889,74 @@ export default function MainModulesLayout({ children }: LayoutProps) {
               );
             }
 
+            if (item.key === "access" && sessionRole === "superadmin") {
+              return (
+                <div key="access" className="relative mb-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (collapsed) setAccessFlyoutOpen((v) => !v);
+                      else setAccessOpen((v) => !v);
+                    }}
+                    className={navLinkClass(accessActive)}
+                    aria-expanded={collapsed ? accessFlyoutOpen : accessOpen}
+                  >
+                    <Shield className="w-5 h-5 shrink-0" />
+                    {!collapsed ? (
+                      <span className="text-sm font-medium whitespace-nowrap">Admin Accounts</span>
+                    ) : null}
+                    {!collapsed ? (
+                      <ChevronDown
+                        className={`ml-auto w-4 h-4 transition-transform ${
+                          accessOpen ? "rotate-180" : ""
+                        }`}
+                      />
+                    ) : null}
+                  </button>
+
+                  {collapsed && accessFlyoutOpen ? (
+                    <div className="mt-1 space-y-1">
+                      {ACCESS_ITEMS.map((a) => {
+                        const active = pathname === a.href || pathname.startsWith(a.href);
+                        return (
+                          <Link
+                            key={a.key}
+                            href={a.href}
+                            title={a.name}
+                            aria-label={a.name}
+                            className={`flex items-center justify-center px-4 py-3 rounded-xl transition-all duration-200 ${
+                              active
+                                ? "bg-[#FFDA03] text-black"
+                                : "text-gray-700 hover:bg-yellow-100"
+                            }`}
+                          >
+                            <a.icon className="w-5 h-5 shrink-0" />
+                          </Link>
+                        );
+                      })}
+                    </div>
+                  ) : null}
+
+                  {!collapsed && accessOpen ? (
+                    <div className="mt-1 ml-4 pl-3 border-l border-gray-200 space-y-1">
+                      {ACCESS_ITEMS.map((a) => {
+                        const active = pathname === a.href || pathname.startsWith(a.href);
+                        return (
+                          <Link key={a.key} href={a.href} className={navLinkClass(active)}>
+                            <a.icon className="w-5 h-5 shrink-0" />
+                            <span className="text-sm font-medium whitespace-nowrap">{a.name}</span>
+                          </Link>
+                        );
+                      })}
+                    </div>
+                  ) : null}
+                </div>
+              );
+            }
+
             const active =
-              menuActivePath === item.href || menuActivePath.startsWith(item.href);
+              (menuActivePath === item.href || menuActivePath.startsWith(item.href)) &&
+              !(item.key === "requests" && pathname.startsWith("/Main_Modules/Requests/Queue/"));
 
             return (
               <Link key={item.name} href={item.href} className={navLinkClass(active)}>

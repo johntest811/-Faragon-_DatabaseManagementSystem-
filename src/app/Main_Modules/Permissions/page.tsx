@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { supabase } from "../../Client/SupabaseClients";
 import { useAuthRole } from "../../Client/useRbac";
 import { AccessTabs } from "../Components/AccessTabs";
-import { groupedCatalog, normalizeModuleKey } from "../Components/permissionCatalog";
+import { columnsForModule, groupedCatalog, normalizeModuleKey } from "../Components/permissionCatalog";
 
 type ModuleRow = { module_key: string; display_name: string };
 
@@ -169,6 +169,9 @@ export default function PermissionsPage() {
 				}
 			}
 
+			const roleModuleSet = new Set<string>();
+			const roleColMap: Record<string, Set<string>> = {};
+
 			if (roleId) {
 				const [roleModulesRes, roleColsRes] = await Promise.all([
 					supabase.from("role_module_access").select("module_key, can_read").eq("role_id", roleId),
@@ -177,14 +180,13 @@ export default function PermissionsPage() {
 				if (roleModulesRes.error) throw roleModulesRes.error;
 				if (roleColsRes.error) throw roleColsRes.error;
 
-				const roleModuleSet = new Set(
+				const dbRoleModuleSet = new Set(
 					(((roleModulesRes.data as RoleModuleAccessRow[]) ?? []) || [])
 						.filter((r) => r.can_read !== false)
 						.map((r) => normalizeModuleKey(r.module_key))
 				);
-				setRoleModuleAccess(roleModuleSet);
+				for (const key of dbRoleModuleSet) roleModuleSet.add(key);
 
-				const roleColMap: Record<string, Set<string>> = {};
 				for (const row of ((roleColsRes.data as RoleColumnAccessRow[]) ?? []) || []) {
 					if (row.can_read === false) continue;
 					const key = normalizeModuleKey(row.module_key);
@@ -193,11 +195,22 @@ export default function PermissionsPage() {
 					if (!roleColMap[key]) roleColMap[key] = new Set<string>();
 					roleColMap[key].add(col);
 				}
-				setRoleColumnAccess(roleColMap);
-			} else {
-				setRoleModuleAccess(new Set());
-				setRoleColumnAccess({});
 			}
+
+			if (roleName === "superadmin") {
+				for (const moduleRow of modules) {
+					const moduleKey = normalizeModuleKey(moduleRow.module_key);
+					if (!moduleKey) continue;
+					roleModuleSet.add(moduleKey);
+					const cols = columnsForModule(moduleKey);
+					if (!cols.length) continue;
+					if (!roleColMap[moduleKey]) roleColMap[moduleKey] = new Set<string>();
+					for (const col of cols) roleColMap[moduleKey].add(col);
+				}
+			}
+
+			setRoleModuleAccess(roleModuleSet);
+			setRoleColumnAccess(roleColMap);
 
 			const [adminModulesRes, adminColsRes] = await Promise.all([
 				supabase.from("admin_module_access_overrides").select("module_key, can_read").eq("admin_id", admin.id),
@@ -232,7 +245,7 @@ export default function PermissionsPage() {
 		} finally {
 			setLoadingAccess(false);
 		}
-	}, []);
+	}, [modules]);
 
 	useEffect(() => {
 		loadModules();
@@ -274,6 +287,9 @@ export default function PermissionsPage() {
 		setSuccess("");
 		if (!canManage) return setError("Only Superadmin can change individual access.");
 		if (!selectedAdminId) return setError("Please select an account.");
+		if (normalizeModuleKey(selectedAdmin?.role) === "superadmin") {
+			return setError("Superadmin already has full access by default.");
+		}
 
 		const key = normalizeModuleKey(moduleKey);
 		const busyKey = `admin-module:${selectedAdminId}:${key}`;
@@ -324,6 +340,9 @@ export default function PermissionsPage() {
 		setSuccess("");
 		if (!canManage) return setError("Only Superadmin can change individual access.");
 		if (!selectedAdminId) return setError("Please select an account.");
+		if (normalizeModuleKey(selectedAdmin?.role) === "superadmin") {
+			return setError("Superadmin already has full access by default.");
+		}
 
 		const moduleKeyNormalized = normalizeModuleKey(moduleKey);
 		const column = String(columnKey ?? "").trim();
@@ -526,6 +545,7 @@ export default function PermissionsPage() {
 										const roleModuleOn = roleModuleAccess.has(m.module_key);
 										const overrideModuleOn = adminModuleAccess.has(m.module_key);
 										const effectiveModuleOn = roleModuleOn || overrideModuleOn;
+										const moduleLockedByRole = roleModuleOn && !overrideModuleOn;
 										const moduleBusy =
 											savingIndividualKey === `admin-module:${selectedAdminId}:${m.module_key}`;
 
@@ -550,16 +570,25 @@ export default function PermissionsPage() {
 														<div className="mt-1 text-xs text-gray-600">
 															Effective: <span className="font-semibold">{effectiveModuleOn ? "Yes" : "No"}</span> · From role: {roleModuleOn ? "Yes" : "No"}
 														</div>
+														{moduleLockedByRole ? (
+															<div className="mt-1 text-xs text-gray-500">This page permission is inherited from the role.</div>
+														) : null}
 														<div className="mt-1 text-xs text-gray-600">Effective columns: {effectiveCols || "(none)"}</div>
 													</div>
 													<div className="flex items-center gap-2">
 														<label className="text-xs text-gray-700 flex items-center gap-2">
-															<span className="text-gray-500">Override</span>
+															<span className="text-gray-500">Permission</span>
 															<input
 																type="checkbox"
-																checked={overrideModuleOn}
-																onChange={() => toggleAdminModule(m.module_key)}
-																disabled={!canManage || moduleBusy}
+																checked={effectiveModuleOn}
+																onChange={() => {
+																	if (moduleLockedByRole) {
+																		setError("This page access is inherited from role. Edit it in Roles tab.");
+																		return;
+																	}
+																	void toggleAdminModule(m.module_key);
+																}}
+																disabled={!canManage || moduleBusy || moduleLockedByRole}
 															/>
 														</label>
 													</div>
@@ -569,7 +598,10 @@ export default function PermissionsPage() {
 													{m.columns.map((col) => {
 														const colBusy =
 															savingIndividualKey === `admin-column:${selectedAdminId}:${m.module_key}:${col}`;
-														const colOn = overrideCols.has(col);
+														const roleColOn = roleCols.has(col);
+														const overrideColOn = overrideCols.has(col);
+														const colOn = roleColOn || overrideColOn;
+														const colLockedByRole = roleColOn && !overrideColOn;
 														return (
 															<label
 																key={`col-${m.module_key}-${col}`}
@@ -580,8 +612,14 @@ export default function PermissionsPage() {
 															<input
 																type="checkbox"
 																checked={colOn}
-																onChange={() => toggleAdminColumn(m.module_key, col)}
-																disabled={!canManage || colBusy}
+																onChange={() => {
+																	if (colLockedByRole) {
+																		setError("This column access is inherited from role. Edit it in Roles tab.");
+																		return;
+																	}
+																	void toggleAdminColumn(m.module_key, col);
+																}}
+																disabled={!canManage || colBusy || colLockedByRole}
 															/>
 															<span>{col}</span>
 														</label>

@@ -469,9 +469,21 @@ export default function SettingsPage() {
 	const [recipientNotes, setRecipientNotes] = useState("");
 	const [recipientSaving, setRecipientSaving] = useState(false);
 	const [addRecipientOpen, setAddRecipientOpen] = useState(false);
+	const [editingRecipientId, setEditingRecipientId] = useState<number | null>(null);
+	const [editRecipientEmail, setEditRecipientEmail] = useState("");
+	const [editRecipientNotes, setEditRecipientNotes] = useState("");
+	const [editRecipientActive, setEditRecipientActive] = useState(true);
 	const [otherRows, setOtherRows] = useState<OtherExpirationRow[]>([]);
 	const [otherSaving, setOtherSaving] = useState(false);
 	const [addOtherOpen, setAddOtherOpen] = useState(false);
+	const [editingOtherId, setEditingOtherId] = useState<number | null>(null);
+	const [editOtherItemName, setEditOtherItemName] = useState("");
+	const [editOtherType, setEditOtherType] = useState<OtherExpirationType>("Car OCR");
+	const [editOtherDaysBeforeInput, setEditOtherDaysBeforeInput] = useState("30");
+	const [editOtherExpiresOn, setEditOtherExpiresOn] = useState("");
+	const [editOtherRecipientEmail, setEditOtherRecipientEmail] = useState("");
+	const [editOtherNotes, setEditOtherNotes] = useState("");
+	const [editOtherActive, setEditOtherActive] = useState(true);
 	const [otherItemName, setOtherItemName] = useState("");
 	const [otherType, setOtherType] = useState<OtherExpirationType>("Car OCR");
 	const [otherDaysBeforeInput, setOtherDaysBeforeInput] = useState("30");
@@ -612,6 +624,42 @@ export default function SettingsPage() {
 		}
 	}
 
+	function openRecipientEditor(row: RecipientRow) {
+		setEditingRecipientId(row.id);
+		setEditRecipientEmail(row.email);
+		setEditRecipientNotes(row.notes ?? "");
+		setEditRecipientActive(Boolean(row.is_active));
+		setError("");
+		setSuccess("");
+	}
+
+	async function saveRecipientEdit() {
+		if (!editingRecipientId) return;
+		setRecipientSaving(true);
+		setError("");
+		setSuccess("");
+		try {
+			const email = safeText(editRecipientEmail).toLowerCase();
+			if (!email) throw new Error("Recipient email is required.");
+			const upd = await supabase
+				.from("notification_recipients")
+				.update({
+					email,
+					notes: safeText(editRecipientNotes) || null,
+					is_active: Boolean(editRecipientActive),
+				})
+				.eq("id", editingRecipientId);
+			if (upd.error) throw upd.error;
+			setEditingRecipientId(null);
+			setSuccess("Recipient updated.");
+			await loadRecipientRows();
+		} catch (e: unknown) {
+			setError(errorMessage(e));
+		} finally {
+			setRecipientSaving(false);
+		}
+	}
+
 	async function toggleRecipient(id: number, isActive: boolean) {
 		try {
 			const upd = await supabase.from("notification_recipients").update({ is_active: isActive }).eq("id", id);
@@ -681,6 +729,72 @@ export default function SettingsPage() {
 			setOtherRecipientEmail("");
 			setOtherNotes("");
 			setAddOtherOpen(false);
+			await loadOtherExpirationRows();
+		} catch (e: unknown) {
+			setError(errorMessage(e));
+		} finally {
+			setOtherSaving(false);
+		}
+	}
+
+	function openOtherEditor(row: OtherExpirationRow) {
+		setEditingOtherId(row.id);
+		setEditOtherItemName(row.item_name);
+		setEditOtherType(row.expiration_type);
+		setEditOtherDaysBeforeInput(String(row.days_before_expiry ?? 30));
+		setEditOtherExpiresOn(row.expires_on);
+		setEditOtherRecipientEmail(row.recipient_email ?? "");
+		setEditOtherNotes(row.notes ?? "");
+		setEditOtherActive(Boolean(row.is_active));
+		setError("");
+		setSuccess("");
+	}
+
+	async function saveOtherEdit() {
+		if (!editingOtherId) return;
+		setOtherSaving(true);
+		setError("");
+		setSuccess("");
+		try {
+			const itemName = safeText(editOtherItemName);
+			const typeName = safeText(editOtherType);
+			const daysBeforeItem = Number(editOtherDaysBeforeInput);
+			const expiresOn = safeText(editOtherExpiresOn);
+			if (!itemName) throw new Error("Item name is required.");
+			if (!typeName) throw new Error("Type is required.");
+			if (!Number.isFinite(daysBeforeItem) || daysBeforeItem < 1 || daysBeforeItem > 365) {
+				throw new Error("Days before expiry must be between 1 and 365.");
+			}
+			if (!expiresOn) throw new Error("Expiration date is required.");
+
+			const updatePayload: Record<string, unknown> = {
+				item_name: itemName,
+				expiration_type: typeName,
+				expires_on: expiresOn,
+				days_before_expiry: Math.trunc(daysBeforeItem),
+				recipient_email: safeText(editOtherRecipientEmail).toLowerCase() || null,
+				notes: safeText(editOtherNotes) || null,
+				is_active: Boolean(editOtherActive),
+			};
+
+			const upd = await supabase.from("other_expiration_items").update(updatePayload).eq("id", editingOtherId);
+			if (upd.error) {
+				const msg = safeText((upd.error as any)?.message || upd.error);
+				if (!/days_before_expiry/i.test(msg)) throw upd.error;
+
+				const fallbackPayload = { ...updatePayload };
+				delete fallbackPayload.days_before_expiry;
+				const fallback = await supabase
+					.from("other_expiration_items")
+					.update(fallbackPayload)
+					.eq("id", editingOtherId);
+				if (fallback.error) throw fallback.error;
+				setSuccess("Expiration item updated. Run the days_before_expiry migration to persist per-item days.");
+			} else {
+				setSuccess("Expiration item updated.");
+			}
+
+			setEditingOtherId(null);
 			await loadOtherExpirationRows();
 		} catch (e: unknown) {
 			setError(errorMessage(e));
@@ -1725,9 +1839,17 @@ export default function SettingsPage() {
 														/>
 													</td>
 													<td className="py-2 px-3">
-														<button onClick={() => void removeRecipient(row.id)} className="rounded-lg border px-2 py-1">
-															Remove
-														</button>
+														<div className="flex items-center gap-2">
+															<button
+																onClick={() => openRecipientEditor(row)}
+																className="rounded-lg border px-2 py-1"
+															>
+																Edit
+															</button>
+															<button onClick={() => void removeRecipient(row.id)} className="rounded-lg border px-2 py-1">
+																Remove
+															</button>
+														</div>
 													</td>
 												</tr>
 											))
@@ -1785,9 +1907,17 @@ export default function SettingsPage() {
 														/>
 													</td>
 													<td className="py-2 px-3">
-														<button onClick={() => void removeOtherExpiration(row.id)} className="rounded-lg border px-2 py-1">
-															Remove
-														</button>
+														<div className="flex items-center gap-2">
+															<button
+																onClick={() => openOtherEditor(row)}
+																className="rounded-lg border px-2 py-1"
+															>
+																Edit
+															</button>
+															<button onClick={() => void removeOtherExpiration(row.id)} className="rounded-lg border px-2 py-1">
+																Remove
+															</button>
+														</div>
 													</td>
 												</tr>
 											))
@@ -1901,6 +2031,61 @@ export default function SettingsPage() {
 							</div>
 						) : null}
 
+						{editingRecipientId !== null ? (
+							<div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={() => setEditingRecipientId(null)}>
+								<div className="w-full max-w-lg rounded-2xl border bg-white p-5" onClick={(e) => e.stopPropagation()}>
+									<div className="flex items-center justify-between gap-3 mb-4">
+										<div>
+											<div className="text-lg font-semibold text-black">Edit recipient</div>
+											<div className="text-sm text-gray-500">Update recipient email and notification note.</div>
+										</div>
+										<button type="button" className="px-3 py-2 rounded-xl border bg-white text-sm" onClick={() => setEditingRecipientId(null)}>
+											Cancel
+										</button>
+									</div>
+
+									<label className="block text-sm mb-1 text-black">Email</label>
+									<input
+										value={editRecipientEmail}
+										onChange={(e) => setEditRecipientEmail(e.target.value)}
+										placeholder="notify-team@example.com"
+										className="w-full rounded-xl border px-3 py-2 text-black"
+									/>
+
+									<label className="block text-sm mt-3 mb-1 text-black">Notes (optional)</label>
+									<input
+										value={editRecipientNotes}
+										onChange={(e) => setEditRecipientNotes(e.target.value)}
+										placeholder="Department / purpose"
+										className="w-full rounded-xl border px-3 py-2 text-black"
+									/>
+
+									<label className="mt-3 inline-flex items-center gap-2 text-sm text-black">
+										<input
+											type="checkbox"
+											checked={editRecipientActive}
+											onChange={(e) => setEditRecipientActive(e.target.checked)}
+										/>
+										Active
+									</label>
+
+									<div className="mt-4 flex items-center justify-end gap-2">
+										<button type="button" className="px-4 py-2 rounded-xl border bg-white text-black" onClick={() => setEditingRecipientId(null)}>
+											Close
+										</button>
+										<button
+											type="button"
+											onClick={() => void saveRecipientEdit()}
+											disabled={recipientSaving}
+											className="px-4 py-2 rounded-xl bg-black text-white disabled:opacity-50"
+										>
+											{recipientSaving ? "Saving..." : "Save"}
+										</button>
+									</div>
+								</div>
+							</div>
+						) : null}
+
 						{addOtherOpen ? (
 							<div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={() => setAddOtherOpen(false)}>
 								<div className="w-full max-w-2xl rounded-2xl border bg-white p-5" onClick={(e) => e.stopPropagation()}>
@@ -1978,6 +2163,123 @@ export default function SettingsPage() {
 											className="px-4 py-2 rounded-xl bg-black text-white disabled:opacity-50"
 										>
 											{otherSaving ? "Adding…" : "Add"}
+										</button>
+									</div>
+								</div>
+							</div>
+						) : null}
+
+						{editingOtherId !== null ? (
+							<div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={() => setEditingOtherId(null)}>
+								<div className="w-full max-w-2xl rounded-2xl border bg-white p-5" onClick={(e) => e.stopPropagation()}>
+									<div className="flex items-center justify-between gap-3 mb-4">
+										<div>
+											<div className="text-lg font-semibold text-black">Edit expiration item</div>
+											<div className="text-sm text-gray-500">Update item details, reminder lead days, and recipient.</div>
+										</div>
+										<button type="button" className="px-3 py-2 rounded-xl border bg-white text-sm" onClick={() => setEditingOtherId(null)}>
+											Cancel
+										</button>
+									</div>
+
+									<div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+										<div>
+											<label className="block text-sm mb-1 text-black">Item name</label>
+											<input
+												value={editOtherItemName}
+												onChange={(e) => setEditOtherItemName(e.target.value)}
+												placeholder="Item name"
+												className="w-full rounded-xl border px-3 py-2 text-black"
+											/>
+										</div>
+										<div>
+											<label className="block text-sm mb-1 text-black">Type</label>
+											<input
+												value={editOtherType}
+												onChange={(e) => setEditOtherType(e.target.value)}
+												placeholder="e.g. Car OCR"
+												className="w-full rounded-xl border px-3 py-2 text-black"
+											/>
+										</div>
+										<div>
+											<label className="block text-sm mb-1 text-black">Days before expiry</label>
+											<input
+												type="text"
+												inputMode="numeric"
+												pattern="[0-9]*"
+												value={editOtherDaysBeforeInput}
+												onChange={(e) => {
+													const next = e.target.value;
+													if (next === "" || /^\d+$/.test(next)) setEditOtherDaysBeforeInput(next);
+												}}
+												onBlur={() => {
+													const trimmed = editOtherDaysBeforeInput.trim();
+													if (!trimmed) {
+														setEditOtherDaysBeforeInput("30");
+														return;
+													}
+													const n = Number(trimmed);
+													if (!Number.isFinite(n)) {
+														setEditOtherDaysBeforeInput("30");
+														return;
+													}
+													const clamped = Math.min(365, Math.max(1, Math.trunc(n)));
+													setEditOtherDaysBeforeInput(String(clamped));
+												}}
+												placeholder="30"
+												className="w-full rounded-xl border px-3 py-2 text-black"
+											/>
+										</div>
+										<div>
+											<label className="block text-sm mb-1 text-black">Expiration date</label>
+											<input
+												type="date"
+												value={editOtherExpiresOn}
+												onChange={(e) => setEditOtherExpiresOn(e.target.value)}
+												className="w-full rounded-xl border px-3 py-2 text-black"
+											/>
+										</div>
+										<div>
+											<label className="block text-sm mb-1 text-black">Recipient email (optional)</label>
+											<input
+												value={editOtherRecipientEmail}
+												onChange={(e) => setEditOtherRecipientEmail(e.target.value)}
+												placeholder="recipient@example.com"
+												className="w-full rounded-xl border px-3 py-2 text-black"
+											/>
+										</div>
+									</div>
+
+									<div className="mt-3">
+										<label className="block text-sm mb-1 text-black">Notes (optional)</label>
+										<input
+											value={editOtherNotes}
+											onChange={(e) => setEditOtherNotes(e.target.value)}
+											placeholder="Notes"
+											className="w-full rounded-xl border px-3 py-2 text-black"
+										/>
+									</div>
+
+									<label className="mt-3 inline-flex items-center gap-2 text-sm text-black">
+										<input
+											type="checkbox"
+											checked={editOtherActive}
+											onChange={(e) => setEditOtherActive(e.target.checked)}
+										/>
+										Active
+									</label>
+
+									<div className="mt-4 flex items-center justify-end gap-2">
+										<button type="button" className="px-4 py-2 rounded-xl border bg-white text-black" onClick={() => setEditingOtherId(null)}>
+											Close
+										</button>
+										<button
+											type="button"
+											onClick={() => void saveOtherEdit()}
+											disabled={otherSaving}
+											className="px-4 py-2 rounded-xl bg-black text-white disabled:opacity-50"
+										>
+											{otherSaving ? "Saving..." : "Save"}
 										</button>
 									</div>
 								</div>

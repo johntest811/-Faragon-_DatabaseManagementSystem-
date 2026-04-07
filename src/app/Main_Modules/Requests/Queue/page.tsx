@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../../Client/SupabaseClients";
-import { useAuthRole, useMyModules } from "../../../Client/useRbac";
+import { useAuthRole } from "../../../Client/useRbac";
 import LoadingCircle from "../../../Components/LoadingCircle";
 import { useToast } from "../../../Components/ToastProvider";
 
@@ -73,6 +73,75 @@ function moduleKeysForRequest(moduleKey: string): string[] {
   return [key];
 }
 
+function extractMissingColumn(message: string): string {
+  const msg = String(message ?? "");
+
+  const pgMatch = msg.match(/column\s+"?([a-zA-Z0-9_]+)"?\s+does not exist/i);
+  if (pgMatch?.[1]) return pgMatch[1];
+
+  const cacheMatch = msg.match(/Could not find the '([a-zA-Z0-9_]+)' column/i);
+  if (cacheMatch?.[1]) return cacheMatch[1];
+
+  const relMatch = msg.match(/column\s+"?([a-zA-Z0-9_]+)"?\s+of\s+relation\s+"?[a-zA-Z0-9_]+"?\s+does not exist/i);
+  if (relMatch?.[1]) return relMatch[1];
+
+  return "";
+}
+
+async function runAccessRequestSelectWithFallback(
+  columns: string[],
+  runQuery: (selectClause: string) => Promise<{ data: unknown[] | null; error: { message?: string } | null }>
+) {
+  const workingColumns = [...columns];
+  const removedColumns = new Set<string>();
+
+  for (let attempt = 0; attempt < columns.length + 1; attempt += 1) {
+    if (!workingColumns.length) {
+      throw new Error("No selectable access request columns are available.");
+    }
+
+    const { data, error } = await runQuery(workingColumns.join(", "));
+    if (!error) return (data ?? []) as unknown[];
+
+    const missingColumn = extractMissingColumn(String(error.message ?? ""));
+    if (!missingColumn || removedColumns.has(missingColumn)) throw error;
+
+    const index = workingColumns.findIndex((col) => col.trim() === missingColumn);
+    if (index < 0) throw error;
+
+    removedColumns.add(missingColumn);
+    workingColumns.splice(index, 1);
+  }
+
+  throw new Error("Failed to load access requests.");
+}
+
+const PENDING_REQUEST_COLUMNS = [
+  "id",
+  "created_at",
+  "status",
+  "request_scope_row",
+  "request_scope_column",
+  "requested_module_key",
+  "requested_column_keys",
+  "requested_column_key",
+  "requested_applicant_ids",
+  "requested_applicant_id",
+  "requested_row_identifier_key",
+  "requested_row_identifier_values",
+  "requested_row_identifier_value",
+  "requested_path",
+  "reason",
+  "requester_user_id",
+  "requester_email",
+  "requester_admin_id",
+  "requester_username",
+  "requester_role",
+  "approver_admin_id",
+  "approver_username",
+  "approver_full_name",
+] as const;
+
 function applicantLabel(a: ApplicantOption) {
   const parts = [a.first_name, a.middle_name, a.last_name].filter(Boolean);
   const name = parts.length ? parts.join(" ") : "(No name)";
@@ -82,7 +151,6 @@ function applicantLabel(a: ApplicantOption) {
 export default function RequestsQueuePage() {
   const router = useRouter();
   const { role } = useAuthRole();
-  const { modules: myModules, loading: loadingMyModules } = useMyModules();
   const toast = useToast();
 
   const [error, setError] = useState<string>("");
@@ -109,12 +177,8 @@ export default function RequestsQueuePage() {
   }, [success, toast]);
 
   const legacySession = useMemo(() => readLegacyAdminSession(), []);
-  const reviewerAdminId = legacySession?.id ?? "";
-  const hasAccessModulePermission = useMemo(
-    () => myModules.some((m) => String(m.module_key ?? "").trim().toLowerCase() === "access"),
-    [myModules]
-  );
-  const canReviewRequests = role === "superadmin" && hasAccessModulePermission;
+  const legacyRole = normalizeRoleNameLoose(legacySession?.role);
+  const canReviewRequests = role === "superadmin" || legacyRole === "superadmin";
 
   const applicantLabelById = useMemo(() => {
     const map = new Map<string, string>();
@@ -146,37 +210,47 @@ export default function RequestsQueuePage() {
 
     setLoadingPending(true);
     try {
-      let query = supabase
-        .from("access_requests")
-        .select(
-          "id, created_at, status, request_scope_row, request_scope_column, requested_module_key, requested_column_keys, requested_column_key, requested_applicant_ids, requested_applicant_id, requested_row_identifier_key, requested_row_identifier_values, requested_row_identifier_value, requested_path, reason, requester_user_id, requester_email, requester_admin_id, requester_username, requester_role, approver_admin_id, approver_username, approver_full_name"
-        )
-        .eq("status", "PENDING")
-        .order("created_at", { ascending: false })
-        .limit(200);
+      const data = await runAccessRequestSelectWithFallback([...PENDING_REQUEST_COLUMNS], async (selectClause) => {
+        const result = await supabase
+          .from("access_requests")
+          .select(selectClause)
+          .or("status.eq.PENDING,status.eq.pending,status.is.null")
+          .order("created_at", { ascending: false })
+          .limit(200);
+        return { data: (result.data as unknown[] | null) ?? null, error: result.error };
+      });
 
-      if (role !== "superadmin") {
-        if (!reviewerAdminId) {
-          setPendingRequests([]);
-          return;
-        }
-        query = query.eq("approver_admin_id", reviewerAdminId);
-      }
-
-      const { data, error: reqErr } = await query;
-      if (reqErr) throw reqErr;
       setPendingRequests((data as AccessRequestRow[]) || []);
     } catch {
       setPendingRequests([]);
     } finally {
       setLoadingPending(false);
     }
-  }, [canReviewRequests, reviewerAdminId, role]);
+  }, [canReviewRequests]);
 
   useEffect(() => {
     loadApplicants();
     loadPendingRequests();
   }, [loadApplicants, loadPendingRequests]);
+
+  useEffect(() => {
+    if (!canReviewRequests) return;
+
+    const channel = supabase
+      .channel("realtime:requests-queue")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "access_requests" },
+        () => {
+          void loadPendingRequests();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [canReviewRequests, loadPendingRequests]);
 
   async function resolveRequest(req: AccessRequestRow, nextStatus: "APPROVED" | "REJECTED") {
     setError("");
@@ -184,12 +258,6 @@ export default function RequestsQueuePage() {
     if (!canReviewRequests) {
       setError("Only superadmin reviewers can review requests.");
       return;
-    }
-    if (role !== "superadmin") {
-      if (!reviewerAdminId || req.approver_admin_id !== reviewerAdminId) {
-        setError("This request is not assigned to your reviewer account.");
-        return;
-      }
     }
 
     const requestedKey = String(req.requested_module_key ?? "").trim().toLowerCase();
@@ -456,12 +524,10 @@ export default function RequestsQueuePage() {
           <div>
             <div className="text-lg font-semibold text-black">Reviewer Queue</div>
             <div className="text-sm text-gray-500">
-              {loadingMyModules
-                ? "Checking access permissions..."
-                : "Only superadmin accounts with Admin Accounts permission can review pending requests."}
+              Only superadmin accounts can review pending requests.
             </div>
           </div>
-          <button onClick={() => router.push("/Main_Modules/Requests/")} className="px-4 py-2 rounded-xl bg-white border">
+          <button onClick={() => router.push("/Main_Modules/AdminAccounts/")} className="px-4 py-2 rounded-xl bg-white border">
             Back
           </button>
         </div>
@@ -486,7 +552,7 @@ export default function RequestsQueuePage() {
           >
             Refresh
           </button>
-          <button onClick={() => router.push("/Main_Modules/Requests/")} className="px-4 py-2 rounded-xl bg-white border">
+          <button onClick={() => router.push("/Main_Modules/AdminAccounts/")} className="px-4 py-2 rounded-xl bg-white border">
             Back
           </button>
         </div>

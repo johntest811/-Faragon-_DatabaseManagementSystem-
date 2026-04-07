@@ -387,6 +387,22 @@ CREATE TABLE public.restock (
   CONSTRAINT restock_inventory_fkey FOREIGN KEY (id_paraphernalia_inventory) REFERENCES public.paraphernalia_inventory(id_paraphernalia_inventory),
   CONSTRAINT restock_contract_fkey FOREIGN KEY (contract_id) REFERENCES public.contracts(contract_id)
 );
+CREATE TABLE public.role_column_access (
+  role_id uuid NOT NULL,
+  module_key text NOT NULL,
+  column_key text NOT NULL,
+  can_read boolean NOT NULL DEFAULT true,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  created_by uuid,
+  CONSTRAINT role_column_access_pkey PRIMARY KEY (role_id, module_key, column_key),
+  CONSTRAINT role_column_access_role_id_fkey FOREIGN KEY (role_id) REFERENCES public.app_roles(role_id),
+  CONSTRAINT role_column_access_module_key_fkey FOREIGN KEY (module_key) REFERENCES public.modules(module_key),
+  CONSTRAINT role_column_access_role_module_fkey FOREIGN KEY (role_id) REFERENCES public.role_module_access(role_id),
+  CONSTRAINT role_column_access_role_module_fkey FOREIGN KEY (module_key) REFERENCES public.role_module_access(role_id),
+  CONSTRAINT role_column_access_role_module_fkey FOREIGN KEY (role_id) REFERENCES public.role_module_access(module_key),
+  CONSTRAINT role_column_access_role_module_fkey FOREIGN KEY (module_key) REFERENCES public.role_module_access(module_key)
+);
 CREATE TABLE public.role_module_access (
   role_id uuid NOT NULL,
   module_key text NOT NULL,

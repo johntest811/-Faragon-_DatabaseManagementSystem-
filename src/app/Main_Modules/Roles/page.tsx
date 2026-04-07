@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { supabase } from "../../Client/SupabaseClients";
 import { useAuthRole } from "../../Client/useRbac";
 import { AccessTabs } from "../Components/AccessTabs";
-import { groupedCatalog, normalizeModuleKey } from "../Components/permissionCatalog";
+import { columnsForModule, groupedCatalog, normalizeModuleKey } from "../Components/permissionCatalog";
 
 type RoleRow = { role_id: string; role_name: string };
 type ModuleRow = { module_key: string; display_name: string };
@@ -123,7 +123,6 @@ export default function RolesPage() {
 				if (!map[row.role_id]) map[row.role_id] = new Set();
 				map[row.role_id].add(normalizeModuleKey(row.module_key));
 			}
-			setAccess(map);
 
 			const colMap: Record<string, Record<string, Set<string>>> = {};
 			for (const row of ((cRes.data as RoleColumnAccessRow[]) ?? []) || []) {
@@ -135,6 +134,25 @@ export default function RolesPage() {
 				if (!colMap[row.role_id][moduleKey]) colMap[row.role_id][moduleKey] = new Set<string>();
 				colMap[row.role_id][moduleKey].add(col);
 			}
+
+			const superadminRoleId = loadedRoles.find((r) => r.role_name === "superadmin")?.role_id ?? null;
+			if (superadminRoleId) {
+				if (!map[superadminRoleId]) map[superadminRoleId] = new Set<string>();
+				if (!colMap[superadminRoleId]) colMap[superadminRoleId] = {};
+
+				for (const moduleRow of loadedModules) {
+					const key = normalizeModuleKey(moduleRow.module_key);
+					if (!key) continue;
+					map[superadminRoleId].add(key);
+
+					const cols = columnsForModule(key);
+					if (!cols.length) continue;
+					if (!colMap[superadminRoleId][key]) colMap[superadminRoleId][key] = new Set<string>();
+					for (const col of cols) colMap[superadminRoleId][key].add(col);
+				}
+			}
+
+			setAccess(map);
 			setRoleColumnAccess(colMap);
 
 			setSelectedRoleId((prev) => {
@@ -187,6 +205,8 @@ export default function RolesPage() {
 		() => roles.find((r) => r.role_id === selectedRoleId) ?? null,
 		[roles, selectedRoleId]
 	);
+
+	const selectedRoleIsSuperadmin = selectedRole?.role_name === "superadmin";
 
 	const filteredRoles = useMemo(() => {
 		const q = roleSearch.trim().toLowerCase();
@@ -485,6 +505,9 @@ export default function RolesPage() {
 						<div className="mt-1 text-xs text-gray-500">
 							Grant page access by role. Columns are grouped by page sections for easier review.
 						</div>
+						{selectedRoleIsSuperadmin ? (
+							<div className="mt-1 text-xs text-gray-500">Superadmin always has full page and column access by default.</div>
+						) : null}
 					</div>
 					<div className="text-xs rounded-full border px-3 py-1 text-gray-600 bg-gray-50">
 						{canManage ? "Superadmin controls enabled" : "Read-only"}
@@ -526,7 +549,7 @@ export default function RolesPage() {
 														type="checkbox"
 														checked={checked}
 														onChange={() => toggleAccess(selectedRole.role_id, m.module_key)}
-														disabled={!canManage || busy}
+														disabled={!canManage || busy || selectedRoleIsSuperadmin}
 													/>
 													<div className="min-w-0">
 														<div className="text-sm text-black font-medium truncate">{m.display_name}</div>
@@ -555,7 +578,7 @@ export default function RolesPage() {
 																type="checkbox"
 																checked={colOn}
 																onChange={() => toggleRoleColumn(selectedRole.role_id, m.module_key, col)}
-																disabled={!canManage || colBusy}
+																disabled={!canManage || colBusy || selectedRoleIsSuperadmin}
 															/>
 															<span>{col}</span>
 														</label>
