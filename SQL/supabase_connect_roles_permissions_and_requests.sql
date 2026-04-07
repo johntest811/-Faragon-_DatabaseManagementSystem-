@@ -3,17 +3,165 @@
 
 begin;
 
--- 1) Keep legacy admins.role values normalized and backed by app_roles.
-update public.admins
-set role = lower(btrim(role))
-where role is not null
-  and role <> lower(btrim(role));
+-- 0) Bootstrap RBAC core tables for fresh/partial deployments.
+create extension if not exists pgcrypto;
 
-insert into public.app_roles (role_name)
-select distinct lower(btrim(a.role))
-from public.admins a
-where nullif(btrim(a.role), '') is not null
-on conflict (role_name) do nothing;
+create table if not exists public.app_roles (
+  role_id uuid primary key default gen_random_uuid(),
+  role_name text not null unique
+);
+
+create table if not exists public.modules (
+  module_key text primary key,
+  display_name text not null,
+  path text not null
+);
+
+insert into public.modules (module_key, display_name, path)
+values
+  ('dashboard', 'Dashboard', '/Main_Modules/Dashboard/'),
+  ('employees', 'Employees', '/Main_Modules/Employees/'),
+  ('reassign', 'Reassigned', '/Main_Modules/Reassign/'),
+  ('resigned', 'Resigned', '/Main_Modules/Resigned/'),
+  ('retired', 'Retired', '/Main_Modules/Retired/'),
+  ('archive', 'Archive', '/Main_Modules/Archive/'),
+  ('trash', 'Trash', '/Main_Modules/Trash/'),
+  ('client', 'Client', '/Main_Modules/Client/'),
+  ('inventory', 'Inventory', '/Main_Modules/Inventory/'),
+  ('paraphernalia', 'Paraphernalia', '/Main_Modules/Paraphernalia/'),
+  ('reports', 'Reports', '/Main_Modules/Reports/'),
+  ('requests', 'Requests', '/Main_Modules/Requests/'),
+  ('audit', 'Audit', '/Main_Modules/Audit/'),
+  ('settings', 'Settings', '/Main_Modules/Settings/'),
+  ('access', 'Admin Accounts', '/Main_Modules/AdminAccounts/'),
+  ('logistics', 'Logistics', '/Main_Modules/Logistics/')
+on conflict (module_key) do update
+set display_name = excluded.display_name,
+    path = excluded.path;
+
+create table if not exists public.role_module_access (
+  role_id uuid not null,
+  module_key text not null,
+  can_read boolean not null default true,
+  can_write boolean not null default false,
+  constraint role_module_access_pkey primary key (role_id, module_key),
+  constraint role_module_access_role_id_fkey
+    foreign key (role_id) references public.app_roles(role_id) on delete cascade,
+  constraint role_module_access_module_key_fkey
+    foreign key (module_key) references public.modules(module_key) on delete cascade
+);
+
+alter table public.role_module_access
+  add column if not exists can_read boolean;
+
+alter table public.role_module_access
+  add column if not exists can_write boolean;
+
+update public.role_module_access
+set can_read = true
+where can_read is null;
+
+update public.role_module_access
+set can_write = false
+where can_write is null;
+
+alter table public.role_module_access
+  alter column can_read set default true;
+
+alter table public.role_module_access
+  alter column can_write set default false;
+
+create table if not exists public.access_requests (
+  id uuid primary key default gen_random_uuid(),
+  created_at timestamp with time zone not null default now(),
+  status text not null default 'PENDING',
+  requested_module_key text not null,
+  requested_path text,
+  reason text,
+  requester_user_id uuid,
+  requester_email text,
+  requester_admin_id uuid,
+  requester_username text,
+  requester_role text,
+  resolved_at timestamp with time zone,
+  resolved_by uuid,
+  resolution_note text,
+  requested_column_key text,
+  constraint access_requests_module_fkey
+    foreign key (requested_module_key) references public.modules(module_key)
+);
+
+alter table public.access_requests
+  add column if not exists created_at timestamp with time zone default now();
+
+alter table public.access_requests
+  add column if not exists status text default 'PENDING';
+
+alter table public.access_requests
+  add column if not exists requested_module_key text;
+
+alter table public.access_requests
+  add column if not exists requested_path text;
+
+alter table public.access_requests
+  add column if not exists reason text;
+
+alter table public.access_requests
+  add column if not exists requester_user_id uuid;
+
+alter table public.access_requests
+  add column if not exists requester_email text;
+
+alter table public.access_requests
+  add column if not exists requester_admin_id uuid;
+
+alter table public.access_requests
+  add column if not exists requester_username text;
+
+alter table public.access_requests
+  add column if not exists requester_role text;
+
+alter table public.access_requests
+  add column if not exists resolved_at timestamp with time zone;
+
+alter table public.access_requests
+  add column if not exists resolved_by uuid;
+
+alter table public.access_requests
+  add column if not exists resolution_note text;
+
+alter table public.access_requests
+  add column if not exists requested_column_key text;
+
+create index if not exists role_module_access_role_idx
+  on public.role_module_access (role_id);
+
+create index if not exists role_module_access_module_idx
+  on public.role_module_access (module_key);
+
+-- 1) Keep legacy admins.role values normalized and backed by app_roles.
+do $$
+begin
+  if to_regclass('public.admins') is null then
+    return;
+  end if;
+
+  execute $sql$
+    update public.admins
+    set role = lower(btrim(role))
+    where role is not null
+      and role <> lower(btrim(role))
+  $sql$;
+
+  execute $sql$
+    insert into public.app_roles (role_name)
+    select distinct lower(btrim(a.role))
+    from public.admins a
+    where nullif(btrim(a.role), '') is not null
+    on conflict (role_name) do nothing
+  $sql$;
+end
+$$;
 
 create or replace function public.trg_sync_admin_role_to_app_roles()
 returns trigger
@@ -33,14 +181,22 @@ begin
 end;
 $$;
 
-drop trigger if exists trg_admins_sync_role_to_app_roles on public.admins;
-create trigger trg_admins_sync_role_to_app_roles
-before insert or update of role on public.admins
-for each row
-execute function public.trg_sync_admin_role_to_app_roles();
+do $$
+begin
+  if to_regclass('public.admins') is null then
+    return;
+  end if;
 
-create index if not exists admins_role_idx
-  on public.admins (role);
+  execute 'drop trigger if exists trg_admins_sync_role_to_app_roles on public.admins';
+  execute $sql$
+    create trigger trg_admins_sync_role_to_app_roles
+    before insert or update of role on public.admins
+    for each row
+    execute function public.trg_sync_admin_role_to_app_roles()
+  $sql$;
+  execute 'create index if not exists admins_role_idx on public.admins (role)';
+end
+$$;
 
 -- 1b) Ensure role_column_access exists for role-level column permissions.
 create table if not exists public.role_column_access (
@@ -337,7 +493,7 @@ begin
     from pg_constraint
     where conname = 'access_requests_approver_admin_fkey'
       and conrelid = 'public.access_requests'::regclass
-  ) then
+  ) and to_regclass('public.admins') is not null then
     alter table public.access_requests
       add constraint access_requests_approver_admin_fkey
       foreign key (approver_admin_id)
