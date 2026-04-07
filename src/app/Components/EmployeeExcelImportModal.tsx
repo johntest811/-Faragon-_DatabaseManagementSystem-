@@ -452,6 +452,38 @@ export default function EmployeeExcelImportModal({ open, onClose, allowTemplateD
       .replace(/\s+/g, " ");
   }
 
+  function normalizeNamePart(v: unknown) {
+    return String(v ?? "")
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, " ");
+  }
+
+  function canUseNameLookup(v: { first_name?: string | null; last_name?: string | null }) {
+    const first = normalizeNamePart(v.first_name);
+    const last = normalizeNamePart(v.last_name);
+    return Boolean(first && last && first !== "n/a" && last !== "n/a");
+  }
+
+  function personNameKey(v: {
+    first_name?: string | null;
+    middle_name?: string | null;
+    last_name?: string | null;
+  }) {
+    return [normalizeNamePart(v.first_name), normalizeNamePart(v.middle_name), normalizeNamePart(v.last_name)].join("|");
+  }
+
+  function personNameBirthKey(v: {
+    first_name?: string | null;
+    middle_name?: string | null;
+    last_name?: string | null;
+    birth_date?: string | null;
+  }) {
+    const name = personNameKey(v);
+    const birth = normalizeMatchKey(v.birth_date);
+    return birth ? `${name}|${birth}` : "";
+  }
+
   function hasValue(v: unknown) {
     if (v == null) return false;
     if (typeof v === "string") return v.trim().length > 0;
@@ -683,11 +715,29 @@ export default function EmployeeExcelImportModal({ open, onClose, allowTemplateD
           )
         );
 
+        const nameCandidates = slice.map((x) => x.applicant).filter((a) => canUseNameLookup(a));
+        const firstNames = Array.from(
+          new Set(
+            nameCandidates
+              .map((a) => String(a.first_name ?? "").trim())
+              .filter(Boolean)
+          )
+        );
+        const lastNames = Array.from(
+          new Set(
+            nameCandidates
+              .map((a) => String(a.last_name ?? "").trim())
+              .filter(Boolean)
+          )
+        );
+
         const existingBySec = new Map<string, ApplicantExistingRow>();
         const existingByEmail = new Map<string, ApplicantExistingRow>();
         const existingByCustomId = new Map<string, ApplicantExistingRow>();
+        const existingByName = new Map<string, ApplicantExistingRow>();
+        const existingByNameBirth = new Map<string, ApplicantExistingRow>();
 
-        if (secNums.length || emails.length || customIds.length) {
+        if (secNums.length || emails.length || customIds.length || (firstNames.length && lastNames.length)) {
           if (secNums.length) {
             const ex = await supabase
               .from("applicants")
@@ -726,6 +776,28 @@ export default function EmployeeExcelImportModal({ open, onClose, allowTemplateD
               }
             }
           }
+
+          if (firstNames.length && lastNames.length) {
+            const ex = await supabase
+              .from("applicants")
+              .select(APPLICANT_MERGE_SELECT)
+              .in("first_name", firstNames)
+              .in("last_name", lastNames);
+            if (!ex.error) {
+              for (const r of ((ex.data as ApplicantExistingRow[]) ?? [])) {
+                if (!canUseNameLookup(r)) continue;
+                const name = personNameKey(r);
+                if (name && name !== "||" && !existingByName.has(name)) {
+                  existingByName.set(name, r);
+                }
+
+                const nameBirth = personNameBirthKey(r);
+                if (nameBirth && !existingByNameBirth.has(nameBirth)) {
+                  existingByNameBirth.set(nameBirth, r);
+                }
+              }
+            }
+          }
         }
 
         const toInsert: ApplicantInsert[] = [];
@@ -737,11 +809,15 @@ export default function EmployeeExcelImportModal({ open, onClose, allowTemplateD
           const secKey = normalizeMatchKey(item.applicant.security_licensed_num);
           const emailKey = normalizeMatchKey(item.applicant.client_email);
           const customIdKey = normalizeMatchKey(item.applicant.custom_id);
+          const nameKey = canUseNameLookup(item.applicant) ? personNameKey(item.applicant) : "";
+          const nameBirthKey = canUseNameLookup(item.applicant) ? personNameBirthKey(item.applicant) : "";
 
           const existing =
             (customIdKey && existingByCustomId.get(customIdKey)) ||
             (secKey && existingBySec.get(secKey)) ||
             (emailKey && existingByEmail.get(emailKey)) ||
+            (nameBirthKey && existingByNameBirth.get(nameBirthKey)) ||
+            (nameKey && existingByName.get(nameKey)) ||
             null;
 
           if (existing) {

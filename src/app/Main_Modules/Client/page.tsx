@@ -148,6 +148,13 @@ function findValueByAliases(row: Record<string, unknown>, aliases: string[]) {
   return "";
 }
 
+function normalizeImportKey(value: unknown) {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+}
+
 function downloadBlob(filename: string, blob: Blob) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -370,28 +377,41 @@ const [templateOpen, setTemplateOpen] = useState(false);
 
       const byContractNo = new Map<string, string>();
       const byComposite = new Map<string, string>();
+      const byClientProject = new Map<string, string>();
+      const clientProjectCounts = new Map<string, number>();
       for (const row of ((existingRows ?? []) as Array<Record<string, unknown>>)) {
         const id = String(row.contract_id ?? "");
         if (!id) continue;
-        const contractNo = String(row.contract_no ?? "").trim().toLowerCase();
+        const contractNo = normalizeImportKey(row.contract_no);
         if (contractNo) byContractNo.set(contractNo, id);
         const comp = [
-          String(row.client_name ?? "").trim().toLowerCase(),
-          String(row.project_name ?? "").trim().toLowerCase(),
-          String(row.contract_start ?? "").trim().toLowerCase(),
+          normalizeImportKey(row.client_name),
+          normalizeImportKey(row.project_name),
+          normalizeImportKey(row.contract_start),
         ].join("|");
         if (comp !== "||") byComposite.set(comp, id);
+
+        const cp = [normalizeImportKey(row.client_name), normalizeImportKey(row.project_name)].join("|");
+        if (cp !== "|") {
+          clientProjectCounts.set(cp, (clientProjectCounts.get(cp) ?? 0) + 1);
+          if (!byClientProject.has(cp)) byClientProject.set(cp, id);
+        }
+      }
+
+      for (const [cp, count] of clientProjectCounts.entries()) {
+        if (count > 1) byClientProject.delete(cp);
       }
 
       const dedupedMap = new Map<string, (typeof importedPayloads)[number]>();
       for (const payload of importedPayloads) {
-        const cno = String(payload.contract_no ?? "").trim().toLowerCase();
+        const cno = normalizeImportKey(payload.contract_no);
         const comp = [
-          String(payload.client_name ?? "").trim().toLowerCase(),
-          String(payload.project_name ?? "").trim().toLowerCase(),
-          String(payload.contract_start ?? "").trim().toLowerCase(),
+          normalizeImportKey(payload.client_name),
+          normalizeImportKey(payload.project_name),
+          normalizeImportKey(payload.contract_start),
         ].join("|");
-        const key = cno ? `cno:${cno}` : `cmp:${comp}`;
+        const cp = [normalizeImportKey(payload.client_name), normalizeImportKey(payload.project_name)].join("|");
+        const key = cno ? `cno:${cno}` : comp !== "||" ? `cmp:${comp}` : `cp:${cp}`;
         if (dedupedMap.has(key)) skipped += 1;
         dedupedMap.set(key, payload);
       }
@@ -400,14 +420,19 @@ const [templateOpen, setTemplateOpen] = useState(false);
       let updated = 0;
 
       for (const payload of dedupedMap.values()) {
-        const cno = String(payload.contract_no ?? "").trim().toLowerCase();
+        const cno = normalizeImportKey(payload.contract_no);
         const comp = [
-          String(payload.client_name ?? "").trim().toLowerCase(),
-          String(payload.project_name ?? "").trim().toLowerCase(),
-          String(payload.contract_start ?? "").trim().toLowerCase(),
+          normalizeImportKey(payload.client_name),
+          normalizeImportKey(payload.project_name),
+          normalizeImportKey(payload.contract_start),
         ].join("|");
+        const cp = [normalizeImportKey(payload.client_name), normalizeImportKey(payload.project_name)].join("|");
 
-        const matchId = (cno ? byContractNo.get(cno) : null) ?? byComposite.get(comp) ?? null;
+        const matchId =
+          (cno ? byContractNo.get(cno) : null) ??
+          byComposite.get(comp) ??
+          (cp !== "|" ? byClientProject.get(cp) : null) ??
+          null;
         if (matchId) {
           const upd = await supabase.from("contracts").update(payload).eq("contract_id", matchId);
           if (upd.error) {
@@ -502,28 +527,41 @@ const [templateOpen, setTemplateOpen] = useState(false);
 
     const byContractNo = new Map<string, string>();
     const byComposite = new Map<string, string>();
+    const byClientProject = new Map<string, string>();
+    const clientProjectCounts = new Map<string, number>();
     for (const row of ((existingRows ?? []) as Array<Record<string, unknown>>)) {
       const id = String(row.contract_id ?? "");
       if (!id) continue;
-      const contractNo = String(row.contract_no ?? "").trim().toLowerCase();
+      const contractNo = normalizeImportKey(row.contract_no);
       if (contractNo) byContractNo.set(contractNo, id);
       const comp = [
-        String(row.client_name ?? "").trim().toLowerCase(),
-        String(row.project_name ?? "").trim().toLowerCase(),
-        String(row.contract_start ?? "").trim().toLowerCase(),
+        normalizeImportKey(row.client_name),
+        normalizeImportKey(row.project_name),
+        normalizeImportKey(row.contract_start),
       ].join("|");
       if (comp !== "||") byComposite.set(comp, id);
+
+      const cp = [normalizeImportKey(row.client_name), normalizeImportKey(row.project_name)].join("|");
+      if (cp !== "|") {
+        clientProjectCounts.set(cp, (clientProjectCounts.get(cp) ?? 0) + 1);
+        if (!byClientProject.has(cp)) byClientProject.set(cp, id);
+      }
+    }
+
+    for (const [cp, count] of clientProjectCounts.entries()) {
+      if (count > 1) byClientProject.delete(cp);
     }
 
     const dedupedMap = new Map<string, (typeof importedPayloads)[number]>();
     for (const payload of importedPayloads) {
-      const cno = String(payload.contract_no ?? "").trim().toLowerCase();
+      const cno = normalizeImportKey(payload.contract_no);
       const comp = [
-        String(payload.client_name ?? "").trim().toLowerCase(),
-        String(payload.project_name ?? "").trim().toLowerCase(),
-        String(payload.contract_start ?? "").trim().toLowerCase(),
+        normalizeImportKey(payload.client_name),
+        normalizeImportKey(payload.project_name),
+        normalizeImportKey(payload.contract_start),
       ].join("|");
-      const key = cno ? `cno:${cno}` : `cmp:${comp}`;
+      const cp = [normalizeImportKey(payload.client_name), normalizeImportKey(payload.project_name)].join("|");
+      const key = cno ? `cno:${cno}` : comp !== "||" ? `cmp:${comp}` : `cp:${cp}`;
       if (dedupedMap.has(key)) skipped += 1;
       dedupedMap.set(key, payload);
     }
@@ -532,14 +570,19 @@ const [templateOpen, setTemplateOpen] = useState(false);
     let updated = 0;
 
     for (const payload of dedupedMap.values()) {
-      const cno = String(payload.contract_no ?? "").trim().toLowerCase();
+      const cno = normalizeImportKey(payload.contract_no);
       const comp = [
-        String(payload.client_name ?? "").trim().toLowerCase(),
-        String(payload.project_name ?? "").trim().toLowerCase(),
-        String(payload.contract_start ?? "").trim().toLowerCase(),
+        normalizeImportKey(payload.client_name),
+        normalizeImportKey(payload.project_name),
+        normalizeImportKey(payload.contract_start),
       ].join("|");
+      const cp = [normalizeImportKey(payload.client_name), normalizeImportKey(payload.project_name)].join("|");
 
-      const matchId = (cno ? byContractNo.get(cno) : null) ?? byComposite.get(comp) ?? null;
+      const matchId =
+        (cno ? byContractNo.get(cno) : null) ??
+        byComposite.get(comp) ??
+        (cp !== "|" ? byClientProject.get(cp) : null) ??
+        null;
       if (matchId) {
         const upd = await supabase.from("contracts").update(payload).eq("contract_id", matchId);
         if (upd.error) {

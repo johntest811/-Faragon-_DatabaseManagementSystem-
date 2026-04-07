@@ -1,11 +1,18 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "../../Client/SupabaseClients";
 import { useAuthRole } from "../../Client/useRbac";
 import { AccessTabs } from "../Components/AccessTabs";
-import { columnsForModule, groupedCatalog, normalizeModuleKey } from "../Components/permissionCatalog";
+import {
+	columnsForModule,
+	formatPermissionColumnLabel,
+	groupedCatalog,
+	normalizeModuleKey,
+	shouldHidePermissionColumn,
+	visibleColumnsForModule,
+} from "../Components/permissionCatalog";
 
 type ModuleRow = { module_key: string; display_name: string };
 
@@ -67,8 +74,10 @@ function getElectronApi(): ElectronApi | null {
 
 export default function PermissionsPage() {
 	const router = useRouter();
+	const searchParams = useSearchParams();
 	const { role } = useAuthRole();
 	const api = getElectronApi();
+	const preselectedAdminId = String(searchParams?.get("admin") ?? "").trim();
 
 	const [error, setError] = useState<string>("");
 	const [success, setSuccess] = useState<string>("");
@@ -144,6 +153,12 @@ export default function PermissionsPage() {
 	}, []);
 
 	const selectedAdmin = useMemo(() => admins.find((a) => a.id === selectedAdminId) ?? null, [admins, selectedAdminId]);
+
+	useEffect(() => {
+		if (!preselectedAdminId) return;
+		if (!admins.some((row) => row.id === preselectedAdminId)) return;
+		setSelectedAdminId((prev) => (prev === preselectedAdminId ? prev : preselectedAdminId));
+	}, [admins, preselectedAdminId]);
 
 	const loadSelectedAdminAccess = useCallback(async (admin: AdminRow | null) => {
 		if (!admin) {
@@ -255,32 +270,21 @@ export default function PermissionsPage() {
 			.channel("realtime:rbac-permissions")
 			.on("postgres_changes", { event: "*", schema: "public", table: "modules" }, () => loadModules())
 			.on("postgres_changes", { event: "*", schema: "public", table: "admins" }, () => loadAdmins())
-			.on("postgres_changes", { event: "*", schema: "public", table: "app_roles" }, () => {
-				if (selectedAdmin) loadSelectedAdminAccess(selectedAdmin);
-			})
-			.on("postgres_changes", { event: "*", schema: "public", table: "role_module_access" }, () => {
-				if (selectedAdmin) loadSelectedAdminAccess(selectedAdmin);
-			})
-			.on("postgres_changes", { event: "*", schema: "public", table: "role_column_access" }, () => {
-				if (selectedAdmin) loadSelectedAdminAccess(selectedAdmin);
-			})
-			.on("postgres_changes", { event: "*", schema: "public", table: "admin_module_access_overrides" }, () => {
-				if (selectedAdmin) loadSelectedAdminAccess(selectedAdmin);
-			})
-			.on("postgres_changes", { event: "*", schema: "public", table: "admin_column_access_overrides" }, () => {
-				if (selectedAdmin) loadSelectedAdminAccess(selectedAdmin);
-			})
 			.subscribe();
 
 		return () => {
 			supabase.removeChannel(channel);
 		};
-	}, [loadAdmins, loadModules, loadSelectedAdminAccess, selectedAdmin]);
+	}, [loadAdmins, loadModules]);
 
 	useEffect(() => {
-		if (selectedAdmin) loadSelectedAdminAccess(selectedAdmin);
-		else loadSelectedAdminAccess(null);
-	}, [loadSelectedAdminAccess, selectedAdmin]);
+		if (!selectedAdminId) {
+			void loadSelectedAdminAccess(null);
+			return;
+		}
+		const admin = admins.find((row) => row.id === selectedAdminId) ?? null;
+		void loadSelectedAdminAccess(admin);
+	}, [admins, loadSelectedAdminAccess, selectedAdminId]);
 
 	async function toggleAdminModule(moduleKey: string) {
 		setError("");
@@ -411,7 +415,7 @@ export default function PermissionsPage() {
 						return {
 							module_key: normalizeModuleKey(loaded.module_key),
 							display_name: loaded.display_name,
-							columns: row.columns,
+							columns: visibleColumnsForModule(row.moduleKey),
 						};
 					})
 					.filter((v): v is { module_key: string; display_name: string; columns: string[] } => !!v),
@@ -508,7 +512,12 @@ export default function PermissionsPage() {
 					/>
 					<select
 						value={selectedAdminId}
-						onChange={(e) => setSelectedAdminId(e.target.value)}
+						onChange={(e) => {
+							const nextId = e.target.value;
+							setSelectedAdminId(nextId);
+							const query = nextId ? `?admin=${encodeURIComponent(nextId)}` : "";
+							router.replace(`/Main_Modules/Permissions/${query}`);
+						}}
 						className="border rounded-xl px-3 py-2 text-sm text-black bg-white"
 					>
 						<option value="">Select account…</option>
@@ -552,8 +561,15 @@ export default function PermissionsPage() {
 										const overrideCols = adminColumnAccess[m.module_key] ?? new Set<string>();
 										const roleCols = roleColumnAccess[m.module_key] ?? new Set<string>();
 										const effectiveRestricted = roleCols.size > 0 || overrideCols.size > 0;
+										const effectiveVisibleCols = Array.from(
+											new Set([...Array.from(roleCols), ...Array.from(overrideCols)])
+										)
+											.filter((col) => !shouldHidePermissionColumn(col))
+											.map((col) => formatPermissionColumnLabel(col));
 										const effectiveCols = effectiveRestricted
-											? Array.from(new Set([...Array.from(roleCols), ...Array.from(overrideCols)])).sort().join(", ")
+											? effectiveVisibleCols.length
+												? effectiveVisibleCols.sort().join(", ")
+												: "Internal columns only"
 											: "All columns";
 
 										return (
@@ -621,7 +637,7 @@ export default function PermissionsPage() {
 																}}
 																disabled={!canManage || colBusy || colLockedByRole}
 															/>
-															<span>{col}</span>
+															<span>{formatPermissionColumnLabel(col)}</span>
 														</label>
 													);
 												})}

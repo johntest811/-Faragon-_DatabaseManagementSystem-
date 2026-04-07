@@ -212,8 +212,49 @@ export const MODULE_CATALOG: ModuleCatalogItem[] = [
   },
 ];
 
+const COLUMN_LABEL_OVERRIDES: Record<string, string> = {
+  kpi_total_employees: "KPI Total Employees",
+  kpi_active_employees: "KPI Active Employees",
+  kpi_archived: "KPI Archived",
+  kpi_pending_requests: "KPI Pending Requests",
+};
+
 export function normalizeModuleKey(value: unknown) {
   return String(value ?? "").trim().toLowerCase();
+}
+
+function normalizeColumnKey(value: unknown) {
+  return String(value ?? "").trim().toLowerCase();
+}
+
+const UPPERCASE_COLUMN_WORDS = new Set(["kpi", "id", "fsai", "ocr", "sss"]);
+
+function toTitleWord(part: string) {
+  if (!part) return "";
+  if (UPPERCASE_COLUMN_WORDS.has(part)) return part.toUpperCase();
+  return part.charAt(0).toUpperCase() + part.slice(1);
+}
+
+export function shouldHidePermissionColumn(columnKey: string) {
+  const key = normalizeColumnKey(columnKey);
+  if (!key) return true;
+  if (key === "custom_id") return false;
+  return key === "id" || key.endsWith("_id");
+}
+
+export function formatPermissionColumnLabel(columnKey: string) {
+  const key = normalizeColumnKey(columnKey);
+  if (!key) return "Unknown Column";
+
+  const override = COLUMN_LABEL_OVERRIDES[key];
+  if (override) return override;
+
+  const normalized = key.replace(/_id$/i, "");
+  return normalized
+    .split("_")
+    .filter(Boolean)
+    .map(toTitleWord)
+    .join(" ");
 }
 
 export function getCatalogMap() {
@@ -226,11 +267,20 @@ export function columnsForModule(moduleKey: string): string[] {
   return map.get(key)?.columns ?? [];
 }
 
+export function visibleColumnsForModule(moduleKey: string): string[] {
+  return columnsForModule(moduleKey).filter((columnKey) => !shouldHidePermissionColumn(columnKey));
+}
+
 export function groupedCatalog(search = "") {
   const q = String(search ?? "").trim().toLowerCase();
+  const visibleCatalog = MODULE_CATALOG.map((item) => ({
+    ...item,
+    columns: visibleColumnsForModule(item.moduleKey),
+  }));
+
   const rows = !q
-    ? MODULE_CATALOG
-    : MODULE_CATALOG.filter(
+    ? visibleCatalog
+    : visibleCatalog.filter(
         (m) =>
           m.moduleKey.includes(q) ||
           m.displayName.toLowerCase().includes(q) ||

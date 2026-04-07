@@ -461,8 +461,10 @@ $$;
 alter table public.access_requests add column if not exists request_scope_row boolean;
 alter table public.access_requests add column if not exists request_scope_column boolean;
 alter table public.access_requests add column if not exists requested_column_keys text[];
+alter table public.access_requests add column if not exists requested_applicant_id uuid;
 alter table public.access_requests add column if not exists requested_applicant_ids text[];
 alter table public.access_requests add column if not exists requested_row_identifier_key text;
+alter table public.access_requests add column if not exists requested_row_identifier_value text;
 alter table public.access_requests add column if not exists requested_row_identifier_values text[];
 alter table public.access_requests add column if not exists approver_admin_id uuid;
 alter table public.access_requests add column if not exists approver_username text;
@@ -471,6 +473,159 @@ alter table public.access_requests add column if not exists requester_username t
 alter table public.access_requests add column if not exists requester_email text;
 alter table public.access_requests add column if not exists requester_admin_id uuid;
 alter table public.access_requests add column if not exists requester_user_id uuid;
+
+-- Ensure queue approval targets always exist in mixed deployments.
+create table if not exists public.admin_module_access_overrides (
+  admin_id uuid not null,
+  module_key text not null,
+  can_read boolean not null default true,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  created_by uuid,
+  primary key (admin_id, module_key),
+  constraint admin_module_access_overrides_admin_fkey
+    foreign key (admin_id) references public.admins(id) on delete cascade,
+  constraint admin_module_access_overrides_module_fkey
+    foreign key (module_key) references public.modules(module_key) on delete cascade
+);
+
+create table if not exists public.admin_column_access_overrides (
+  admin_id uuid not null,
+  module_key text not null,
+  column_key text not null,
+  can_read boolean not null default true,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  created_by uuid,
+  primary key (admin_id, module_key, column_key),
+  constraint admin_column_access_overrides_admin_fkey
+    foreign key (admin_id) references public.admins(id) on delete cascade,
+  constraint admin_column_access_overrides_module_fkey
+    foreign key (module_key) references public.modules(module_key) on delete cascade
+);
+
+create table if not exists public.user_module_access_overrides (
+  user_id uuid not null,
+  module_key text not null,
+  can_read boolean not null default true,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  created_by uuid,
+  primary key (user_id, module_key),
+  constraint user_module_access_overrides_module_fkey
+    foreign key (module_key) references public.modules(module_key) on delete cascade
+);
+
+create table if not exists public.user_column_access_overrides (
+  user_id uuid not null,
+  module_key text not null,
+  column_key text not null,
+  can_read boolean not null default true,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  created_by uuid,
+  primary key (user_id, module_key, column_key),
+  constraint user_column_access_overrides_module_fkey
+    foreign key (module_key) references public.modules(module_key) on delete cascade
+);
+
+create table if not exists public.admin_applicant_access_overrides (
+  admin_id uuid not null,
+  module_key text not null,
+  applicant_id uuid not null,
+  can_read boolean not null default true,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  created_by uuid,
+  primary key (admin_id, module_key, applicant_id),
+  constraint admin_applicant_access_admin_fkey
+    foreign key (admin_id) references public.admins(id) on delete cascade,
+  constraint admin_applicant_access_module_fkey
+    foreign key (module_key) references public.modules(module_key) on delete cascade,
+  constraint admin_applicant_access_applicant_fkey
+    foreign key (applicant_id) references public.applicants(applicant_id) on delete cascade
+);
+
+create table if not exists public.user_applicant_access_overrides (
+  user_id uuid not null,
+  module_key text not null,
+  applicant_id uuid not null,
+  can_read boolean not null default true,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  created_by uuid,
+  primary key (user_id, module_key, applicant_id),
+  constraint user_applicant_access_module_fkey
+    foreign key (module_key) references public.modules(module_key) on delete cascade,
+  constraint user_applicant_access_applicant_fkey
+    foreign key (applicant_id) references public.applicants(applicant_id) on delete cascade
+);
+
+create table if not exists public.admin_applicant_column_access_overrides (
+  admin_id uuid not null,
+  module_key text not null,
+  applicant_id uuid not null,
+  column_key text not null,
+  can_read boolean not null default true,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  created_by uuid,
+  primary key (admin_id, module_key, applicant_id, column_key),
+  constraint admin_applicant_col_access_admin_fkey
+    foreign key (admin_id) references public.admins(id) on delete cascade,
+  constraint admin_applicant_col_access_module_fkey
+    foreign key (module_key) references public.modules(module_key) on delete cascade,
+  constraint admin_applicant_col_access_applicant_fkey
+    foreign key (applicant_id) references public.applicants(applicant_id) on delete cascade
+);
+
+create table if not exists public.user_applicant_column_access_overrides (
+  user_id uuid not null,
+  module_key text not null,
+  applicant_id uuid not null,
+  column_key text not null,
+  can_read boolean not null default true,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  created_by uuid,
+  primary key (user_id, module_key, applicant_id, column_key),
+  constraint user_applicant_col_access_module_fkey
+    foreign key (module_key) references public.modules(module_key) on delete cascade,
+  constraint user_applicant_col_access_applicant_fkey
+    foreign key (applicant_id) references public.applicants(applicant_id) on delete cascade
+);
+
+create table if not exists public.admin_row_identifier_column_access_overrides (
+  admin_id uuid not null,
+  module_key text not null,
+  row_identifier_key text not null,
+  row_identifier_value text not null,
+  column_key text not null,
+  can_read boolean not null default true,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  created_by uuid,
+  primary key (admin_id, module_key, row_identifier_key, row_identifier_value, column_key),
+  constraint admin_row_identifier_col_access_admin_fkey
+    foreign key (admin_id) references public.admins(id) on delete cascade,
+  constraint admin_row_identifier_col_access_module_fkey
+    foreign key (module_key) references public.modules(module_key) on delete cascade
+);
+
+create table if not exists public.user_row_identifier_column_access_overrides (
+  user_id uuid not null,
+  module_key text not null,
+  row_identifier_key text not null,
+  row_identifier_value text not null,
+  column_key text not null,
+  can_read boolean not null default true,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  created_by uuid,
+  primary key (user_id, module_key, row_identifier_key, row_identifier_value, column_key),
+  constraint user_row_identifier_col_access_module_fkey
+    foreign key (module_key) references public.modules(module_key) on delete cascade
+);
 
 update public.access_requests
 set request_scope_row = false
@@ -485,6 +640,36 @@ alter table public.access_requests
 
 alter table public.access_requests
   alter column request_scope_column set default false;
+
+update public.access_requests
+set requested_column_keys = array[requested_column_key]
+where requested_column_key is not null
+  and requested_column_keys is null;
+
+update public.access_requests
+set requested_row_identifier_values = array[requested_row_identifier_value]
+where requested_row_identifier_value is not null
+  and requested_row_identifier_values is null;
+
+do $$
+begin
+  if exists (
+    select 1
+    from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'access_requests'
+      and column_name = 'requested_applicant_ids'
+      and udt_name = '_text'
+  ) then
+    execute $sql$
+      update public.access_requests
+      set requested_applicant_ids = array[requested_applicant_id::text]
+      where requested_applicant_id is not null
+        and requested_applicant_ids is null
+    $sql$;
+  end if;
+end
+$$;
 
 do $$
 begin

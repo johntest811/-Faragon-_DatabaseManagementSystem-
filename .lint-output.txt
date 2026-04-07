@@ -1,0 +1,114 @@
+
+> database-management-app@0.1.1 lint
+> eslint
+
+
+C:\Users\Ezra\Music\Faragon\DatabaseManagement\src\app\Components\EmployeeEditorModal.tsx
+  1109:25  warning  Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+C:\Users\Ezra\Music\Faragon\DatabaseManagement\src\app\Components\SplashScreen.tsx
+  41:9   warning  Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+  50:11  warning  Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+C:\Users\Ezra\Music\Faragon\DatabaseManagement\src\app\Components\SpreadsheetImportModal.tsx
+  45:3   warning  'allowTemplateDownloads' is assigned a value but never used  @typescript-eslint/no-unused-vars
+  60:12  warning  'downloadTemplateCsvInternal' is defined but never used      @typescript-eslint/no-unused-vars
+  71:12  warning  'downloadTemplateXlsxInternal' is defined but never used     @typescript-eslint/no-unused-vars
+
+C:\Users\Ezra\Music\Faragon\DatabaseManagement\src\app\Main_Modules\Archive\page.tsx
+  494:35  warning  Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+  573:23  warning  Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+C:\Users\Ezra\Music\Faragon\DatabaseManagement\src\app\Main_Modules\Audit\page.tsx
+    4:10  warning  'Activity' is defined but never used      @typescript-eslint/no-unused-vars
+   33:57  warning  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+   70:19  warning  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+  120:17  warning  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+
+C:\Users\Ezra\Music\Faragon\DatabaseManagement\src\app\Main_Modules\Client\page.tsx
+    5:20  warning  'Plus' is defined but never used                          @typescript-eslint/no-unused-vars
+    5:36  warning  'FileSpreadsheet' is defined but never used               @typescript-eslint/no-unused-vars
+  212:48  warning  'loadingColumnAccess' is assigned a value but never used  @typescript-eslint/no-unused-vars
+  260:10  warning  'importing' is assigned a value but never used            @typescript-eslint/no-unused-vars
+  269:10  warning  'exportOpen' is assigned a value but never used           @typescript-eslint/no-unused-vars
+  269:22  warning  'setExportOpen' is assigned a value but never used        @typescript-eslint/no-unused-vars
+  270:8   warning  'templateOpen' is assigned a value but never used         @typescript-eslint/no-unused-vars
+  270:22  warning  'setTemplateOpen' is assigned a value but never used      @typescript-eslint/no-unused-vars
+  468:12  warning  'handleImportChange' is defined but never used            @typescript-eslint/no-unused-vars
+  474:75  warning  'idx' is defined but never used                           @typescript-eslint/no-unused-vars
+
+C:\Users\Ezra\Music\Faragon\DatabaseManagement\src\app\Main_Modules\Employees\details\page.tsx
+  291:15  warning  Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+  314:19  warning  Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+  671:19  warning  Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+C:\Users\Ezra\Music\Faragon\DatabaseManagement\src\app\Main_Modules\Employees\page.tsx
+   175:10  warning  'emailBadge' is defined but never used                                                                                                                                                                                                                                                   @typescript-eslint/no-unused-vars
+   207:56  warning  Unexpected any. Specify a different type                                                                                                                                                                                                                                                 @typescript-eslint/no-explicit-any
+   313:22  warning  'setExportMonth' is assigned a value but never used                                                                                                                                                                                                                                      @typescript-eslint/no-unused-vars
+   314:21  warning  'setExportWeek' is assigned a value but never used                                                                                                                                                                                                                                       @typescript-eslint/no-unused-vars
+   394:29  warning  Unexpected any. Specify a different type                                                                                                                                                                                                                                                 @typescript-eslint/no-explicit-any
+   442:5   warning  React Hook useEffect has a missing dependency: 'fetchEmployees'. Either include it or remove the dependency array                                                                                                                                                                        react-hooks/exhaustive-deps
+   791:11  warning  'exportEmployeesXlsx' is defined but never used                                                                                                                                                                                                                                          @typescript-eslint/no-unused-vars
+   825:11  warning  'exportEmployeesPdf' is defined but never used                                                                                                                                                                                                                                           @typescript-eslint/no-unused-vars
+  1050:13  warning  Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+  1177:12  warning  Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+C:\Users\Ezra\Music\Faragon\DatabaseManagement\src\app\Main_Modules\Inventory\page.tsx
+  296:10  warning  'showTemplateModalOpen' is assigned a value but never used                                                     @typescript-eslint/no-unused-vars
+  296:33  warning  'setTemplateModalOpen' is assigned a value but never used                                                      @typescript-eslint/no-unused-vars
+  511:78  warning  'idx' is defined but never used                                                                                @typescript-eslint/no-unused-vars
+  653:6   warning  React Hook useCallback has a missing dependency: 'loadData'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+  700:6   warning  React Hook useEffect has a missing dependency: 'loadData'. Either include it or remove the dependency array    react-hooks/exhaustive-deps
+
+C:\Users\Ezra\Music\Faragon\DatabaseManagement\src\app\Main_Modules\Paraphernalia\page.tsx
+  350:82  warning  'idx' is defined but never used  @typescript-eslint/no-unused-vars
+
+C:\Users\Ezra\Music\Faragon\DatabaseManagement\src\app\Main_Modules\Reassign\page.tsx
+    6:84  warning  'Trash2' is defined but never used                                                                                                                                                                                                                                                       @typescript-eslint/no-unused-vars
+  675:35  warning  Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+  751:23  warning  Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+C:\Users\Ezra\Music\Faragon\DatabaseManagement\src\app\Main_Modules\Resigned\page.tsx
+  497:39   warning  Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+  570:23   warning  Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+  664:101  warning  Unexpected any. Specify a different type                                                                                                                                                                                                                                                 @typescript-eslint/no-explicit-any
+  688:109  warning  Unexpected any. Specify a different type                                                                                                                                                                                                                                                 @typescript-eslint/no-explicit-any
+
+C:\Users\Ezra\Music\Faragon\DatabaseManagement\src\app\Main_Modules\Retired\page.tsx
+  512:35  warning  Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+  593:23  warning  Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+C:\Users\Ezra\Music\Faragon\DatabaseManagement\src\app\Main_Modules\Settings\page.tsx
+  504:38  warning  Unexpected any. Specify a different type                                                                                 @typescript-eslint/no-explicit-any
+  505:38  warning  Unexpected any. Specify a different type                                                                                 @typescript-eslint/no-explicit-any
+  506:37  warning  Unexpected any. Specify a different type                                                                                 @typescript-eslint/no-explicit-any
+  507:39  warning  Unexpected any. Specify a different type                                                                                 @typescript-eslint/no-explicit-any
+  509:27  warning  Unexpected any. Specify a different type                                                                                 @typescript-eslint/no-explicit-any
+  511:54  warning  Unexpected any. Specify a different type                                                                                 @typescript-eslint/no-explicit-any
+  521:56  warning  Unexpected any. Specify a different type                                                                                 @typescript-eslint/no-explicit-any
+  525:34  warning  Unexpected any. Specify a different type                                                                                 @typescript-eslint/no-explicit-any
+  528:36  warning  Unexpected any. Specify a different type                                                                                 @typescript-eslint/no-explicit-any
+  531:26  warning  Unexpected any. Specify a different type                                                                                 @typescript-eslint/no-explicit-any
+  534:32  warning  Unexpected any. Specify a different type                                                                                 @typescript-eslint/no-explicit-any
+  578:40  warning  Unexpected any. Specify a different type                                                                                 @typescript-eslint/no-explicit-any
+  713:40  warning  Unexpected any. Specify a different type                                                                                 @typescript-eslint/no-explicit-any
+  782:40  warning  Unexpected any. Specify a different type                                                                                 @typescript-eslint/no-explicit-any
+  882:44  warning  Unexpected any. Specify a different type                                                                                 @typescript-eslint/no-explicit-any
+  920:35  warning  Unexpected any. Specify a different type                                                                                 @typescript-eslint/no-explicit-any
+  943:5   warning  React Hook useEffect has a missing dependency: 'electronAPI.settings'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+  970:40  warning  Unexpected any. Specify a different type                                                                                 @typescript-eslint/no-explicit-any
+
+C:\Users\Ezra\Music\Faragon\DatabaseManagement\src\app\Main_Modules\layout.tsx
+  220:57  warning  Unexpected any. Specify a different type                                                                        @typescript-eslint/no-explicit-any
+  229:28  warning  Unexpected any. Specify a different type                                                                        @typescript-eslint/no-explicit-any
+  367:52  warning  Unexpected any. Specify a different type                                                                        @typescript-eslint/no-explicit-any
+  378:39  warning  Unexpected any. Specify a different type                                                                        @typescript-eslint/no-explicit-any
+  379:53  warning  Unexpected any. Specify a different type                                                                        @typescript-eslint/no-explicit-any
+  399:37  warning  Unexpected any. Specify a different type                                                                        @typescript-eslint/no-explicit-any
+  402:66  warning  Unexpected any. Specify a different type                                                                        @typescript-eslint/no-explicit-any
+  414:40  warning  Unexpected any. Specify a different type                                                                        @typescript-eslint/no-explicit-any
+  441:6   warning  React Hook useMemo has an unnecessary dependency: 'pathname'. Either exclude it or remove the dependency array  react-hooks/exhaustive-deps
+
+G£û 77 problems (0 errors, 77 warnings)
+

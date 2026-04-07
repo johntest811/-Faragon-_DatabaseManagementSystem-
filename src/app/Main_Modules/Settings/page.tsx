@@ -1311,13 +1311,13 @@ export default function SettingsPage() {
 					<select
 						value={logStatus}
 						onChange={(e) => setLogStatus(e.target.value)}
-						className="rounded-lg border px-2 py-1 text-black"
+						className="rounded-lg border px-2 py-1 text-black bg-white"
 					>
-						<option value="ALL">All</option>
-						<option value="SENT">Sent</option>
-						<option value="FAILED">Failed</option>
-						<option value="SKIPPED">Skipped</option>
-						<option value="QUEUED">Queued</option>
+						<option value="ALL" className="text-black">All</option>
+						<option value="SENT" className="text-black">Sent</option>
+						<option value="FAILED" className="text-black">Failed</option>
+						<option value="SKIPPED" className="text-black">Skipped</option>
+						<option value="QUEUED" className="text-black">Queued</option>
 					</select>
 				</div>
 				{isDesktop ? (

@@ -6,7 +6,11 @@ import { supabase } from "../../Client/SupabaseClients";
 import { useAuthRole, useMyModules } from "../../Client/useRbac";
 import LoadingCircle from "../../Components/LoadingCircle";
 import { useToast } from "../../Components/ToastProvider";
-import { columnsForModule, normalizeModuleKey } from "../Components/permissionCatalog";
+import {
+  formatPermissionColumnLabel,
+  normalizeModuleKey,
+  visibleColumnsForModule,
+} from "../Components/permissionCatalog";
 
 type ModuleRow = { module_key: string; display_name: string; path: string };
 
@@ -202,6 +206,11 @@ function normalizeRequestStatus(value: string | null | undefined) {
   return normalized || "PENDING";
 }
 
+function isResolvedRequestStatus(value: string | null | undefined) {
+  const normalized = normalizeRequestStatus(value);
+  return normalized === "APPROVED" || normalized === "REJECTED";
+}
+
 function requestBelongsToIdentity(row: AccessRequestRow, identity: RequestIdentitySnapshot) {
   const requesterUserId = normalizeIdentityValue(row.requester_user_id);
   const requesterAdminId = normalizeIdentityValue(row.requester_admin_id);
@@ -221,6 +230,22 @@ function applicantLabel(a: ApplicantOption) {
   return `${name} — ${a.applicant_id.slice(0, 8).toUpperCase()}`;
 }
 
+function requestColumnKeys(row: AccessRequestRow) {
+  return Array.from(
+    new Set([...(row.requested_column_keys ?? []), String(row.requested_column_key ?? "").trim()].filter(Boolean))
+  );
+}
+
+function requestApplicantIds(row: AccessRequestRow) {
+  return Array.from(
+    new Set([...(row.requested_applicant_ids ?? []), String(row.requested_applicant_id ?? "").trim()].filter(Boolean))
+  );
+}
+
+function reviewerDisplayName(row: AccessRequestRow) {
+  return (row.approver_full_name ?? "").trim() || (row.approver_username ?? "").trim() || "Assigned reviewer";
+}
+
 function RequestsPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -228,8 +253,8 @@ function RequestsPageContent() {
   const { modules: myModules, loading: loadingMyModules } = useMyModules();
   const toast = useToast();
   const lastToastRef = useRef<{ error: string; success: string }>({ error: "", success: "" });
-  const notifiedApprovedRequestIdsRef = useRef<Set<string>>(new Set());
-  const initializedApprovedTrackingRef = useRef(false);
+  const notifiedResolvedStatusByRequestIdRef = useRef<Map<string, "APPROVED" | "REJECTED">>(new Map());
+  const initializedResolvedTrackingRef = useRef(false);
 
   const preselectModule = normalizeModuleKey(searchParams?.get("module") ?? "");
 
@@ -270,6 +295,7 @@ function RequestsPageContent() {
   const [myRequests, setMyRequests] = useState<AccessRequestRow[]>([]);
   const [loadingRequests, setLoadingRequests] = useState(true);
   const [cancellingId, setCancellingId] = useState<string | null>(null);
+  const [removingId, setRemovingId] = useState<string | null>(null);
 
   const [pendingRequests, setPendingRequests] = useState<AccessRequestRow[]>([]);
   const [loadingPending, setLoadingPending] = useState(false);
@@ -369,6 +395,24 @@ function RequestsPageContent() {
         return;
       }
 
+      for (const identity of identities) {
+        try {
+          const purge = await supabase
+            .from("access_requests")
+            .delete()
+            .eq(identity.column, identity.value)
+            .or("status.eq.CANCELLED,status.eq.cancelled");
+          if (purge.error) {
+            const missingColumn = extractMissingColumn(String(purge.error.message ?? ""));
+            if (!missingColumn || missingColumn !== identity.column) {
+              // Ignore purge failures to avoid blocking requests UI.
+            }
+          }
+        } catch {
+          // ignore
+        }
+      }
+
       const identitySnapshot: RequestIdentitySnapshot = {
         userId: normalizeIdentityValue(userId),
         adminId: normalizeIdentityValue(adminId),
@@ -433,24 +477,40 @@ function RequestsPageContent() {
       }
 
       const rows = Array.from(rowsById.values())
+        .filter((row) => normalizeRequestStatus(row.status) !== "CANCELLED")
         .sort((a, b) => toEpochMs(b.created_at) - toEpochMs(a.created_at))
         .slice(0, 100);
 
       setMyRequests(rows);
 
-      const approvedRows = rows.filter((r) => String(r.status ?? "").toUpperCase() === "APPROVED");
-      if (!initializedApprovedTrackingRef.current) {
-        for (const row of approvedRows) {
-          notifiedApprovedRequestIdsRef.current.add(String(row.id));
+      const resolvedRows = rows.filter((r) => isResolvedRequestStatus(r.status));
+      if (!initializedResolvedTrackingRef.current) {
+        for (const row of resolvedRows) {
+          const rowId = String(row.id ?? "").trim();
+          if (!rowId) continue;
+          const status = normalizeRequestStatus(row.status);
+          if (status === "APPROVED" || status === "REJECTED") {
+            notifiedResolvedStatusByRequestIdRef.current.set(rowId, status);
+          }
         }
-        initializedApprovedTrackingRef.current = true;
+        initializedResolvedTrackingRef.current = true;
       } else {
-        for (const row of approvedRows) {
-          const rowId = String(row.id);
-          if (!rowId || notifiedApprovedRequestIdsRef.current.has(rowId)) continue;
-          notifiedApprovedRequestIdsRef.current.add(rowId);
+        for (const row of resolvedRows) {
+          const rowId = String(row.id ?? "").trim();
+          if (!rowId) continue;
+          const status = normalizeRequestStatus(row.status);
+          if (status !== "APPROVED" && status !== "REJECTED") continue;
+
+          const previousStatus = notifiedResolvedStatusByRequestIdRef.current.get(rowId);
+          if (previousStatus === status) continue;
+
+          notifiedResolvedStatusByRequestIdRef.current.set(rowId, status);
           const moduleLabel = String(row.requested_module_key ?? "requested page").replace(/_/g, " ");
-          toast.success(`Your request for ${moduleLabel} was approved.`);
+          if (status === "APPROVED") {
+            toast.success(`Your request for ${moduleLabel} was approved.`);
+          } else {
+            toast.error(`Your request for ${moduleLabel} was rejected.`);
+          }
         }
       }
     } catch {
@@ -514,12 +574,32 @@ function RequestsPageContent() {
             (payload) => {
               const row = (payload.new ?? {}) as Partial<AccessRequestRow>;
               const rowId = String(row.id ?? "").trim();
-              const status = String(row.status ?? "").trim().toUpperCase();
+              const status = normalizeRequestStatus(row.status);
 
-              if (status === "APPROVED" && rowId && !notifiedApprovedRequestIdsRef.current.has(rowId)) {
-                notifiedApprovedRequestIdsRef.current.add(rowId);
-                const moduleLabel = String(row.requested_module_key ?? "requested page").replace(/_/g, " ");
-                toast.success(`Your request for ${moduleLabel} was approved.`);
+              if (status === "APPROVED" && rowId) {
+                const previousStatus = notifiedResolvedStatusByRequestIdRef.current.get(rowId);
+                if (previousStatus !== "APPROVED") {
+                  notifiedResolvedStatusByRequestIdRef.current.set(rowId, "APPROVED");
+                  const moduleLabel = String(row.requested_module_key ?? "requested page").replace(/_/g, " ");
+                  toast.success(`Your request for ${moduleLabel} was approved.`);
+                }
+              }
+
+              if (status === "REJECTED" && rowId) {
+                const previousStatus = notifiedResolvedStatusByRequestIdRef.current.get(rowId);
+                if (previousStatus !== "REJECTED") {
+                  notifiedResolvedStatusByRequestIdRef.current.set(rowId, "REJECTED");
+                  const moduleLabel = String(row.requested_module_key ?? "requested page").replace(/_/g, " ");
+                  toast.error(`Your request for ${moduleLabel} was rejected.`);
+                }
+              }
+
+              if (status === "CANCELLED" && rowId) {
+                notifiedResolvedStatusByRequestIdRef.current.delete(rowId);
+              }
+
+              if (status !== "APPROVED" && status !== "REJECTED" && rowId) {
+                notifiedResolvedStatusByRequestIdRef.current.delete(rowId);
               }
 
               void loadMyRequests();
@@ -569,9 +649,17 @@ function RequestsPageContent() {
     [requestedModuleKey, selectableModules]
   );
 
+  const moduleLabelByKey = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const moduleRow of selectableModules) {
+      map.set(normalizeModuleKey(moduleRow.module_key), moduleRow.display_name);
+    }
+    return map;
+  }, [selectableModules]);
+
   const selectableColumns = useMemo(() => {
     if (!requestedModuleKey) return [];
-    return columnsForModule(requestedModuleKey);
+    return visibleColumnsForModule(requestedModuleKey);
   }, [requestedModuleKey]);
 
   const isEmployeesModule = normalizeModuleKey(requestedModuleKey) === "employees";
@@ -770,25 +858,73 @@ function RequestsPageContent() {
         return;
       }
 
-      const resolverUserId = session.data.session?.user?.id ?? null;
       const { error: cancelErr } = await supabase
         .from("access_requests")
-        .update({
-          status: "CANCELLED",
-          resolved_at: new Date().toISOString(),
-          resolved_by: resolverUserId,
-        })
+        .delete()
         .eq("id", rowId)
         .or("status.eq.PENDING,status.eq.pending,status.is.null");
 
       if (cancelErr) throw cancelErr;
 
-      setSuccess("Request cancelled.");
+      notifiedResolvedStatusByRequestIdRef.current.delete(rowId);
+      setSuccess("Request cancelled and removed.");
       await loadMyRequests();
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Failed to cancel request");
     } finally {
       setCancellingId(null);
+    }
+  }
+
+  async function removeMyRequest(req: AccessRequestRow) {
+    setError("");
+    setSuccess("");
+
+    const currentStatus = normalizeRequestStatus(req.status);
+    if (currentStatus === "PENDING") {
+      setError("Only resolved requests can be removed.");
+      return;
+    }
+
+    const rowId = String(req.id ?? "").trim();
+    if (!rowId) {
+      setError("Invalid request id.");
+      return;
+    }
+
+    const ok = window.confirm("Remove this request from your request history?");
+    if (!ok) return;
+
+    setRemovingId(rowId);
+    try {
+      const session = await supabase.auth.getSession();
+      const legacy = readLegacyAdminSession();
+      const identitySnapshot: RequestIdentitySnapshot = {
+        userId: normalizeIdentityValue(session.data.session?.user?.id ?? ""),
+        adminId: normalizeIdentityValue(legacy?.id ?? ""),
+        email: normalizeIdentityValue(session.data.session?.user?.email ?? ""),
+        username: normalizeIdentityValue(legacy?.username ?? ""),
+      };
+
+      if (!requestBelongsToIdentity(req, identitySnapshot)) {
+        setError("You can only remove your own requests.");
+        return;
+      }
+
+      const { error: removeErr } = await supabase
+        .from("access_requests")
+        .delete()
+        .eq("id", rowId);
+
+      if (removeErr) throw removeErr;
+
+      notifiedResolvedStatusByRequestIdRef.current.delete(rowId);
+      setSuccess("Request removed.");
+      await loadMyRequests();
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Failed to remove request");
+    } finally {
+      setRemovingId(null);
     }
   }
 
@@ -799,8 +935,13 @@ function RequestsPageContent() {
       setError("Only superadmin reviewers can review requests.");
       return;
     }
-    if (role !== "superadmin") {
-      if (!reviewerAdminId || req.approver_admin_id !== reviewerAdminId) {
+    const assignedReviewerId = String(req.approver_admin_id ?? "").trim();
+    if (assignedReviewerId) {
+      if (!reviewerAdminId) {
+        setError("Unable to verify reviewer assignment for this account.");
+        return;
+      }
+      if (assignedReviewerId !== reviewerAdminId) {
         setError("This request is not assigned to your reviewer account.");
         return;
       }
@@ -1084,6 +1225,13 @@ function RequestsPageContent() {
           <div className="mt-1 text-xs text-gray-600">
             Open Reviewer Queue from the left sidebar under Admin Accounts.
           </div>
+          <button
+            type="button"
+            onClick={() => router.push("/Main_Modules/Requests/Queue/")}
+            className="mt-3 px-3 py-1.5 rounded-xl text-sm border bg-white"
+          >
+            Open Reviewer Queue
+          </button>
         </div>
       ) : null}
 
@@ -1291,7 +1439,7 @@ function RequestsPageContent() {
                             onChange={() => toggleRequestedColumn(col)}
                             disabled={disabled || !requestedModuleKey || !scopeColumn}
                           />
-                          {col}
+                          {formatPermissionColumnLabel(col)}
                         </label>
                       ))}
                     </div>
@@ -1396,54 +1544,81 @@ function RequestsPageContent() {
                   {myRequests.map((r) => {
                     const normalizedStatus = normalizeRequestStatus(r.status);
                     const canCancel = normalizedStatus === "PENDING";
-                    const busy = cancellingId === r.id;
+                    const canRemove = isResolvedRequestStatus(normalizedStatus);
+                    const cancelBusy = cancellingId === r.id;
+                    const removeBusy = removingId === r.id;
+                    const statusClass =
+                      normalizedStatus === "APPROVED"
+                        ? "text-emerald-700 font-semibold"
+                        : normalizedStatus === "REJECTED"
+                          ? "text-red-700 font-semibold"
+                          : "text-gray-600";
+                    const rowClass =
+                      normalizedStatus === "APPROVED"
+                        ? "bg-emerald-50 border-emerald-200"
+                        : normalizedStatus === "REJECTED"
+                          ? "bg-red-50 border-red-200"
+                          : "bg-white border-gray-200";
+                    const requestedColumns = requestColumnKeys(r);
+                    const requestedApplicants = requestApplicantIds(r);
+                    const moduleKey = normalizeModuleKey(r.requested_module_key);
+                    const moduleLabel = moduleLabelByKey.get(moduleKey) ?? r.requested_module_key;
 
                     return (
-                      <li key={r.id} className="px-3 py-2 rounded-xl border">
+                      <li key={r.id} className={`px-3 py-2 rounded-xl border ${rowClass}`}>
                         <div className="flex items-center justify-between gap-3">
-                          <div className="text-sm font-semibold text-black">{r.requested_module_key}</div>
+                          <div className="text-sm font-semibold text-black">{moduleLabel}</div>
                           <div className="text-xs text-gray-500">{new Date(r.created_at).toLocaleString()}</div>
                         </div>
                         <div className="mt-1 text-xs text-gray-600">
                           Scope: {[!r.request_scope_row && !r.request_scope_column ? "PAGE" : null, r.request_scope_row ? "ROW" : null, r.request_scope_column ? "COLUMN" : null].filter(Boolean).join(" + ") || "—"}
                         </div>
-                        {Array.from(
-                          new Set([...(r.requested_column_keys ?? []), String(r.requested_column_key ?? "").trim()].filter(Boolean))
-                        ).length > 0 ? (
+                        {requestedColumns.length > 0 ? (
                           <div className="mt-1 text-xs text-gray-600">
-                            Columns: {Array.from(new Set([...(r.requested_column_keys ?? []), String(r.requested_column_key ?? "").trim()].filter(Boolean))).join(", ")}
+                            Columns: {requestedColumns.map((columnKey) => formatPermissionColumnLabel(columnKey)).join(", ")}
                           </div>
                         ) : null}
-                        {Array.from(
-                          new Set([...(r.requested_applicant_ids ?? []), String(r.requested_applicant_id ?? "").trim()].filter(Boolean))
-                        ).length > 0 ? (
+                        {requestedApplicants.length > 0 ? (
                           <div className="mt-1 text-xs text-gray-600">
-                            Personnel: {Array.from(
-                              new Set([...(r.requested_applicant_ids ?? []), String(r.requested_applicant_id ?? "").trim()].filter(Boolean))
-                            )
+                            Personnel: {requestedApplicants
                               .map((id) => applicantLabelById.get(id) ?? id)
                               .join(", ")}
                           </div>
                         ) : null}
                         {(r.approver_full_name || r.approver_username || r.approver_admin_id) ? (
                           <div className="mt-1 text-xs text-gray-600">
-                            Reviewer: {(r.approver_full_name ?? "").trim() || (r.approver_username ?? "").trim() || r.approver_admin_id}
+                            Reviewer: {reviewerDisplayName(r)}
                           </div>
                         ) : null}
-                        <div className="mt-1 text-xs text-gray-600">Status: {normalizedStatus}</div>
+                        <div className={`mt-1 text-xs ${statusClass}`}>Status: {normalizedStatus}</div>
                         {r.reason ? <div className="mt-1 text-xs text-gray-600">Reason: {r.reason}</div> : null}
-                        {canCancel ? (
-                          <div className="mt-2">
-                            <button
-                              type="button"
-                              onClick={() => void cancelMyRequest(r)}
-                              disabled={busy}
-                              className={`px-3 py-1.5 rounded-xl text-xs font-semibold border ${
-                                busy ? "bg-gray-100 text-gray-400" : "bg-white text-gray-700"
-                              }`}
-                            >
-                              {busy ? "Cancelling..." : "Cancel Request"}
-                            </button>
+                        {canCancel || canRemove ? (
+                          <div className="mt-2 flex items-center gap-2">
+                            {canCancel ? (
+                              <button
+                                type="button"
+                                onClick={() => void cancelMyRequest(r)}
+                                disabled={cancelBusy}
+                                className={`px-3 py-1.5 rounded-xl text-xs font-semibold border ${
+                                  cancelBusy ? "bg-gray-100 text-gray-400" : "bg-white text-gray-700"
+                                }`}
+                              >
+                                {cancelBusy ? "Cancelling..." : "Cancel Request"}
+                              </button>
+                            ) : null}
+
+                            {canRemove ? (
+                              <button
+                                type="button"
+                                onClick={() => void removeMyRequest(r)}
+                                disabled={removeBusy}
+                                className={`px-3 py-1.5 rounded-xl text-xs font-semibold border ${
+                                  removeBusy ? "bg-gray-100 text-gray-400" : "bg-white text-gray-700"
+                                }`}
+                              >
+                                {removeBusy ? "Removing..." : "Remove"}
+                              </button>
+                            ) : null}
                           </div>
                         ) : null}
                       </li>

@@ -4,8 +4,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../../Client/SupabaseClients";
 import { useAuthRole } from "../../../Client/useRbac";
+import { AccessTabs } from "../../Components/AccessTabs";
 import LoadingCircle from "../../../Components/LoadingCircle";
 import { useToast } from "../../../Components/ToastProvider";
+import { formatPermissionColumnLabel } from "../../Components/permissionCatalog";
 
 type ApplicantOption = {
   applicant_id: string;
@@ -148,6 +150,22 @@ function applicantLabel(a: ApplicantOption) {
   return `${name} — ${a.applicant_id.slice(0, 8).toUpperCase()}`;
 }
 
+function requestColumnKeys(row: AccessRequestRow) {
+  return Array.from(
+    new Set([...(row.requested_column_keys ?? []), String(row.requested_column_key ?? "").trim()].filter(Boolean))
+  );
+}
+
+function requestApplicantIds(row: AccessRequestRow) {
+  return Array.from(
+    new Set([...(row.requested_applicant_ids ?? []), String(row.requested_applicant_id ?? "").trim()].filter(Boolean))
+  );
+}
+
+function reviewerDisplayName(row: AccessRequestRow) {
+  return (row.approver_full_name ?? "").trim() || (row.approver_username ?? "").trim() || "Assigned reviewer";
+}
+
 export default function RequestsQueuePage() {
   const router = useRouter();
   const { role } = useAuthRole();
@@ -178,6 +196,7 @@ export default function RequestsQueuePage() {
 
   const legacySession = useMemo(() => readLegacyAdminSession(), []);
   const legacyRole = normalizeRoleNameLoose(legacySession?.role);
+  const reviewerAdminId = String(legacySession?.id ?? "").trim();
   const canReviewRequests = role === "superadmin" || legacyRole === "superadmin";
 
   const applicantLabelById = useMemo(() => {
@@ -258,6 +277,18 @@ export default function RequestsQueuePage() {
     if (!canReviewRequests) {
       setError("Only superadmin reviewers can review requests.");
       return;
+    }
+
+    const assignedReviewerId = String(req.approver_admin_id ?? "").trim();
+    if (assignedReviewerId) {
+      if (!reviewerAdminId) {
+        setError("Unable to verify reviewer assignment for this account.");
+        return;
+      }
+      if (assignedReviewerId !== reviewerAdminId) {
+        setError("This request is assigned to a different reviewer.");
+        return;
+      }
     }
 
     const requestedKey = String(req.requested_module_key ?? "").trim().toLowerCase();
@@ -543,6 +574,9 @@ export default function RequestsQueuePage() {
           <div className="text-sm text-gray-500">
             Approve grants access based on selected scope (page, columns, and optional employee row scope).
           </div>
+          <div className="mt-3">
+            <AccessTabs />
+          </div>
         </div>
         <div className="flex items-center gap-2">
           <button
@@ -588,16 +622,11 @@ export default function RequestsQueuePage() {
                   (r.requester_username ?? "").trim() ||
                   (r.requester_email ?? "").trim() ||
                   "Unknown requester";
-                const personIds = Array.from(
-                  new Set([...(r.requested_applicant_ids ?? []), String(r.requested_applicant_id ?? "").trim()].filter(Boolean))
-                );
+                const personIds = requestApplicantIds(r);
                 const personLabel = personIds.length > 0
                   ? personIds.map((id) => applicantLabelById.get(id) ?? id).join(", ")
                   : "—";
-                const reviewerLabel =
-                  (r.approver_full_name ?? "").trim() ||
-                  (r.approver_username ?? "").trim() ||
-                  "Unassigned reviewer";
+                const reviewerLabel = reviewerDisplayName(r);
                 const scopeLabel = [
                   !r.request_scope_row && !r.request_scope_column ? "PAGE" : null,
                   r.request_scope_row ? "ROW" : null,
@@ -605,9 +634,9 @@ export default function RequestsQueuePage() {
                 ]
                   .filter(Boolean)
                   .join(" + ") || "—";
-                const columnsLabel = Array.from(
-                  new Set([...(r.requested_column_keys ?? []), String(r.requested_column_key ?? "").trim()].filter(Boolean))
-                ).join(", ");
+                const columnsLabel = requestColumnKeys(r)
+                  .map((columnKey) => formatPermissionColumnLabel(columnKey))
+                  .join(", ");
 
                 return (
                   <tr key={r.id} className="border-t align-top">

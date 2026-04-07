@@ -19,7 +19,12 @@ type AdminRow = {
 };
 
 function getErrorMessage(e: unknown) {
-	return e instanceof Error ? e.message : "Something went wrong";
+	if (e instanceof Error) return e.message;
+	if (e && typeof e === "object" && "message" in e) {
+		const message = String((e as { message?: unknown }).message ?? "").trim();
+		if (message) return message;
+	}
+	return "Something went wrong";
 }
 
 type ElectronAuditEvent = {
@@ -58,6 +63,7 @@ export default function AdminAccountsPage() {
 	const [accountPassword, setAccountPassword] = useState("");
 	const [accountRole, setAccountRole] = useState("admin");
 	const [creatingAccount, setCreatingAccount] = useState(false);
+	const [togglingActiveId, setTogglingActiveId] = useState<string | null>(null);
 
 	const currentAdminId = useMemo(() => {
 		try {
@@ -192,13 +198,34 @@ export default function AdminAccountsPage() {
 		if (!canManage) return setError("Only Superadmin can manage accounts.");
 		if (currentAdminId && a.id === currentAdminId) return setError("You cannot deactivate your own account.");
 
-		const { error: upErr } = await supabase
-			.from("admins")
-			.update({ is_active: !a.is_active })
-			.eq("id", a.id);
-		if (upErr) return setError(upErr.message);
-		setSuccess("Account updated.");
-		logAudit("ADMIN_TOGGLE_ACCOUNT_ACTIVE", { id: a.id, username: a.username, is_active: !a.is_active });
+		setTogglingActiveId(a.id);
+		try {
+			const nextIsActive = !a.is_active;
+			const { data, error: upErr } = await supabase
+				.from("admins")
+				.update({ is_active: nextIsActive })
+				.eq("id", a.id)
+				.select("id, is_active")
+				.maybeSingle();
+			if (upErr) return setError(upErr.message);
+			if (!data) return setError("Account update did not apply. Please try again.");
+
+			setAdmins((prev) =>
+				prev.map((row) =>
+					row.id === a.id
+						? { ...row, is_active: Boolean((data as { is_active?: boolean | null }).is_active) }
+						: row
+				)
+			);
+
+			setSuccess(nextIsActive ? "Account activated." : "Account deactivated.");
+			logAudit("ADMIN_TOGGLE_ACCOUNT_ACTIVE", { id: a.id, username: a.username, is_active: nextIsActive });
+			void loadAccounts();
+		} catch (e: unknown) {
+			setError(getErrorMessage(e));
+		} finally {
+			setTogglingActiveId(null);
+		}
 	}
 
 	async function updateAccountRole(a: AdminRow, nextRole: string) {
@@ -269,9 +296,17 @@ export default function AdminAccountsPage() {
 						<AccessTabs />
 					</div>
 				</div>
-				<button onClick={() => router.push("/Main_Modules/Dashboard/")} className="px-4 py-2 rounded-xl bg-white border">
-					Back
-				</button>
+				<div className="flex items-center gap-2">
+					<button
+						onClick={() => router.push("/Main_Modules/Requests/Queue/")}
+						className="px-4 py-2 rounded-xl bg-white border"
+					>
+						Reviewer Queue
+					</button>
+					<button onClick={() => router.push("/Main_Modules/Dashboard/")} className="px-4 py-2 rounded-xl bg-white border">
+						Back
+					</button>
+				</div>
 			</div>
 
 			{role !== "superadmin" ? (
@@ -352,7 +387,9 @@ export default function AdminAccountsPage() {
 			<div className="mt-5 rounded-2xl border p-4">
 				<div>
 					<div className="text-sm font-semibold text-black">Accounts</div>
-					<div className="mt-1 text-xs text-gray-500">All accounts are shown in one table.</div>
+					<div className="mt-1 text-xs text-gray-500">
+						All accounts are shown in one table. Open Permissions for account-only page/column access overrides.
+					</div>
 				</div>
 
 				<div className="mt-4 overflow-x-auto">
@@ -370,6 +407,11 @@ export default function AdminAccountsPage() {
 						<tbody>
 							{admins.map((a) => {
 									const self = currentAdminId ? a.id === currentAdminId : false;
+									const activeLabel = a.is_active ? "Active" : "Inactive";
+									const activeClass = a.is_active
+										? "text-emerald-700 bg-emerald-50 border-emerald-200"
+										: "text-red-700 bg-red-50 border-red-200";
+									const toggleBusy = togglingActiveId === a.id;
 									return (
 										<tr key={a.id} className="border-t">
 											<td className="px-3 py-2 text-black whitespace-nowrap">{a.username}</td>
@@ -389,22 +431,37 @@ export default function AdminAccountsPage() {
 													{roleNames.includes(a.role) ? null : <option value={a.role}>{a.role}</option>}
 												</select>
 											</td>
-											<td className="px-3 py-2 text-black">{a.is_active ? "Yes" : "No"}</td>
+											<td className="px-3 py-2">
+												<span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold ${activeClass}`}>
+													{activeLabel}
+												</span>
+											</td>
 											<td className="px-3 py-2 text-black">
 												{a.last_login ? new Date(a.last_login).toLocaleString() : "—"}
 											</td>
 											<td className="px-3 py-2">
 												<div className="flex items-center gap-2">
 													<button
+														onClick={() =>
+															router.push(`/Main_Modules/Permissions/?admin=${encodeURIComponent(a.id)}`)
+														}
+														disabled={!canManage}
+														className={`px-3 py-1.5 rounded-xl text-sm border ${
+															canManage ? "bg-white" : "bg-gray-100 text-gray-400 cursor-not-allowed"
+														}`}
+													>
+														Permissions
+													</button>
+													<button
 														onClick={() => toggleActiveAccount(a)}
-														disabled={!canManage || self}
+														disabled={!canManage || self || toggleBusy}
 													className={`px-3 py-1.5 rounded-xl text-sm border ${
-														canManage && !self
+														canManage && !self && !toggleBusy
 															? "bg-white"
 															: "bg-gray-100 text-gray-400 cursor-not-allowed"
 													}`}
 													>
-														{a.is_active ? "Deactivate" : "Activate"}
+														{toggleBusy ? "Saving..." : a.is_active ? "Deactivate" : "Activate"}
 													</button>
 													<button
 														onClick={() => deleteAccount(a)}

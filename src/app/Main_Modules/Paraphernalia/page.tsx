@@ -133,6 +133,13 @@ function pickByAliases(row: Record<string, unknown>, aliases: string[]) {
   return "";
 }
 
+function normalizeImportKey(value: unknown) {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+}
+
 function downloadBlob(filename: string, blob: Blob) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -256,33 +263,57 @@ export default function ParaphernaliaPage() {
       if (existingErr) throw existingErr;
 
       const byComposite = new Map<string, string>();
+      const byPairUnique = new Map<string, string>();
+      const pairCounts = new Map<string, number>();
       for (const row of ((existingRows ?? []) as Array<Record<string, unknown>>)) {
         const id = String(row.id_paraphernalia ?? "");
         if (!id) continue;
+        const namesKey = normalizeImportKey(row.names);
+        const itemsKey = normalizeImportKey(row.items);
+        const dateKey = normalizeImportKey(row.date);
         const key = [
-          String(row.names ?? "").trim().toLowerCase(),
-          String(row.items ?? "").trim().toLowerCase(),
-          String(row.date ?? "").trim().toLowerCase(),
+          namesKey,
+          itemsKey,
+          dateKey,
         ].join("|");
         if (key !== "||") byComposite.set(key, id);
+
+        const pairKey = [namesKey, itemsKey].join("|");
+        if (pairKey !== "|") {
+          pairCounts.set(pairKey, (pairCounts.get(pairKey) ?? 0) + 1);
+          if (!byPairUnique.has(pairKey)) byPairUnique.set(pairKey, id);
+        }
+      }
+
+      for (const [pairKey, count] of pairCounts.entries()) {
+        if (count > 1) byPairUnique.delete(pairKey);
       }
 
       const deduped = new Map<string, (typeof payloads)[number]>();
       for (const p of payloads) {
+        const namesKey = normalizeImportKey(p.names);
+        const itemsKey = normalizeImportKey(p.items);
+        const dateKey = normalizeImportKey(p.date);
         const key = [
-          String(p.names ?? "").trim().toLowerCase(),
-          String(p.items ?? "").trim().toLowerCase(),
-          String(p.date ?? "").trim().toLowerCase(),
+          namesKey,
+          itemsKey,
+          dateKey,
         ].join("|");
-        if (deduped.has(key)) skipped += 1;
-        deduped.set(key, p);
+        const dedupeKey = dateKey ? key : `pair:${namesKey}|${itemsKey}`;
+        if (deduped.has(dedupeKey)) skipped += 1;
+        deduped.set(dedupeKey, p);
       }
 
       let inserted = 0;
       let updated = 0;
 
       for (const [key, payload] of deduped.entries()) {
-        const id = byComposite.get(key);
+        const namesKey = normalizeImportKey(payload.names);
+        const itemsKey = normalizeImportKey(payload.items);
+        const dateKey = normalizeImportKey(payload.date);
+        const compositeKey = [namesKey, itemsKey, dateKey].join("|");
+        const pairKey = [namesKey, itemsKey].join("|");
+        const id = byComposite.get(compositeKey) ?? (pairKey !== "|" ? byPairUnique.get(pairKey) : undefined);
         if (id) {
           const upd = await supabase.from("paraphernalia").update(payload).eq("id_paraphernalia", id);
           if (upd.error) {
@@ -363,33 +394,57 @@ export default function ParaphernaliaPage() {
     if (existingErr) throw existingErr;
 
     const byComposite = new Map<string, string>();
+    const byPairUnique = new Map<string, string>();
+    const pairCounts = new Map<string, number>();
     for (const row of ((existingRows ?? []) as Array<Record<string, unknown>>)) {
       const id = String(row.id_paraphernalia ?? "");
       if (!id) continue;
+      const namesKey = normalizeImportKey(row.names);
+      const itemsKey = normalizeImportKey(row.items);
+      const dateKey = normalizeImportKey(row.date);
       const key = [
-        String(row.names ?? "").trim().toLowerCase(),
-        String(row.items ?? "").trim().toLowerCase(),
-        String(row.date ?? "").trim().toLowerCase(),
+        namesKey,
+        itemsKey,
+        dateKey,
       ].join("|");
       if (key !== "||") byComposite.set(key, id);
+
+      const pairKey = [namesKey, itemsKey].join("|");
+      if (pairKey !== "|") {
+        pairCounts.set(pairKey, (pairCounts.get(pairKey) ?? 0) + 1);
+        if (!byPairUnique.has(pairKey)) byPairUnique.set(pairKey, id);
+      }
+    }
+
+    for (const [pairKey, count] of pairCounts.entries()) {
+      if (count > 1) byPairUnique.delete(pairKey);
     }
 
     const deduped = new Map<string, (typeof payloads)[number]>();
     for (const p of payloads) {
+      const namesKey = normalizeImportKey(p.names);
+      const itemsKey = normalizeImportKey(p.items);
+      const dateKey = normalizeImportKey(p.date);
       const key = [
-        String(p.names ?? "").trim().toLowerCase(),
-        String(p.items ?? "").trim().toLowerCase(),
-        String(p.date ?? "").trim().toLowerCase(),
+        namesKey,
+        itemsKey,
+        dateKey,
       ].join("|");
-      if (deduped.has(key)) skipped += 1;
-      deduped.set(key, p);
+      const dedupeKey = dateKey ? key : `pair:${namesKey}|${itemsKey}`;
+      if (deduped.has(dedupeKey)) skipped += 1;
+      deduped.set(dedupeKey, p);
     }
 
     let inserted = 0;
     let updated = 0;
 
     for (const [key, payload] of deduped.entries()) {
-      const id = byComposite.get(key);
+      const namesKey = normalizeImportKey(payload.names);
+      const itemsKey = normalizeImportKey(payload.items);
+      const dateKey = normalizeImportKey(payload.date);
+      const compositeKey = [namesKey, itemsKey, dateKey].join("|");
+      const pairKey = [namesKey, itemsKey].join("|");
+      const id = byComposite.get(compositeKey) ?? (pairKey !== "|" ? byPairUnique.get(pairKey) : undefined);
       if (id) {
         const upd = await supabase.from("paraphernalia").update(payload).eq("id_paraphernalia", id);
         if (upd.error) {

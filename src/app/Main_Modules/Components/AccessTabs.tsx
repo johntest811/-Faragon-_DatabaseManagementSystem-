@@ -3,13 +3,14 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-type Tab = { label: string; href: string };
+type Tab = { label: string; href: string; deepMatch?: boolean };
 
 const TABS: Tab[] = [
 	{ label: "Admin Accounts", href: "/Main_Modules/AdminAccounts/" },
 	{ label: "Roles", href: "/Main_Modules/Roles/" },
 	{ label: "Permissions", href: "/Main_Modules/Permissions/" },
-	{ label: "Requests", href: "/Main_Modules/Requests/" },
+	{ label: "Requests", href: "/Main_Modules/Requests/", deepMatch: false },
+	{ label: "Reviewer Queue", href: "/Main_Modules/Requests/Queue/" },
 ];
 
 function normalize(path: string) {
@@ -23,7 +24,8 @@ export function AccessTabs() {
 	return (
 		<div className="flex items-center gap-2 overflow-x-auto">
 			{TABS.map((t) => {
-				const active = current === normalize(t.href) || current.startsWith(normalize(t.href) + "/");
+				const target = normalize(t.href);
+				const active = current === target || ((t.deepMatch ?? true) && current.startsWith(target + "/"));
 				return (
 					<Link
 						key={t.href}

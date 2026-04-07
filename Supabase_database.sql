@@ -17,9 +17,40 @@ CREATE TABLE public.access_requests (
   resolved_by uuid,
   resolution_note text,
   requested_column_key text,
+  request_scope_row boolean DEFAULT false,
+  request_scope_column boolean DEFAULT false,
+  requested_column_keys ARRAY,
+  requested_applicant_ids ARRAY,
+  requested_row_identifier_key text,
+  requested_row_identifier_values ARRAY,
+  approver_admin_id uuid,
+  approver_username text,
+  approver_full_name text,
   CONSTRAINT access_requests_pkey PRIMARY KEY (id),
   CONSTRAINT access_requests_module_fkey FOREIGN KEY (requested_module_key) REFERENCES public.modules(module_key),
-  CONSTRAINT access_requests_requester_admin_fkey FOREIGN KEY (requester_admin_id) REFERENCES public.admins(id)
+  CONSTRAINT access_requests_requester_admin_fkey FOREIGN KEY (requester_admin_id) REFERENCES public.admins(id),
+  CONSTRAINT access_requests_approver_admin_fkey FOREIGN KEY (approver_admin_id) REFERENCES public.admins(id)
+);
+CREATE TABLE public.admin_applicant_access_overrides (
+  admin_id uuid NOT NULL,
+  module_key text NOT NULL,
+  applicant_id uuid NOT NULL,
+  can_read boolean NOT NULL DEFAULT true,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  created_by uuid,
+  CONSTRAINT admin_applicant_access_overrides_pkey PRIMARY KEY (admin_id, module_key, applicant_id)
+);
+CREATE TABLE public.admin_applicant_column_access_overrides (
+  admin_id uuid NOT NULL,
+  module_key text NOT NULL,
+  applicant_id uuid NOT NULL,
+  column_key text NOT NULL,
+  can_read boolean NOT NULL DEFAULT true,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  created_by uuid,
+  CONSTRAINT admin_applicant_column_access_overrides_pkey PRIMARY KEY (admin_id, module_key, applicant_id, column_key)
 );
 CREATE TABLE public.admin_column_access_overrides (
   admin_id uuid NOT NULL,
@@ -49,6 +80,18 @@ CREATE TABLE public.admin_role_memberships (
   role_id uuid NOT NULL,
   CONSTRAINT admin_role_memberships_pkey PRIMARY KEY (user_id, role_id),
   CONSTRAINT admin_role_memberships_role_id_fkey FOREIGN KEY (role_id) REFERENCES public.app_roles(role_id)
+);
+CREATE TABLE public.admin_row_identifier_column_access_overrides (
+  admin_id uuid NOT NULL,
+  module_key text NOT NULL,
+  row_identifier_key text NOT NULL,
+  row_identifier_value text NOT NULL,
+  column_key text NOT NULL,
+  can_read boolean NOT NULL DEFAULT true,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  created_by uuid,
+  CONSTRAINT admin_row_identifier_column_access_overrides_pkey PRIMARY KEY (admin_id, module_key, row_identifier_key, row_identifier_value, column_key)
 );
 CREATE TABLE public.admins (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
@@ -412,6 +455,27 @@ CREATE TABLE public.role_module_access (
   CONSTRAINT role_module_access_role_id_fkey FOREIGN KEY (role_id) REFERENCES public.app_roles(role_id),
   CONSTRAINT role_module_access_module_key_fkey FOREIGN KEY (module_key) REFERENCES public.modules(module_key)
 );
+CREATE TABLE public.user_applicant_access_overrides (
+  user_id uuid NOT NULL,
+  module_key text NOT NULL,
+  applicant_id uuid NOT NULL,
+  can_read boolean NOT NULL DEFAULT true,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  created_by uuid,
+  CONSTRAINT user_applicant_access_overrides_pkey PRIMARY KEY (user_id, module_key, applicant_id)
+);
+CREATE TABLE public.user_applicant_column_access_overrides (
+  user_id uuid NOT NULL,
+  module_key text NOT NULL,
+  applicant_id uuid NOT NULL,
+  column_key text NOT NULL,
+  can_read boolean NOT NULL DEFAULT true,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  created_by uuid,
+  CONSTRAINT user_applicant_column_access_overrides_pkey PRIMARY KEY (user_id, module_key, applicant_id, column_key)
+);
 CREATE TABLE public.user_column_access_overrides (
   user_id uuid NOT NULL,
   module_key text NOT NULL,
@@ -432,4 +496,16 @@ CREATE TABLE public.user_module_access_overrides (
   created_by uuid,
   CONSTRAINT user_module_access_overrides_pkey PRIMARY KEY (user_id, module_key),
   CONSTRAINT user_module_access_overrides_module_fkey FOREIGN KEY (module_key) REFERENCES public.modules(module_key)
+);
+CREATE TABLE public.user_row_identifier_column_access_overrides (
+  user_id uuid NOT NULL,
+  module_key text NOT NULL,
+  row_identifier_key text NOT NULL,
+  row_identifier_value text NOT NULL,
+  column_key text NOT NULL,
+  can_read boolean NOT NULL DEFAULT true,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  created_by uuid,
+  CONSTRAINT user_row_identifier_column_access_overrides_pkey PRIMARY KEY (user_id, module_key, row_identifier_key, row_identifier_value, column_key)
 );

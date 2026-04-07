@@ -192,6 +192,13 @@ function toNumber(v: string) {
   return Number.isFinite(n) ? n : 0;
 }
 
+function normalizeImportKey(value: unknown) {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+}
+
 function toMoney(value: number) {
   return new Intl.NumberFormat("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value);
 }
@@ -433,17 +440,32 @@ function downloadInventoryTemplateXlsx() {
       if (existingErr) throw existingErr;
 
       const byComposite = new Map<string, string>();
+      const byParticularUnique = new Map<string, string>();
+      const particularCounts = new Map<string, number>();
       for (const row of ((existingRows ?? []) as Array<Record<string, unknown>>)) {
         const id = String(row.id ?? "");
         if (!id) continue;
-        const key = `${String(row.particular ?? "").trim().toLowerCase()}|${String(row.date ?? "").trim().toLowerCase()}`;
+        const particularKey = normalizeImportKey(row.particular);
+        const dateKey = normalizeImportKey(row.date);
+        const key = `${particularKey}|${dateKey}`;
         if (key !== "|") byComposite.set(key, id);
+
+        if (particularKey) {
+          particularCounts.set(particularKey, (particularCounts.get(particularKey) ?? 0) + 1);
+          if (!byParticularUnique.has(particularKey)) byParticularUnique.set(particularKey, id);
+        }
+      }
+
+      for (const [particularKey, count] of particularCounts.entries()) {
+        if (count > 1) byParticularUnique.delete(particularKey);
       }
 
       type InventoryPayload = NonNullable<(typeof importedRows)[number]>;
       const deduped = new Map<string, InventoryPayload>();
       for (const payload of importedRows) {
-        const key = `${String(payload.particular ?? "").trim().toLowerCase()}|${String(payload.date ?? "").trim().toLowerCase()}`;
+        const particularKey = normalizeImportKey(payload.particular);
+        const dateKey = normalizeImportKey(payload.date);
+        const key = dateKey ? `${particularKey}|${dateKey}` : `p:${particularKey}`;
         if (deduped.has(key)) skipped += 1;
         deduped.set(key, payload);
       }
@@ -451,7 +473,10 @@ function downloadInventoryTemplateXlsx() {
       let inserted = 0;
       let updated = 0;
       for (const [key, payload] of deduped.entries()) {
-        const id = byComposite.get(key);
+        const particularKey = normalizeImportKey(payload.particular);
+        const dateKey = normalizeImportKey(payload.date);
+        const compositeKey = `${particularKey}|${dateKey}`;
+        const id = byComposite.get(compositeKey) ?? (particularKey ? byParticularUnique.get(particularKey) : undefined);
         if (id) {
           const upd = await supabase.from("inventory_fixed_asset").update(payload).eq("id", id);
           if (upd.error) {
@@ -564,16 +589,31 @@ function downloadInventoryTemplateXlsx() {
     if (existingErr) throw existingErr;
 
     const byComposite = new Map<string, string>();
+    const byParticularUnique = new Map<string, string>();
+    const particularCounts = new Map<string, number>();
     for (const row of ((existingRows ?? []) as Array<Record<string, unknown>>)) {
       const id = String(row.id ?? "");
       if (!id) continue;
-      const key = `${String(row.particular ?? "").trim().toLowerCase()}|${String(row.date ?? "").trim().toLowerCase()}`;
+      const particularKey = normalizeImportKey(row.particular);
+      const dateKey = normalizeImportKey(row.date);
+      const key = `${particularKey}|${dateKey}`;
       if (key !== "|") byComposite.set(key, id);
+
+      if (particularKey) {
+        particularCounts.set(particularKey, (particularCounts.get(particularKey) ?? 0) + 1);
+        if (!byParticularUnique.has(particularKey)) byParticularUnique.set(particularKey, id);
+      }
+    }
+
+    for (const [particularKey, count] of particularCounts.entries()) {
+      if (count > 1) byParticularUnique.delete(particularKey);
     }
 
     const deduped = new Map<string, Record<string, unknown>>();
     for (const payload of importedRows) {
-      const key = `${String(payload.particular ?? "").trim().toLowerCase()}|${String(payload.date ?? "").trim().toLowerCase()}`;
+      const particularKey = normalizeImportKey(payload.particular);
+      const dateKey = normalizeImportKey(payload.date);
+      const key = dateKey ? `${particularKey}|${dateKey}` : `p:${particularKey}`;
       if (deduped.has(key)) skipped += 1;
       deduped.set(key, payload);
     }
@@ -581,7 +621,10 @@ function downloadInventoryTemplateXlsx() {
     let inserted = 0;
     let updated = 0;
     for (const [key, payload] of deduped.entries()) {
-      const id = byComposite.get(key);
+      const particularKey = normalizeImportKey(payload.particular);
+      const dateKey = normalizeImportKey(payload.date);
+      const compositeKey = `${particularKey}|${dateKey}`;
+      const id = byComposite.get(compositeKey) ?? (particularKey ? byParticularUnique.get(particularKey) : undefined);
       if (id) {
         const upd = await supabase.from("inventory_fixed_asset").update(payload).eq("id", id);
         if (upd.error) {

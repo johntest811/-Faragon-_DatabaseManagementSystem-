@@ -5,7 +5,14 @@ import { useRouter } from "next/navigation";
 import { supabase } from "../../Client/SupabaseClients";
 import { useAuthRole } from "../../Client/useRbac";
 import { AccessTabs } from "../Components/AccessTabs";
-import { columnsForModule, groupedCatalog, normalizeModuleKey } from "../Components/permissionCatalog";
+import {
+	columnsForModule,
+	formatPermissionColumnLabel,
+	groupedCatalog,
+	normalizeModuleKey,
+	shouldHidePermissionColumn,
+	visibleColumnsForModule,
+} from "../Components/permissionCatalog";
 
 type RoleRow = { role_id: string; role_name: string };
 type ModuleRow = { module_key: string; display_name: string };
@@ -18,7 +25,12 @@ type RoleColumnAccessRow = {
 };
 
 function getErrorMessage(e: unknown) {
-	return e instanceof Error ? e.message : "Something went wrong";
+	if (e instanceof Error) return e.message;
+	if (e && typeof e === "object" && "message" in e) {
+		const message = String((e as { message?: unknown }).message ?? "").trim();
+		if (message) return message;
+	}
+	return "Something went wrong";
 }
 
 function labelFromRole(roleName: string) {
@@ -64,6 +76,7 @@ export default function RolesPage() {
 	const [modules, setModules] = useState<ModuleRow[]>([]);
 	const [access, setAccess] = useState<Record<string, Set<string>>>({});
 	const [roleColumnAccess, setRoleColumnAccess] = useState<Record<string, Record<string, Set<string>>>>({});
+	const [roleColumnRestrictedModules, setRoleColumnRestrictedModules] = useState<Record<string, Set<string>>>({});
 	const [selectedRoleId, setSelectedRoleId] = useState<string>("");
 	const [savingKey, setSavingKey] = useState<string>("");
 	const [roleSearch, setRoleSearch] = useState("");
@@ -125,9 +138,12 @@ export default function RolesPage() {
 			}
 
 			const colMap: Record<string, Record<string, Set<string>>> = {};
+			const colRestrictedMap: Record<string, Set<string>> = {};
 			for (const row of ((cRes.data as RoleColumnAccessRow[]) ?? []) || []) {
-				if (row.can_read === false) continue;
 				const moduleKey = normalizeModuleKey(row.module_key);
+				if (!colRestrictedMap[row.role_id]) colRestrictedMap[row.role_id] = new Set<string>();
+				if (moduleKey) colRestrictedMap[row.role_id].add(moduleKey);
+				if (row.can_read === false) continue;
 				const col = String(row.column_key ?? "").trim();
 				if (!col) continue;
 				if (!colMap[row.role_id]) colMap[row.role_id] = {};
@@ -154,6 +170,7 @@ export default function RolesPage() {
 
 			setAccess(map);
 			setRoleColumnAccess(colMap);
+			setRoleColumnRestrictedModules(colRestrictedMap);
 
 			setSelectedRoleId((prev) => {
 				if (prev && loadedRoles.some((r) => r.role_id === prev)) return prev;
@@ -224,6 +241,11 @@ export default function RolesPage() {
 		return roleColumnAccess[selectedRole.role_id] ?? {};
 	}, [roleColumnAccess, selectedRole]);
 
+	const selectedColumnRestrictedModules = useMemo(() => {
+		if (!selectedRole) return new Set<string>();
+		return roleColumnRestrictedModules[selectedRole.role_id] ?? new Set<string>();
+	}, [roleColumnRestrictedModules, selectedRole]);
+
 	const groupedModules = useMemo(() => {
 		return groupedCatalog(moduleSearch)
 			.map((group) => ({
@@ -235,7 +257,7 @@ export default function RolesPage() {
 						return {
 							module_key: normalizeModuleKey(loaded.module_key),
 							display_name: loaded.display_name,
-							columns: row.columns,
+							columns: visibleColumnsForModule(row.moduleKey),
 						};
 					})
 					.filter((v): v is { module_key: string; display_name: string; columns: string[] } => !!v),
@@ -285,37 +307,32 @@ export default function RolesPage() {
 		}
 	}
 
-	async function toggleRoleColumn(roleId: string, moduleKey: string, columnKey: string) {
+	async function toggleRoleColumn(roleId: string, moduleKey: string, columnKey: string, moduleColumns: string[]) {
 		setError("");
 		setSuccess("");
 		if (!canManage) return setError("Only Superadmin can change column access.");
 		const key = normalizeModuleKey(moduleKey);
 		const column = String(columnKey ?? "").trim();
 		if (!key || !column) return;
+		const normalizedModuleColumns = Array.from(
+			new Set(moduleColumns.map((c) => String(c ?? "").trim()).filter(Boolean))
+		);
+		if (!normalizedModuleColumns.includes(column)) normalizedModuleColumns.push(column);
 
 		const busyKey = `role-column:${roleId}:${key}:${column}`;
 		setSavingKey(busyKey);
 		try {
 			const currentCols = roleColumnAccess[roleId]?.[key] ?? new Set<string>();
-			const enabled = currentCols.has(column);
+			const moduleEnabled = access[roleId]?.has(key) ?? false;
+			const moduleRestricted = roleColumnRestrictedModules[roleId]?.has(key) ?? false;
+			const sentinelColumn = normalizedModuleColumns[0] ?? column;
+			let nextEnabled = false;
 
-			if (enabled) {
-				const { error: delErr } = await supabase
-					.from("role_column_access")
-					.delete()
-					.eq("role_id", roleId)
-					.eq("module_key", key)
-					.eq("column_key", column);
-				if (delErr) throw delErr;
-			} else {
-				// Ensure module is enabled first.
-				const moduleEnabled = access[roleId]?.has(key) ?? false;
-				if (!moduleEnabled) {
-					const { error: insModuleErr } = await supabase
-						.from("role_module_access")
-						.insert({ role_id: roleId, module_key: key });
-					if (insModuleErr) throw insModuleErr;
-				}
+			if (!moduleEnabled) {
+				const { error: insModuleErr } = await supabase
+					.from("role_module_access")
+					.insert({ role_id: roleId, module_key: key });
+				if (insModuleErr) throw insModuleErr;
 
 				const { error: insErr } = await supabase
 					.from("role_column_access")
@@ -324,6 +341,95 @@ export default function RolesPage() {
 						{ onConflict: "role_id,module_key,column_key" }
 					);
 				if (insErr) throw insErr;
+				nextEnabled = true;
+			} else if (!moduleRestricted) {
+				// No explicit rows means "all columns allowed". Turning one column off creates
+				// an explicit allow-list for the remaining columns.
+				const keepColumns = normalizedModuleColumns.filter((c) => c !== column);
+				const { error: resetErr } = await supabase
+					.from("role_column_access")
+					.delete()
+					.eq("role_id", roleId)
+					.eq("module_key", key);
+				if (resetErr) throw resetErr;
+
+				if (keepColumns.length > 0) {
+					const rows = keepColumns.map((colKey) => ({
+						role_id: roleId,
+						module_key: key,
+						column_key: colKey,
+						can_read: true,
+					}));
+					const { error: insErr } = await supabase
+						.from("role_column_access")
+						.upsert(rows, { onConflict: "role_id,module_key,column_key" });
+					if (insErr) throw insErr;
+				} else {
+					// Keep an explicit restricted marker when no columns remain allowed.
+					const { error: denyErr } = await supabase
+						.from("role_column_access")
+						.upsert(
+							{ role_id: roleId, module_key: key, column_key: sentinelColumn, can_read: false },
+							{ onConflict: "role_id,module_key,column_key" }
+						);
+					if (denyErr) throw denyErr;
+				}
+				nextEnabled = false;
+			} else {
+				const enabled = currentCols.has(column);
+
+				if (enabled) {
+					const { error: delErr } = await supabase
+						.from("role_column_access")
+						.delete()
+						.eq("role_id", roleId)
+						.eq("module_key", key)
+						.eq("column_key", column);
+					if (delErr) throw delErr;
+
+					const nextAllowed = new Set(currentCols);
+					nextAllowed.delete(column);
+					if (nextAllowed.size === 0) {
+						const { error: denyErr } = await supabase
+							.from("role_column_access")
+							.upsert(
+								{ role_id: roleId, module_key: key, column_key: sentinelColumn, can_read: false },
+								{ onConflict: "role_id,module_key,column_key" }
+							);
+						if (denyErr) throw denyErr;
+					}
+				} else {
+					const { error: clearDenyErr } = await supabase
+						.from("role_column_access")
+						.delete()
+						.eq("role_id", roleId)
+						.eq("module_key", key)
+						.eq("can_read", false);
+					if (clearDenyErr) throw clearDenyErr;
+
+					const { error: insErr } = await supabase
+						.from("role_column_access")
+						.upsert(
+							{ role_id: roleId, module_key: key, column_key: column, can_read: true },
+							{ onConflict: "role_id,module_key,column_key" }
+						);
+					if (insErr) throw insErr;
+				}
+
+				const nextAllowed = new Set(currentCols);
+				if (enabled) nextAllowed.delete(column);
+				else nextAllowed.add(column);
+
+				if (normalizedModuleColumns.length > 0 && nextAllowed.size >= normalizedModuleColumns.length) {
+					const { error: clearErr } = await supabase
+						.from("role_column_access")
+						.delete()
+						.eq("role_id", roleId)
+						.eq("module_key", key);
+					if (clearErr) throw clearErr;
+				}
+
+				nextEnabled = !enabled;
 			}
 
 			setSuccess("Column access updated.");
@@ -331,7 +437,7 @@ export default function RolesPage() {
 				role_id: roleId,
 				module_key: key,
 				column_key: column,
-				enabled: !enabled,
+				enabled: nextEnabled,
 			});
 			load();
 		} catch (e: unknown) {
@@ -393,109 +499,101 @@ export default function RolesPage() {
 			{error ? <div className="mb-3 text-red-600 text-sm">{error}</div> : null}
 			{success ? <div className="mb-3 text-emerald-700 text-sm">{success}</div> : null}
 
-			<div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
-				<div className="rounded-2xl border p-4">
-					<div className="text-sm font-semibold text-black">Create Role</div>
-					<div className="mt-3 flex gap-2">
-						<input
-							value={newRoleName}
-							onChange={(e) => setNewRoleName(e.target.value)}
-							placeholder="e.g. hr_manager"
-							className="flex-1 border rounded-xl px-3 py-2 text-black"
-							disabled={!canManage || creatingRole}
-						/>
-						<button
-							onClick={createRole}
-							className={`px-4 py-2 rounded-xl font-semibold ${
-								canManage ? "bg-[#FFDA03] text-black" : "bg-gray-100 text-gray-400"
-							}`}
-							disabled={!canManage || creatingRole}
-						>
-							{creatingRole ? "Creating..." : "Create"}
-						</button>
-					</div>
-					<div className="mt-2 text-xs text-gray-500">
-						Roles are stored in <span className="font-mono">app_roles</span>.
-					</div>
-				</div>
-
-				<div className="rounded-2xl border p-4">
-					<div className="text-sm font-semibold text-black">Role Directory</div>
-					<div className="mt-2">
-						<input
-							value={roleSearch}
-							onChange={(e) => setRoleSearch(e.target.value)}
-							placeholder="Search role name"
-							className="w-full border rounded-xl px-3 py-2 text-sm text-black"
-						/>
-					</div>
-					<div className="mt-2 text-xs text-gray-500">{roles.length} total</div>
-					<div className="mt-3 max-h-72 overflow-auto">
-						<ul className="space-y-2">
-							{filteredRoles.map((r) => (
-								<li
-									key={r.role_id}
-									className={`px-3 py-2 rounded-xl border text-black cursor-pointer ${
-										selectedRoleId === r.role_id ? "bg-[#FFF7CC] border-[#FFDA03]" : "bg-white"
-									}`}
-									onClick={() => setSelectedRoleId(r.role_id)}
-								>
-									<div className="font-semibold">{labelFromRole(r.role_name)}</div>
-									<div className="text-xs text-gray-500">{r.role_name}</div>
-								</li>
-							))}
-							{filteredRoles.length === 0 ? (
-								<li className="px-3 py-2 rounded-xl border text-sm text-gray-500">No roles found.</li>
-							) : null}
-						</ul>
-					</div>
-				</div>
-
-				<div className="rounded-2xl border p-4">
-					<div className="text-sm font-semibold text-black">Role Summary</div>
-					<div className="mt-2 text-xs text-gray-500">Quick visibility of role and permission counts.</div>
-
-					{selectedRole ? (
-						<div className="mt-4 space-y-3 text-sm text-gray-700">
-							<div className="rounded-xl border p-3">
-								<div className="text-xs text-gray-500">Selected Role</div>
-								<div className="font-semibold text-black">{labelFromRole(selectedRole.role_name)}</div>
-								<div className="text-xs text-gray-500">{selectedRole.role_name}</div>
-							</div>
-
-							<div className="rounded-xl border p-3">
-								<div className="text-xs text-gray-500">Enabled Page Access</div>
-								<div className="text-xl font-semibold text-black">{selectedAccess.size}</div>
-								<div className="text-xs text-gray-500">Across all grouped pages/modules</div>
-							</div>
-
-							<div className="rounded-xl border p-3">
-								<div className="text-xs text-gray-500">Permitted Pages & Columns</div>
-								<div className="mt-2 max-h-48 overflow-auto space-y-2">
-									{Array.from(selectedAccess)
-										.sort()
-										.map((moduleKey) => {
-											const cols = selectedColumnAccess[moduleKey] ?? new Set<string>();
-											const label = moduleByKey.get(normalizeModuleKey(moduleKey))?.display_name ?? moduleKey;
-											const colLabel = cols.size > 0 ? Array.from(cols).sort().join(", ") : "All columns";
-											return (
-												<div key={`summary-${moduleKey}`} className="text-xs">
-													<div className="font-semibold text-black">{label}</div>
-													<div className="text-gray-500 font-mono">{moduleKey}</div>
-													<div className="text-gray-600">{colLabel}</div>
-												</div>
-											);
-										})}
-									{selectedAccess.size === 0 ? (
-										<div className="text-xs text-gray-500">No permitted pages yet.</div>
-									) : null}
-								</div>
-							</div>
+			<div className="rounded-2xl border p-4">
+				<div className="flex items-start justify-between gap-3">
+					<div>
+						<div className="text-sm font-semibold text-black">Role Access Profiles</div>
+						<div className="mt-1 text-xs text-gray-500">
+							Manage page and column permissions per role, similar to account permissions but role-scoped.
 						</div>
-					) : (
-						<div className="mt-4 text-sm text-gray-500">No role selected.</div>
-					)}
+					</div>
+					<div className="text-xs rounded-full border px-3 py-1 text-gray-600 bg-gray-50">Superadmin only</div>
 				</div>
+
+				<div className="mt-3 flex gap-2">
+					<input
+						value={newRoleName}
+						onChange={(e) => setNewRoleName(e.target.value)}
+						placeholder="Create role (e.g. hr_manager)"
+						className="flex-1 border rounded-xl px-3 py-2 text-black"
+						disabled={!canManage || creatingRole}
+					/>
+					<button
+						onClick={createRole}
+						className={`px-4 py-2 rounded-xl font-semibold ${
+							canManage ? "bg-[#FFDA03] text-black" : "bg-gray-100 text-gray-400"
+						}`}
+						disabled={!canManage || creatingRole}
+					>
+						{creatingRole ? "Creating..." : "Create"}
+					</button>
+				</div>
+
+				<div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-2">
+					<input
+						value={roleSearch}
+						onChange={(e) => setRoleSearch(e.target.value)}
+						placeholder="Search role"
+						className="border rounded-xl px-3 py-2 text-sm text-black"
+					/>
+					<select
+						value={selectedRoleId}
+						onChange={(e) => setSelectedRoleId(e.target.value)}
+						className="border rounded-xl px-3 py-2 text-sm text-black bg-white"
+					>
+						<option value="">Select role...</option>
+						{filteredRoles.map((r) => (
+							<option key={r.role_id} value={r.role_id}>
+								{labelFromRole(r.role_name)} ({r.role_name})
+							</option>
+						))}
+						{selectedRole && !filteredRoles.some((r) => r.role_id === selectedRole.role_id) ? (
+							<option value={selectedRole.role_id}>{labelFromRole(selectedRole.role_name)} ({selectedRole.role_name})</option>
+						) : null}
+					</select>
+					<div className="text-xs text-gray-500 flex items-center px-2">
+						{filteredRoles.length} role(s)
+					</div>
+				</div>
+
+				{selectedRole ? (
+					<div className="mt-4 rounded-xl border p-3 space-y-2">
+						<div className="text-sm font-semibold text-black">{labelFromRole(selectedRole.role_name)}</div>
+						<div className="text-xs text-gray-500">Role key: {selectedRole.role_name}</div>
+						<div className="text-xs text-gray-600">Enabled pages: {selectedAccess.size}</div>
+						<div className="max-h-40 overflow-auto space-y-2">
+							{Array.from(selectedAccess)
+								.sort()
+								.map((moduleKey) => {
+									const cols = selectedColumnAccess[moduleKey] ?? new Set<string>();
+									const restricted = selectedColumnRestrictedModules.has(moduleKey);
+									const visibleCols = Array.from(cols)
+										.filter((col) => !shouldHidePermissionColumn(col))
+										.map((col) => formatPermissionColumnLabel(col));
+									const label = moduleByKey.get(normalizeModuleKey(moduleKey))?.display_name ?? moduleKey;
+									const colLabel = !restricted
+										? "All columns"
+										: visibleCols.length > 0
+											? visibleCols.sort().join(", ")
+											: cols.size > 0
+												? "Internal columns only"
+												: "No allowed columns";
+									return (
+										<div key={`summary-${moduleKey}`} className="text-xs">
+											<div className="font-semibold text-black">{label}</div>
+											<div className="text-gray-500 font-mono">{moduleKey}</div>
+											<div className="text-gray-600">{colLabel}</div>
+										</div>
+									);
+								})}
+							{selectedAccess.size === 0 ? (
+								<div className="text-xs text-gray-500">No permitted pages yet.</div>
+							) : null}
+						</div>
+					</div>
+				) : (
+					<div className="mt-4 text-sm text-gray-500">Select a role to manage role-level permissions.</div>
+				)}
 			</div>
 
 			<div className="mt-5 rounded-2xl border p-4">
@@ -503,7 +601,7 @@ export default function RolesPage() {
 					<div>
 						<div className="text-sm font-semibold text-black">Role Access Editor</div>
 						<div className="mt-1 text-xs text-gray-500">
-							Grant page access by role. Columns are grouped by page sections for easier review.
+							Shows role-level page and column access. Use the checkboxes to add/remove role permissions.
 						</div>
 						{selectedRoleIsSuperadmin ? (
 							<div className="mt-1 text-xs text-gray-500">Superadmin always has full page and column access by default.</div>
@@ -524,64 +622,83 @@ export default function RolesPage() {
 				</div>
 
 				{!selectedRole ? (
-					<div className="mt-4 text-sm text-gray-500">Select a role from the Role Directory to edit access.</div>
+					<div className="mt-4 text-sm text-gray-500">Select a role above to edit role-level access.</div>
 				) : (
 					<div className="mt-4 space-y-4">
 						{groupedModules.map((group) => (
 							<div key={group.title} className="rounded-xl border p-3">
 								<div className="text-sm font-semibold text-black">{group.title}</div>
-								<div className="mt-3 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2">
+								<div className="mt-3 space-y-2">
 									{group.rows.map((m) => {
 										const checked = selectedAccess.has(m.module_key);
 										const opKey = `role-module:${selectedRole.role_id}:${m.module_key}`;
 										const busy = savingKey === opKey;
 										const selectedCols = selectedColumnAccess[m.module_key] ?? new Set<string>();
+										const restricted = selectedColumnRestrictedModules.has(m.module_key);
+										const selectedVisibleCols = Array.from(selectedCols)
+											.filter((col) => !shouldHidePermissionColumn(col))
+											.map((col) => formatPermissionColumnLabel(col));
+										const effectiveCols = !checked
+											? "(none)"
+											: !restricted
+												? "All columns"
+												: selectedVisibleCols.length > 0
+													? selectedVisibleCols.sort().join(", ")
+													: selectedCols.size > 0
+														? "Internal columns only"
+														: "No allowed columns";
 
 										return (
 											<div
 												key={m.module_key}
-												className={`rounded-xl border px-3 py-2 ${
+												className={`rounded-xl border p-3 ${
 													checked ? "bg-[#FFF7CC] border-[#FFDA03]" : "bg-white"
 												}`}
 											>
-												<div className="flex items-start gap-3">
-													<input
-														type="checkbox"
-														checked={checked}
-														onChange={() => toggleAccess(selectedRole.role_id, m.module_key)}
-														disabled={!canManage || busy || selectedRoleIsSuperadmin}
-													/>
+												<div className="flex items-center justify-between gap-3">
 													<div className="min-w-0">
-														<div className="text-sm text-black font-medium truncate">{m.display_name}</div>
+														<div className="text-sm font-medium text-black">{m.display_name}</div>
 														<div className="text-xs text-gray-500 font-mono">{m.module_key}</div>
+														<div className="mt-1 text-xs text-gray-600">
+															Effective: <span className="font-semibold">{checked ? "Yes" : "No"}</span>
+														</div>
+														<div className="mt-1 text-xs text-gray-600">Effective columns: {effectiveCols}</div>
+													</div>
+													<div className="flex items-center gap-2">
+														<label className="text-xs text-gray-700 flex items-center gap-2">
+															<span className="text-gray-500">Permission</span>
+															<input
+																type="checkbox"
+																checked={checked}
+																onChange={() => toggleAccess(selectedRole.role_id, m.module_key)}
+																disabled={!canManage || busy || selectedRoleIsSuperadmin}
+															/>
+														</label>
 													</div>
 												</div>
 
 												<div className="mt-2 flex flex-wrap gap-2">
-													{checked && selectedCols.size === 0 ? (
-														<span className="text-xs px-2 py-1 rounded-full border bg-white text-gray-700">
-															All columns
-														</span>
-													) : null}
 													{m.columns.map((col) => {
 														const colBusy =
 															savingKey === `role-column:${selectedRole.role_id}:${m.module_key}:${col}`;
-														const colOn = selectedCols.has(col);
+														const colOn = checked && (!restricted || selectedCols.has(col));
 														return (
 															<label
 																key={`role-col-${m.module_key}-${col}`}
 																className={`text-xs px-2 py-1 rounded-full border flex items-center gap-1 ${
-																colOn ? "bg-[#FFF7CC] border-[#FFDA03] text-black" : "bg-white text-gray-700"
-															}`}
-														>
-															<input
-																type="checkbox"
-																checked={colOn}
-																onChange={() => toggleRoleColumn(selectedRole.role_id, m.module_key, col)}
-																disabled={!canManage || colBusy || selectedRoleIsSuperadmin}
-															/>
-															<span>{col}</span>
-														</label>
+																	colOn ? "bg-[#FFF7CC] border-[#FFDA03] text-black" : "bg-white text-gray-700"
+																}`}
+															>
+																<input
+																	type="checkbox"
+																	checked={colOn}
+																	onChange={() =>
+																		toggleRoleColumn(selectedRole.role_id, m.module_key, col, columnsForModule(m.module_key))
+																	}
+																	disabled={!canManage || colBusy || selectedRoleIsSuperadmin}
+																/>
+																<span>{formatPermissionColumnLabel(col)}</span>
+															</label>
 														);
 													})}
 												</div>

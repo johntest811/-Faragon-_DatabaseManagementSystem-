@@ -856,6 +856,42 @@ function isDueToSendNow(expiresOnYmd, daysBefore, sendTimeLocal) {
   return true;
 }
 
+const NOTIFICATION_LOG_RETENTION_DAYS = 30;
+const NOTIFICATION_LOG_RETENTION_MIN_INTERVAL_MS = 6 * 60 * 60 * 1000;
+let lastNotificationLogRetentionRunAtMs = 0;
+
+async function purgeOldLicensureNotificationLogs(admin, { force = false } = {}) {
+  const nowMs = Date.now();
+  if (!force && nowMs - lastNotificationLogRetentionRunAtMs < NOTIFICATION_LOG_RETENTION_MIN_INTERVAL_MS) {
+    return { deleted: 0, skipped: true };
+  }
+
+  const cutoffIso = new Date(
+    nowMs - NOTIFICATION_LOG_RETENTION_DAYS * 24 * 60 * 60 * 1000
+  ).toISOString();
+
+  try {
+    const result = await admin
+      .from('licensure_notification_log')
+      .delete({ count: 'exact' })
+      .lt('created_at', cutoffIso);
+
+    if (result.error) throw result.error;
+
+    lastNotificationLogRetentionRunAtMs = nowMs;
+    return { deleted: Number(result.count ?? 0), skipped: false };
+  } catch (e) {
+    const msg = safeText(e?.message || e);
+    if (isMissingTableMessage(msg, 'licensure_notification_log')) {
+      lastNotificationLogRetentionRunAtMs = nowMs;
+      return { deleted: 0, skipped: true, missingTable: true };
+    }
+
+    console.warn('[notifications] log retention cleanup failed:', e?.message ?? e);
+    return { deleted: 0, skipped: true, error: true };
+  }
+}
+
 async function hasSentLicensureNotice(admin, item, recipientEmail = null) {
   try {
     let q = admin
@@ -881,6 +917,8 @@ async function hasSentLicensureNotice(admin, item, recipientEmail = null) {
 }
 
 async function runNotificationSend(admin) {
+  await purgeOldLicensureNotificationLogs(admin);
+
   const { email, preferences, recipients } = await loadNotificationConfig(admin);
   if (!preferences?.is_enabled) {
     return { ok: true, summary: { sent: 0, failed: 0, skipped: 0 }, message: 'Notifications are disabled.' };
@@ -1342,6 +1380,8 @@ ipcMain.handle('notifications:getExpiringSummary', async (_event, payload) => {
 
 ipcMain.handle('notifications:resendLicensureNotice', async (_event, payload) => {
   const admin = getAdminSupabase();
+  await purgeOldLicensureNotificationLogs(admin);
+
   const applicantId = payload?.applicant_id;
   const licenseType = safeText(payload?.license_type);
   const expiresOn = ymd(payload?.expires_on);
@@ -1472,6 +1512,8 @@ ipcMain.handle('audit:getPage', async (_event, payload) => {
 
 ipcMain.handle('notifications:getLog', async (_event, payload) => {
   const admin = getAdminSupabase();
+  await purgeOldLicensureNotificationLogs(admin, { force: true });
+
   const status = safeText(payload?.status);
   const limit = Math.max(1, Math.min(200, Number(payload?.limit ?? 25)));
 
@@ -1555,6 +1597,8 @@ ipcMain.handle('notifications:runNow', async () => {
 
 ipcMain.handle('notifications:resendAllExpiring', async (_event, payload) => {
   const admin = getAdminSupabase();
+  await purgeOldLicensureNotificationLogs(admin);
+
   const { email, preferences, recipients } = await loadNotificationConfig(admin);
 
   if (!preferences?.is_enabled) throw new Error('Notifications are disabled.');
@@ -1694,11 +1738,30 @@ const isDev = (!app.isPackaged && process.env.ELECTRON_FORCE_PROD !== '1') || pr
 
 let mainWindow = null;
 
+function resolveWindowIconPath() {
+  const candidates = [
+    path.join(__dirname, '..', 'public', 'Logo.png'),
+    path.join(__dirname, '..', 'out', 'Logo.png'),
+    path.join(process.resourcesPath || '', 'app.asar', 'out', 'Logo.png'),
+  ];
+
+  for (const candidate of candidates) {
+    try {
+      if (candidate && fs.existsSync(candidate)) return candidate;
+    } catch {
+      // ignore
+    }
+  }
+  return undefined;
+}
+
 function createWindow(url) {
+  const iconPath = resolveWindowIconPath();
   const win = new BrowserWindow({
     width: 1024,
     height: 768,
     show: false,
+    ...(iconPath ? { icon: iconPath } : {}),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -1809,6 +1872,14 @@ function registerAppProtocol() {
 }
 
 async function startApp() {
+  if (process.platform === 'win32') {
+    try {
+      app.setAppUserModelId('com.example.nextdesktop');
+    } catch {
+      // ignore
+    }
+  }
+
   // DEV: always load Next dev server
   if (isDev) {
     createWindow('http://localhost:3000');
