@@ -1,9 +1,10 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "../../Client/SupabaseClients";
 import { useAuthRole } from "../../Client/useRbac";
+import LoadingCircle from "../../Components/LoadingCircle";
 import { AccessTabs } from "../Components/AccessTabs";
 import {
 	columnsForModule,
@@ -72,7 +73,7 @@ function getElectronApi(): ElectronApi | null {
 	return maybe as ElectronApi;
 }
 
-export default function PermissionsPage() {
+function PermissionsPageContent() {
 	const router = useRouter();
 	const searchParams = useSearchParams();
 	const { role } = useAuthRole();
@@ -652,5 +653,19 @@ export default function PermissionsPage() {
 				)}
 			</div>
 		</section>
+	);
+}
+
+export default function PermissionsPage() {
+	return (
+		<Suspense
+			fallback={
+				<section className="bg-white rounded-2xl shadow-sm border p-5">
+					<LoadingCircle label="Loading permissions..." />
+				</section>
+			}
+		>
+			<PermissionsPageContent />
+		</Suspense>
 	);
 }

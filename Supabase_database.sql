@@ -26,6 +26,8 @@ CREATE TABLE public.access_requests (
   approver_admin_id uuid,
   approver_username text,
   approver_full_name text,
+  requested_applicant_id uuid,
+  requested_row_identifier_value text,
   CONSTRAINT access_requests_pkey PRIMARY KEY (id),
   CONSTRAINT access_requests_module_fkey FOREIGN KEY (requested_module_key) REFERENCES public.modules(module_key),
   CONSTRAINT access_requests_requester_admin_fkey FOREIGN KEY (requester_admin_id) REFERENCES public.admins(id),

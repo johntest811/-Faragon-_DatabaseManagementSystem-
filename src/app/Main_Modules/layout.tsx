@@ -217,6 +217,23 @@ export default function MainModulesLayout({ children }: LayoutProps) {
   const { modules: myModules } = useMyModules();
   useRealtimeRefresh(["applicants"]);
 
+  useEffect(() => {
+    // Next static export + Electron can open routes without trailing slash.
+    // Canonicalize to trailing-slash paths so route guards and menu state stay consistent.
+    if (!pathname) return;
+    if (!pathname.startsWith("/Main_Modules")) return;
+    if (pathname.endsWith("/")) return;
+
+    let search = "";
+    try {
+      search = window.location.search ?? "";
+    } catch {
+      // ignore
+    }
+
+    router.replace(`${pathname}/${search}`);
+  }, [pathname, router]);
+
   const api = (globalThis as unknown as { electronAPI?: any }).electronAPI;
 
   async function refreshNotificationPrefs() {
