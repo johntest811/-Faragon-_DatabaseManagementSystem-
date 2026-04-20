@@ -200,6 +200,22 @@ function weekOfMonth(date: Date) {
 	return Math.floor((day - 1) / 7) + 1; // 1..5
 }
 
+const HIRE_MONTH_OPTIONS = [
+	{ value: "ALL", label: "All Months" },
+	{ value: "01", label: "January" },
+	{ value: "02", label: "February" },
+	{ value: "03", label: "March" },
+	{ value: "04", label: "April" },
+	{ value: "05", label: "May" },
+	{ value: "06", label: "June" },
+	{ value: "07", label: "July" },
+	{ value: "08", label: "August" },
+	{ value: "09", label: "September" },
+	{ value: "10", label: "October" },
+	{ value: "11", label: "November" },
+	{ value: "12", label: "December" },
+];
+
 export default function EmployeesPage() {
 	const router = useRouter();
 	const { role: sessionRole } = useAuthRole();
@@ -318,13 +334,10 @@ export default function EmployeesPage() {
 	const [exportMonth] = useState("ALL"); // MM
 	const [exportWeek] = useState("ALL"); // 1..5
 	const [exportTitle, setExportTitle] = useState("Employees Export");
-	const [exportTab, setExportTab] = useState<"expiring" | "service">("expiring");
 
-	useEffect(() => {
-		if (!exportOpen) {
-			setExportTab("expiring");
-		}
-	}, [exportOpen]);
+	const [serviceExportOpen, setServiceExportOpen] = useState(false);
+	const [serviceExportMonth, setServiceExportMonth] = useState("ALL");
+	const [serviceExportTitle, setServiceExportTitle] = useState("Employees 1+ Year Export");
 
 	const [archiveOpen, setArchiveOpen] = useState(false);
 	const [archiveEmployee, setArchiveEmployee] = useState<Applicant | null>(null);
@@ -653,12 +666,15 @@ if (hiredMonthFilter !== "ALL") {
 			.map((e) => {
 				const years = serviceYearsExact(e.date_hired_fsai, now);
 				if (years == null || years < 1) return null;
+				const hiredDate = e.date_hired_fsai ? new Date(e.date_hired_fsai) : null;
+				const hasHiredDate = Boolean(hiredDate && !Number.isNaN(hiredDate.getTime()));
 				return {
 					applicant_id: e.applicant_id,
 					name: showNameColumn ? getFullName(e) : "Employee",
 					job: showPositionColumn ? e.client_position ?? "—" : "—",
 					detachment: showDetachmentColumn ? e.detachment ?? "—" : "—",
-					hired_on: e.date_hired_fsai ? new Date(e.date_hired_fsai).toLocaleDateString() : "—",
+					hired_on: hasHiredDate && hiredDate ? hiredDate.toLocaleDateString() : "—",
+					hired_month: hasHiredDate && hiredDate ? String(hiredDate.getMonth() + 1).padStart(2, "0") : null,
 					service: formatServiceLengthShort(e.date_hired_fsai, now),
 					years,
 				};
@@ -670,6 +686,7 @@ if (hiredMonthFilter !== "ALL") {
 					job: string;
 					detachment: string;
 					hired_on: string;
+					hired_month: string | null;
 					service: string;
 					years: number;
 				} => Boolean(v)
@@ -678,6 +695,11 @@ if (hiredMonthFilter !== "ALL") {
 
 		return items.slice(0, 300);
 	}, [filtered, showNameColumn, showPositionColumn, showDetachmentColumn]);
+
+	const exportServiceRowsFiltered = useMemo(() => {
+		if (serviceExportMonth === "ALL") return exportServiceRows;
+		return exportServiceRows.filter((row) => row.hired_month === serviceExportMonth);
+	}, [exportServiceRows, serviceExportMonth]);
 
 	const filterOptions = useMemo(() => {
 		const det = new Set<string>();
@@ -836,55 +858,96 @@ if (hiredMonthFilter !== "ALL") {
 		setExportOpen(false);
 	}
 
-	function exportActiveTabPdf() {
+	function exportExpiringPdf() {
 		setError("");
 		const title = exportTitle.trim() || "Employees Export";
 		const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
 
-		if (exportTab === "expiring") {
-			if (!exportExpiringRows.length) {
-				setError("No expiring license rows to export.");
-				return;
-			}
-
-			doc.setFontSize(14);
-			doc.text(`${title} - Expiring Licenses`, 40, 40);
-			autoTable(doc, {
-				startY: 60,
-				head: [["Name", "Job Title", "Detachment", "Expiry Date", "Days Until Expiry"]],
-				body: exportExpiringRows.map((r) => [
-					r.name,
-					r.job,
-					r.detachment,
-					r.expires_on,
-					r.days == null ? "—" : String(r.days),
-				]),
-				styles: { fontSize: 8, cellPadding: 3 },
-				headStyles: { fillColor: [255, 218, 3], textColor: [0, 0, 0] },
-			});
-
-			doc.save(`employees_expiring_${new Date().toISOString().slice(0, 10)}.pdf`);
-			setExportOpen(false);
-			return;
-		}
-
-		if (!exportServiceRows.length) {
-			setError("No employees with one year or more in company to export.");
+		if (!exportExpiringRows.length) {
+			setError("No expiring license rows to export.");
 			return;
 		}
 
 		doc.setFontSize(14);
-		doc.text(`${title} - Employees 1 Year or More`, 40, 40);
+		doc.text(`${title} - Expiring Licenses`, 40, 40);
 		autoTable(doc, {
 			startY: 60,
-			head: [["Name", "Job Title", "Detachment", "Hired Date", "Years w/ Company"]],
-			body: exportServiceRows.map((r) => [r.name, r.job, r.detachment, r.hired_on, r.service]),
+			head: [["Name", "Job Title", "Detachment", "Expiry Date", "Days Until Expiry"]],
+			body: exportExpiringRows.map((r) => [
+				r.name,
+				r.job,
+				r.detachment,
+				r.expires_on,
+				r.days == null ? "—" : String(r.days),
+			]),
 			styles: { fontSize: 8, cellPadding: 3 },
 			headStyles: { fillColor: [255, 218, 3], textColor: [0, 0, 0] },
 		});
 
-		doc.save(`employees_service_${new Date().toISOString().slice(0, 10)}.pdf`);
+		doc.save(`employees_expiring_${new Date().toISOString().slice(0, 10)}.pdf`);
 		setExportOpen(false);
+	}
+
+	function serviceExportFileBase() {
+		const parts = ["employees_service", serviceExportMonth === "ALL" ? "all-months" : `m${serviceExportMonth}`];
+		parts.push(new Date().toISOString().slice(0, 10));
+		return parts.join("_");
+	}
+
+	function exportServiceXlsx() {
+		setError("");
+		const rows = exportServiceRowsFiltered;
+		if (!rows.length) {
+			setError("No employees with one year or more in company for the selected month.");
+			return;
+		}
+
+		const monthLabel =
+			HIRE_MONTH_OPTIONS.find((opt) => opt.value === serviceExportMonth)?.label ?? "All Months";
+		const title = serviceExportTitle.trim() || "Employees 1+ Year Export";
+		const ws = XLSX.utils.aoa_to_sheet([
+			[title],
+			[`Generated: ${new Date().toLocaleString()}`],
+			[`Month Filter: ${monthLabel}`],
+			[],
+			["Name", "Job Title", "Detachment", "Hired Date", "Years w/ Company"],
+			...rows.map((row) => [row.name, row.job, row.detachment, row.hired_on, row.service]),
+		]);
+		const wb = XLSX.utils.book_new();
+		XLSX.utils.book_append_sheet(wb, ws, "1+ Year In Company");
+		const out = XLSX.write(wb, { type: "array", bookType: "xlsx" });
+		downloadBlob(
+			`${serviceExportFileBase()}.xlsx`,
+			new Blob([out], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" })
+		);
+		setServiceExportOpen(false);
+	}
+
+	function exportServicePdf() {
+		setError("");
+		const rows = exportServiceRowsFiltered;
+		if (!rows.length) {
+			setError("No employees with one year or more in company for the selected month.");
+			return;
+		}
+
+		const monthLabel =
+			HIRE_MONTH_OPTIONS.find((opt) => opt.value === serviceExportMonth)?.label ?? "All Months";
+		const title = serviceExportTitle.trim() || "Employees 1+ Year Export";
+		const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
+
+		doc.setFontSize(14);
+		doc.text(`${title} - ${monthLabel}`, 40, 40);
+		autoTable(doc, {
+			startY: 60,
+			head: [["Name", "Job Title", "Detachment", "Hired Date", "Years w/ Company"]],
+			body: rows.map((r) => [r.name, r.job, r.detachment, r.hired_on, r.service]),
+			styles: { fontSize: 8, cellPadding: 3 },
+			headStyles: { fillColor: [255, 218, 3], textColor: [0, 0, 0] },
+		});
+
+		doc.save(`${serviceExportFileBase()}.pdf`);
+		setServiceExportOpen(false);
 	}
 
 	return (
@@ -953,15 +1016,27 @@ if (hiredMonthFilter !== "ALL") {
 					{sessionRole !== "employee" ? (
 						<div className="flex items-center gap-2">
 							{canExportEmployees ? (
-								<button
-									type="button"
-									onClick={() => setExportOpen(true)}
-									className="h-10 w-10 rounded-xl border bg-white flex items-center justify-center"
-									aria-label="Export"
-									title="Export"
-								>
-									<FileDown className="w-5 h-5 text-gray-800" />
-								</button>
+								<>
+									<button
+										type="button"
+										onClick={() => setExportOpen(true)}
+										className="h-10 w-10 rounded-xl border bg-white flex items-center justify-center"
+										aria-label="Export"
+										title="Export"
+									>
+										<FileDown className="w-5 h-5 text-gray-800" />
+									</button>
+									<button
+										type="button"
+										onClick={() => setServiceExportOpen(true)}
+										className="h-10 px-3 rounded-xl border bg-white flex items-center gap-2 text-xs font-semibold text-black"
+										aria-label="1+ Year In Company Export"
+										title="1+ Year In Company Export"
+									>
+										<FileText className="w-4 h-4 text-gray-800" />
+										<span>1+ Year</span>
+									</button>
+								</>
 							) : null}
 
 							{canImportEmployees ? (
@@ -1280,7 +1355,7 @@ if (hiredMonthFilter !== "ALL") {
 									</button>
 									<button
 										type="button"
-										onClick={exportActiveTabPdf}
+										onClick={exportExpiringPdf}
 										className="h-10 w-10 rounded-xl border bg-white flex items-center justify-center hover:bg-white"
 										title="Download PDF"
 										aria-label="Download PDF"
@@ -1291,56 +1366,117 @@ if (hiredMonthFilter !== "ALL") {
 							</div>
 
 							<div className="rounded-2xl border overflow-hidden">
-								<div className="flex border-b">
-									<button
-										type="button"
-										onClick={() => setExportTab("expiring")}
-										className={`px-4 py-2 text-sm font-semibold ${
-											exportTab === "expiring" ? "bg-[#FFDA03] text-black" : "bg-white text-gray-700"
-										}`}
-									>
-										Expiring Licenses ({exportExpiringRows.length})
-									</button>
-									<button
-										type="button"
-										onClick={() => setExportTab("service")}
-										className={`px-4 py-2 text-sm font-semibold ${
-											exportTab === "service" ? "bg-[#FFDA03] text-black" : "bg-white text-gray-700"
-										}`}
-									>
-										1+ Year In Company ({exportServiceRows.length})
-									</button>
+								<div className="px-4 py-2 border-b bg-[#FFDA03]/20 text-sm font-semibold text-black">
+									Expiring Licenses ({exportExpiringRows.length})
 								</div>
 
 								<div className="max-h-[360px] overflow-auto">
-									{exportTab === "expiring" ? (
-										exportExpiringRows.length ? (
-											<table className="w-full text-sm text-black">
-												<thead className="bg-white sticky top-0 z-10">
-													<tr>
-														<th className="px-3 py-2 text-left">Name</th>
-														<th className="px-3 py-2 text-left">Job</th>
-														<th className="px-3 py-2 text-left">Detachment</th>
-														<th className="px-3 py-2 text-left">Expiry</th>
-														<th className="px-3 py-2 text-left">Days</th>
+									{exportExpiringRows.length ? (
+										<table className="w-full text-sm text-black">
+											<thead className="bg-white sticky top-0 z-10">
+												<tr>
+													<th className="px-3 py-2 text-left">Name</th>
+													<th className="px-3 py-2 text-left">Job</th>
+													<th className="px-3 py-2 text-left">Detachment</th>
+													<th className="px-3 py-2 text-left">Expiry</th>
+													<th className="px-3 py-2 text-left">Days</th>
+												</tr>
+											</thead>
+											<tbody>
+												{exportExpiringRows.map((r) => (
+													<tr key={`${r.applicant_id}:${r.expires_on}`} className="border-t">
+														<td className="px-3 py-2">{r.name}</td>
+														<td className="px-3 py-2">{r.job}</td>
+														<td className="px-3 py-2">{r.detachment}</td>
+														<td className="px-3 py-2">{r.expires_on}</td>
+														<td className="px-3 py-2">{r.days == null ? "—" : r.days}</td>
 													</tr>
-												</thead>
-												<tbody>
-													{exportExpiringRows.map((r) => (
-														<tr key={`${r.applicant_id}:${r.expires_on}`} className="border-t">
-															<td className="px-3 py-2">{r.name}</td>
-															<td className="px-3 py-2">{r.job}</td>
-															<td className="px-3 py-2">{r.detachment}</td>
-															<td className="px-3 py-2">{r.expires_on}</td>
-															<td className="px-3 py-2">{r.days == null ? "—" : r.days}</td>
-														</tr>
-													))}
-												</tbody>
-											</table>
-										) : (
-											<div className="px-4 py-6 text-sm text-gray-500">No expiring licenses found.</div>
-										)
-									) : exportServiceRows.length ? (
+												))}
+											</tbody>
+										</table>
+									) : (
+										<div className="px-4 py-6 text-sm text-gray-500">No expiring licenses found.</div>
+									)}
+								</div>
+							</div>
+
+							<div className="rounded-2xl border bg-white px-4 py-3 text-sm text-gray-700">
+								For 1+ year service exports, use the separate 1+ Year button beside the main export button.
+							</div>
+						</div>
+					</div>
+				</div>
+			) : null}
+
+			{serviceExportOpen && canExportEmployees ? (
+				<div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
+					<div className="glass-panel rounded-3xl shadow-2xl max-w-4xl w-full overflow-hidden animate-scale-in">
+						<div className="px-6 py-4 border-b flex items-center justify-between">
+							<div className="text-lg font-bold text-black">1+ Year In Company Export</div>
+							<button
+								onClick={() => setServiceExportOpen(false)}
+								className="px-3 py-2 rounded-xl border bg-white text-black"
+								type="button"
+							>
+								Close
+							</button>
+						</div>
+
+						<div className="p-6 space-y-4">
+							<div className="grid grid-cols-1 md:grid-cols-[1fr_220px_auto] gap-4">
+								<label className="text-sm text-black">
+									<div className="text-gray-600 mb-1">Title</div>
+									<input
+										value={serviceExportTitle}
+										onChange={(e) => setServiceExportTitle(e.target.value)}
+										className="w-full border rounded-xl px-3 py-2 bg-white"
+										placeholder="Employees 1+ Year Export"
+									/>
+								</label>
+
+								<label className="text-sm text-black">
+									<div className="text-gray-600 mb-1">Hired Month</div>
+									<select
+										value={serviceExportMonth}
+										onChange={(e) => setServiceExportMonth(e.target.value)}
+										className="w-full border rounded-xl px-3 py-2 bg-white"
+									>
+										{HIRE_MONTH_OPTIONS.map((opt) => (
+											<option key={opt.value} value={opt.value}>
+												{opt.label}
+											</option>
+										))}
+									</select>
+								</label>
+
+								<div className="flex items-end justify-end gap-2">
+									<button
+										type="button"
+										onClick={exportServiceXlsx}
+										className="h-10 px-4 rounded-xl border bg-white text-xs font-semibold hover:bg-white"
+										title="Download XLSX"
+										aria-label="Download XLSX"
+									>
+										XLSX
+									</button>
+									<button
+										type="button"
+										onClick={exportServicePdf}
+										className="h-10 w-10 rounded-xl border bg-white flex items-center justify-center hover:bg-white"
+										title="Download PDF"
+										aria-label="Download PDF"
+									>
+										<FileText className="w-5 h-5 text-gray-800" />
+									</button>
+								</div>
+							</div>
+
+							<div className="rounded-2xl border overflow-hidden">
+								<div className="px-4 py-2 border-b bg-[#FFDA03]/20 text-sm font-semibold text-black">
+									1+ Year In Company ({exportServiceRowsFiltered.length})
+								</div>
+								<div className="max-h-[360px] overflow-auto">
+									{exportServiceRowsFiltered.length ? (
 										<table className="w-full text-sm text-black">
 											<thead className="bg-white sticky top-0 z-10">
 												<tr>
@@ -1352,25 +1488,27 @@ if (hiredMonthFilter !== "ALL") {
 												</tr>
 											</thead>
 											<tbody>
-												{exportServiceRows.map((r) => (
-													<tr key={r.applicant_id} className="border-t">
-														<td className="px-3 py-2">{r.name}</td>
-														<td className="px-3 py-2">{r.job}</td>
-														<td className="px-3 py-2">{r.detachment}</td>
-														<td className="px-3 py-2">{r.hired_on}</td>
-														<td className="px-3 py-2">{r.service}</td>
+												{exportServiceRowsFiltered.map((row) => (
+													<tr key={row.applicant_id} className="border-t">
+														<td className="px-3 py-2">{row.name}</td>
+														<td className="px-3 py-2">{row.job}</td>
+														<td className="px-3 py-2">{row.detachment}</td>
+														<td className="px-3 py-2">{row.hired_on}</td>
+														<td className="px-3 py-2">{row.service}</td>
 													</tr>
 												))}
 											</tbody>
 										</table>
 									) : (
-										<div className="px-4 py-6 text-sm text-gray-500">No employees with one year or more in company.</div>
+										<div className="px-4 py-6 text-sm text-gray-500">
+											No employees with one year or more in company for the selected month.
+										</div>
 									)}
 								</div>
 							</div>
 
 							<div className="rounded-2xl border bg-white px-4 py-3 text-sm text-gray-700">
-								Years w/ Company is computed from hire date against the current date whenever the popup opens or export runs, so it stays updated even if the app was closed.
+								Use Hired Month = All Months to list every employee with at least one year of service.
 							</div>
 						</div>
 					</div>

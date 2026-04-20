@@ -979,6 +979,41 @@ function downloadInventoryTemplateXlsx() {
     await loadData();
   }
 
+  async function deleteRow(row: InventoryRow) {
+    if (!canMutateInventory || saving) return;
+
+    const label = (row.particular ?? "").trim() || row.date || "this inventory record";
+    const ok = globalThis.confirm ? globalThis.confirm(`Delete ${label}? This cannot be undone.`) : true;
+    if (!ok) return;
+
+    setSaving(true);
+    setError("");
+    setSuccess("");
+
+    const res = await supabase.from("inventory_fixed_asset").delete().eq("id", row.id);
+
+    setSaving(false);
+    if (res.error) {
+      setError(res.error.message || "Failed to delete inventory record");
+      return;
+    }
+
+    setSuccess("Inventory record deleted.");
+    if (editingRowId === row.id) closeModals();
+    await loadData();
+  }
+
+  async function deleteEditingRow() {
+    if (!editingRowId) return;
+    const row = rows.find((item) => item.id === editingRowId);
+    if (!row) {
+      closeModals();
+      await loadData();
+      return;
+    }
+    await deleteRow(row);
+  }
+
   return (
     <>
       <section className="glass-panel animate-slide-up rounded-3xl p-6 space-y-5">
@@ -1143,7 +1178,25 @@ function downloadInventoryTemplateXlsx() {
                 </tr>
               ) : paginated.length ? (
                 paginated.map((row) => (
-                  <tr key={row.id} className="animated-row border-b border-gray-100 transition hover:shadow-md">
+                  <tr
+                    key={row.id}
+                    role={canMutateInventory ? "button" : undefined}
+                    tabIndex={canMutateInventory ? 0 : -1}
+                    onClick={() => {
+                      if (!canMutateInventory) return;
+                      openEditModal(row);
+                    }}
+                    onKeyDown={(e) => {
+                      if (!canMutateInventory) return;
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        openEditModal(row);
+                      }
+                    }}
+                    className={`animated-row border-b border-gray-100 transition hover:shadow-md ${
+                      canMutateInventory ? "cursor-pointer" : ""
+                    }`}
+                  >
                     {showDateColumn ? <td className="px-4 py-3 whitespace-nowrap rounded-l-xl">{row.date || "—"}</td> : null}
                     {showParticularColumn ? <td className="px-4 py-3">{row.particular || "—"}</td> : null}
                     {visibleCategoryConfigs.map((cfg) => {
@@ -1168,13 +1221,29 @@ function downloadInventoryTemplateXlsx() {
                     {showRemarksColumn ? <td className={`px-4 py-3 ${canMutateInventory ? "" : "rounded-r-xl"}`}>{row.remarks || "—"}</td> : null}
                     {canMutateInventory ? (
                       <td className="px-4 py-3 text-center rounded-r-xl">
-                        <button
-                          type="button"
-                          className="animated-btn px-3 py-1.5 rounded-lg border bg-white text-sm hover:bg-white"
-                          onClick={() => openEditModal(row)}
-                        >
-                          Edit
-                        </button>
+                        <div className="inline-flex items-center gap-2">
+                          <button
+                            type="button"
+                            className="animated-btn px-3 py-1.5 rounded-lg border bg-white text-sm hover:bg-white"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openEditModal(row);
+                            }}
+                          >
+                            Edit
+                          </button>
+                          <button
+                            type="button"
+                            className="animated-btn px-3 py-1.5 rounded-lg border border-red-300 bg-red-50 text-sm text-red-700 hover:bg-red-100"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void deleteRow(row);
+                            }}
+                            disabled={saving}
+                          >
+                            Delete
+                          </button>
+                        </div>
                       </td>
                     ) : null}
                   </tr>
@@ -1415,15 +1484,28 @@ function downloadInventoryTemplateXlsx() {
               <input placeholder="Remarks" className="border rounded-xl px-3 py-2 w-full" value={formData.remarks} onChange={(e) => setFormData((prev) => ({ ...prev, remarks: e.target.value }))} />
             ) : null}
 
-            <div className="flex justify-end gap-3 pt-2">
-              <button onClick={closeModals} className="px-4 py-2 rounded-xl border">Cancel</button>
-              <button
-                onClick={showEditModal ? updateRow : addRow}
-                disabled={saving}
-                className="px-4 py-2 rounded-xl bg-[#FFDA03] font-semibold text-black disabled:opacity-60"
-              >
-                {saving ? "Saving..." : showEditModal ? "Update" : "Save"}
-              </button>
+            <div className="flex items-center justify-between gap-3 pt-2">
+              <div>
+                {showEditModal ? (
+                  <button
+                    onClick={() => void deleteEditingRow()}
+                    disabled={saving}
+                    className="px-4 py-2 rounded-xl border border-red-300 bg-red-50 text-red-700 font-semibold disabled:opacity-60"
+                  >
+                    Delete
+                  </button>
+                ) : null}
+              </div>
+              <div className="flex items-center gap-3">
+                <button onClick={closeModals} className="px-4 py-2 rounded-xl border">Cancel</button>
+                <button
+                  onClick={showEditModal ? updateRow : addRow}
+                  disabled={saving}
+                  className="px-4 py-2 rounded-xl bg-[#FFDA03] font-semibold text-black disabled:opacity-60"
+                >
+                  {saving ? "Saving..." : showEditModal ? "Update" : "Save"}
+                </button>
+              </div>
             </div>
           </div>
         </div>
