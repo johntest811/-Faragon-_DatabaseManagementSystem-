@@ -444,13 +444,13 @@ export default function ArchivePage() {
       {error ? <div className="text-red-600 text-sm">{error}</div> : null}
 
       {loading ? (
-        <div className="bg-white rounded-2xl border shadow-sm p-8">
+        <div className="glass-panel animate-slide-up rounded-2xl p-8">
           <LoadingCircle label="Loading archive..." />
         </div>
       ) : filtered.length === 0 ? (
-        <div className="bg-white rounded-2xl border shadow-sm p-8 text-center text-gray-500">No archived employees.</div>
+        <div className="glass-panel animate-slide-up rounded-2xl p-8 text-center text-gray-500">No archived employees.</div>
       ) : viewMode === "table" ? (
-    <div className="relative overflow-x-auto rounded-2xl border bg-white">
+    <div className="relative overflow-x-auto rounded-2xl glass-panel animate-slide-up">
       <table className="w-full text-sm text-black border-separate border-spacing-y-2">
         <thead className="sticky top-0 z-10">
           <tr className="bg-[#FFDA03]">
@@ -487,7 +487,7 @@ export default function ArchivePage() {
                   }
                 }}
                 onClick={() => router.push(detailsHref)}
-                className="bg-white shadow-sm transition hover:shadow-md cursor-pointer"
+                className="animated-row border-b border-gray-100 transition hover:shadow-md cursor-pointer"
               >
                 <td className="px-4 py-3 rounded-l-xl">
                   <div className="h-10 w-10 rounded-full bg-gray-100 overflow-hidden">
@@ -565,7 +565,7 @@ export default function ArchivePage() {
                   }
                 }}
                 onClick={() => router.push(detailsHref)}
-                className="bg-white rounded-3xl border shadow-sm p-6 cursor-pointer hover:shadow-md transition"
+                className="glass-panel animate-slide-up rounded-3xl p-6 animated-row hover:shadow-xl cursor-pointer"
               >
                 <div className="flex items-center gap-4">
                   <div className="h-16 w-16 rounded-2xl bg-gray-100 overflow-hidden flex items-center justify-center">
@@ -605,7 +605,7 @@ export default function ArchivePage() {
 
     {filtersOpen ? (
       <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
-        <div className="bg-white rounded-3xl shadow-xl max-w-lg w-full overflow-hidden">
+        <div className="glass-panel rounded-3xl shadow-2xl max-w-lg w-full overflow-hidden animate-scale-in">
           <div className="px-6 py-4 border-b flex items-center justify-between">
             <div className="text-lg font-bold text-black">Filters</div>
             <button
@@ -735,3 +735,4 @@ export default function ArchivePage() {
     </div>
   );
 }
+

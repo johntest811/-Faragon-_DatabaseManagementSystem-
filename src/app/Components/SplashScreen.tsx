@@ -1,15 +1,23 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 type SplashScreenProps = {
   onFinish?: () => void;
   fadingOut?: boolean;
 };
 
-export default function SplashScreen({ onFinish, fadingOut = false }: SplashScreenProps) {
+export default function SplashScreen({
+  onFinish,
+  fadingOut = false,
+}: SplashScreenProps) {
   const [bgBlack, setBgBlack] = useState(false);
   const [progress, setProgress] = useState(0);
+  const finishRef = useRef(onFinish);
+
+  useEffect(() => {
+    finishRef.current = onFinish;
+  }, [onFinish]);
 
   useEffect(() => {
     const started = Date.now();
@@ -22,14 +30,14 @@ export default function SplashScreen({ onFinish, fadingOut = false }: SplashScre
       setProgress(pct);
     }, 30);
 
-    const finishTimer = setTimeout(() => onFinish?.(), totalMs);
+    const finishTimer = setTimeout(() => finishRef.current?.(), totalMs);
 
     return () => {
       clearTimeout(bgTimer);
       clearTimeout(finishTimer);
       clearInterval(interval);
     };
-  }, [onFinish]);
+  }, []);
 
   return (
     <div
@@ -39,7 +47,7 @@ export default function SplashScreen({ onFinish, fadingOut = false }: SplashScre
     >
       <div className="mb-7 relative h-40 w-40 md:h-48 md:w-48 overflow-hidden">
         <img
-          src="/logo.png"
+          src="/Logo.png"
           alt="Faragon Logo Base"
           className="absolute inset-0 h-full w-full object-contain opacity-20"
         />
@@ -48,7 +56,7 @@ export default function SplashScreen({ onFinish, fadingOut = false }: SplashScre
           style={{ clipPath: `inset(${100 - progress}% 0 0 0)` }}
         >
           <img
-            src="/logo.png"
+            src="/Logo.png"
             alt="Faragon Logo"
             className="h-full w-full object-contain"
           />
@@ -68,13 +76,6 @@ export default function SplashScreen({ onFinish, fadingOut = false }: SplashScre
       >
         FARAGON SECURITY AGENCY INC.
       </h1>
-
-      <div className="mt-5 w-64 max-w-[85vw] h-2 rounded-full bg-white/20 overflow-hidden">
-        <div
-          className={`h-full transition-all duration-75 ${bgBlack ? "bg-white" : "bg-red-600"}`}
-          style={{ width: `${progress}%` }}
-        />
-      </div>
 
       <style jsx>{`
         :global(body) {

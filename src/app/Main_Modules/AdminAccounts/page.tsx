@@ -265,19 +265,14 @@ export default function AdminAccountsPage() {
 	const accessDenied = role !== null && role !== "superadmin";
 	if (accessDenied) {
 		return (
-			<section className="bg-white rounded-2xl shadow-sm border p-5">
+			<section className="glass-panel animate-slide-up rounded-2xl shadow-2xl p-5 border-none">
 				<div className="text-lg font-semibold text-black">Admin Accounts</div>
-				<div className="mt-2 text-sm text-gray-600">Only Superadmin can access this page.</div>
+				<div className="mt-2 text-sm text-black">Only Superadmin can access this page.</div>
 				<div className="mt-4 flex gap-2">
-					<button
-						onClick={() => router.push("/Main_Modules/Dashboard/")}
-						className="px-4 py-2 rounded-xl bg-white border"
-					>
-						Back
-					</button>
+			
 					<button
 						onClick={() => router.push("/Main_Modules/Requests/?module=access")}
-						className="px-4 py-2 rounded-xl font-semibold bg-[#FFDA03] text-black"
+						className="animated-btn px-4 py-2 rounded-xl font-semibold bg-[#FFDA03] text-black hover:brightness-95"
 					>
 						Request Access
 					</button>
@@ -287,11 +282,11 @@ export default function AdminAccountsPage() {
 	}
 
 	return (
-		<section className="bg-white rounded-2xl shadow-sm border p-5">
+		<section className="glass-panel animate-slide-up rounded-2xl shadow-2xl p-5 border-none">
 			<div className="flex items-start justify-between gap-3 mb-3">
 				<div>
 					<div className="text-lg font-semibold text-black">Admin Accounts</div>
-					<div className="text-sm text-gray-500">Create accounts and assign roles.</div>
+					<div className="text-sm text-black">Create accounts and assign roles.</div>
 					<div className="mt-3">
 						<AccessTabs />
 					</div>
@@ -299,18 +294,18 @@ export default function AdminAccountsPage() {
 				<div className="flex items-center gap-2">
 					<button
 						onClick={() => router.push("/Main_Modules/Requests/Queue/")}
-						className="px-4 py-2 rounded-xl bg-white border"
+						className="animated-btn px-4 py-2 rounded-xl bg-white border hover:bg-white"
 					>
 						Reviewer Queue
 					</button>
-					<button onClick={() => router.push("/Main_Modules/Dashboard/")} className="px-4 py-2 rounded-xl bg-white border">
+					<button onClick={() => router.push("/Main_Modules/Dashboard/")} className="animated-btn px-4 py-2 rounded-xl bg-white border hover:bg-white">
 						Back
 					</button>
 				</div>
 			</div>
 
 			{role !== "superadmin" ? (
-				<div className="mb-4 rounded-xl border bg-yellow-50 p-3 text-sm text-yellow-900">
+				<div className="mb-4 rounded-xl border border-[#FFDA03] bg-white p-3 text-sm text-[#FFDA03]">
 					You are signed in as <span className="font-semibold">{role ?? "(unknown)"}</span>. Only Superadmin can
 					 create or modify admin accounts.
 				</div>
@@ -319,12 +314,12 @@ export default function AdminAccountsPage() {
 			{error ? <div className="mb-3 text-red-600 text-sm">{error}</div> : null}
 			{success ? <div className="mb-3 text-emerald-700 text-sm">{success}</div> : null}
 
-			<div className="rounded-2xl border p-4">
+			<div className="glass-panel animate-scale-in rounded-2xl border-none p-4">
 				<div className="text-sm font-semibold text-black">Create Account</div>
-				<div className="mt-1 text-xs text-gray-500">Create login accounts for your team. Internal IDs are hidden.</div>
+				<div className="mt-1 text-xs text-black">Create login accounts for your team. Internal IDs are hidden.</div>
 				<div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-2">
 					<div>
-						<div className="mb-1 text-xs font-semibold uppercase tracking-wide text-gray-600">Username</div>
+						<div className="mb-1 text-xs font-semibold uppercase tracking-wide text-black">Username</div>
 						<input
 							value={accountUsername}
 							onChange={(e) => setAccountUsername(e.target.value)}
@@ -334,7 +329,7 @@ export default function AdminAccountsPage() {
 						/>
 					</div>
 					<div>
-						<div className="mb-1 text-xs font-semibold uppercase tracking-wide text-gray-600">Password</div>
+						<div className="mb-1 text-xs font-semibold uppercase tracking-wide text-black">Password</div>
 						<input
 							type="password"
 							value={accountPassword}
@@ -345,7 +340,7 @@ export default function AdminAccountsPage() {
 						/>
 					</div>
 					<div>
-						<div className="mb-1 text-xs font-semibold uppercase tracking-wide text-gray-600">Full Name</div>
+						<div className="mb-1 text-xs font-semibold uppercase tracking-wide text-black">Full Name</div>
 						<input
 							value={accountFullName}
 							onChange={(e) => setAccountFullName(e.target.value)}
@@ -355,7 +350,7 @@ export default function AdminAccountsPage() {
 						/>
 					</div>
 					<div>
-						<div className="mb-1 text-xs font-semibold uppercase tracking-wide text-gray-600">Role</div>
+						<div className="mb-1 text-xs font-semibold uppercase tracking-wide text-black">Role</div>
 						<select
 							value={accountRole}
 							onChange={(e) => setAccountRole(e.target.value)}
@@ -375,7 +370,7 @@ export default function AdminAccountsPage() {
 					<button
 						onClick={createAccount}
 						className={`px-4 py-2 rounded-xl font-semibold ${
-							canManage ? "bg-[#FFDA03] text-black" : "bg-gray-100 text-gray-400"
+							canManage ? "animated-btn bg-[#FFDA03] text-black hover:bg-[#EFCB00]" : "animated-btn bg-[#FFDA03] text-black opacity-60"
 						}`}
 						disabled={!canManage || creatingAccount}
 					>
@@ -384,10 +379,10 @@ export default function AdminAccountsPage() {
 				</div>
 			</div>
 
-			<div className="mt-5 rounded-2xl border p-4">
+			<div className="mt-5 glass-panel animate-scale-in rounded-2xl border-none p-4">
 				<div>
 					<div className="text-sm font-semibold text-black">Accounts</div>
-					<div className="mt-1 text-xs text-gray-500">
+					<div className="mt-1 text-xs text-black">
 						All accounts are shown in one table. Open Permissions for account-only page/column access overrides.
 					</div>
 				</div>
@@ -395,7 +390,7 @@ export default function AdminAccountsPage() {
 				<div className="mt-4 overflow-x-auto">
 					<table className="w-full table-auto">
 						<thead>
-							<tr className="text-left text-sm text-gray-600">
+							<tr className="text-left text-sm text-black">
 								<th className="px-3 py-2">Username</th>
 								<th className="px-3 py-2">Name</th>
 								<th className="px-3 py-2">Role</th>
@@ -413,7 +408,7 @@ export default function AdminAccountsPage() {
 										: "text-red-700 bg-red-50 border-red-200";
 									const toggleBusy = togglingActiveId === a.id;
 									return (
-										<tr key={a.id} className="border-t">
+										<tr key={a.id} className="animated-row border-t border-gray-100">
 											<td className="px-3 py-2 text-black whitespace-nowrap">{a.username}</td>
 											<td className="px-3 py-2 text-black">{a.full_name ?? "—"}</td>
 											<td className="px-3 py-2 text-black">
@@ -446,8 +441,8 @@ export default function AdminAccountsPage() {
 															router.push(`/Main_Modules/Permissions/?admin=${encodeURIComponent(a.id)}`)
 														}
 														disabled={!canManage}
-														className={`px-3 py-1.5 rounded-xl text-sm border ${
-															canManage ? "bg-white" : "bg-gray-100 text-gray-400 cursor-not-allowed"
+														className={`animated-btn px-3 py-1.5 rounded-xl text-sm border ${
+															canManage ? "bg-white text-black hover:bg-white" : "bg-[#FFDA03] text-black opacity-60 cursor-not-allowed"
 														}`}
 													>
 														Permissions
@@ -455,10 +450,10 @@ export default function AdminAccountsPage() {
 													<button
 														onClick={() => toggleActiveAccount(a)}
 														disabled={!canManage || self || toggleBusy}
-													className={`px-3 py-1.5 rounded-xl text-sm border ${
+													className={`animated-btn px-3 py-1.5 rounded-xl text-sm border ${
 														canManage && !self && !toggleBusy
-															? "bg-white"
-															: "bg-gray-100 text-gray-400 cursor-not-allowed"
+															? "bg-white text-black hover:bg-white"
+															: "bg-[#FFDA03] text-black opacity-60 cursor-not-allowed"
 													}`}
 													>
 														{toggleBusy ? "Saving..." : a.is_active ? "Deactivate" : "Activate"}
@@ -466,10 +461,10 @@ export default function AdminAccountsPage() {
 													<button
 														onClick={() => deleteAccount(a)}
 														disabled={!canManage || self}
-													className={`px-3 py-1.5 rounded-xl text-sm border ${
+													className={`animated-btn px-3 py-1.5 rounded-xl text-sm border ${
 														canManage && !self
-															? "bg-red-600 text-white border-red-600"
-															: "bg-gray-100 text-gray-400 cursor-not-allowed"
+															? "bg-red-600 text-white border-red-600 hover:bg-red-700 hover:border-red-700"
+															: "bg-red-600 text-white border-red-600 opacity-60 cursor-not-allowed"
 													}`}
 													>
 														Delete
@@ -486,3 +481,4 @@ export default function AdminAccountsPage() {
 		</section>
 	);
 }
+

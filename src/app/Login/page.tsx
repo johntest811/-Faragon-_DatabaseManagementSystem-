@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useRef, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { supabase } from '../Client/SupabaseClients';
 
 export default function Login() {
@@ -10,15 +10,25 @@ export default function Login() {
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const router = useRouter();
+  const pathname = usePathname() ?? '';
   const usernameRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
+    if (!pathname.startsWith('/Login')) return;
+
     setUsername('');
     setPassword('');
     setError('');
+    setIsLoading(false);
 
     try {
       localStorage.removeItem('adminSession');
+    } catch {
+      // ignore
+    }
+
+    try {
+      sessionStorage.removeItem('showLoginSplash');
     } catch {
       // ignore
     }
@@ -36,10 +46,17 @@ export default function Login() {
       usernameRef.current?.select();
     }, 60);
 
+    const refocusOnWindowFocus = () => {
+      usernameRef.current?.focus();
+    };
+
+    window.addEventListener('focus', refocusOnWindowFocus);
+
     return () => {
       window.clearTimeout(focusTimer);
+      window.removeEventListener('focus', refocusOnWindowFocus);
     };
-  }, []);
+  }, [pathname]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -92,6 +109,12 @@ export default function Login() {
         loginTime: new Date().toISOString(),
       };
       localStorage.setItem('adminSession', JSON.stringify(sessionData));
+
+      try {
+        sessionStorage.setItem('showLoginSplash', '1');
+      } catch {
+        // ignore
+      }
 
       router.replace('/Main_Modules/Dashboard/');
     } catch (err: unknown) {

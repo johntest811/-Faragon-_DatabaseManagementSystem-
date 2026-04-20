@@ -1206,29 +1206,29 @@ function RequestsPageContent() {
   }
 
   return (
-    <section className="bg-white rounded-2xl shadow-sm border p-5">
+    <section className="glass-panel animate-slide-up rounded-2xl shadow-2xl p-5 border-none">
       <div className="flex items-start justify-between gap-3 mb-3">
         <div>
           <div className="text-lg font-semibold text-black">Request Access</div>
-          <div className="text-sm text-gray-500">Request access to pages you can’t open yet.</div>
+          <div className="text-sm text-black">Request access to pages you can’t open yet.</div>
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={() => router.push("/Main_Modules/Dashboard/")} className="px-4 py-2 rounded-xl bg-white border">
+          <button onClick={() => router.push("/Main_Modules/Dashboard/")} className="animated-btn px-4 py-2 rounded-xl bg-white border hover:bg-white">
             Back
           </button>
         </div>
       </div>
 
       {canReviewRequests ? (
-        <div className="mb-5 rounded-2xl border p-4 bg-gray-50">
+        <div className="mb-5 rounded-2xl border border-[#FFDA03] p-4 bg-white text-black">
           <div className="text-sm font-semibold text-black">Pending Requests are in Admin Accounts.</div>
-          <div className="mt-1 text-xs text-gray-600">
+          <div className="mt-1 text-xs text-black">
             Open Reviewer Queue from the left sidebar under Admin Accounts.
           </div>
           <button
             type="button"
             onClick={() => router.push("/Main_Modules/Requests/Queue/")}
-            className="mt-3 px-3 py-1.5 rounded-xl text-sm border bg-white"
+            className="animated-btn mt-3 px-3 py-1.5 rounded-xl text-sm border bg-[#FFDA03] text-black hover:bg-[#EFCB00]"
           >
             Open Reviewer Queue
           </button>
@@ -1238,7 +1238,7 @@ function RequestsPageContent() {
       {false ? (
         <div className="mb-5 rounded-2xl border p-4">
           <div className="text-sm font-semibold text-black">Pending Requests (Reviewer Queue)</div>
-          <div className="mt-2 text-xs text-gray-500">
+          <div className="mt-2 text-xs text-black">
             Approve grants access based on selected scope (page, columns, and optional employee row scope).
           </div>
 
@@ -1247,12 +1247,12 @@ function RequestsPageContent() {
               <LoadingCircle label="Loading pending requests…" />
             </div>
           ) : pendingRequests.length === 0 ? (
-            <div className="mt-4 text-sm text-gray-500">No pending requests.</div>
+            <div className="mt-4 text-sm text-black">No pending requests.</div>
           ) : (
             <div className="mt-4 overflow-x-auto">
               <table className="w-full table-auto">
                 <thead>
-                  <tr className="text-left text-sm text-gray-600">
+                  <tr className="text-left text-sm text-black">
                     <th className="px-3 py-2">When</th>
                     <th className="px-3 py-2">Requester</th>
                     <th className="px-3 py-2">Role</th>
@@ -1295,24 +1295,24 @@ function RequestsPageContent() {
 
                     return (
                       <tr key={r.id} className="border-t align-top">
-                        <td className="px-3 py-2 text-xs text-gray-600 whitespace-nowrap">
+                        <td className="px-3 py-2 text-xs text-black whitespace-nowrap">
                           {new Date(r.created_at).toLocaleString()}
                         </td>
                         <td className="px-3 py-2 text-sm text-black whitespace-nowrap">{requesterLabel}</td>
-                        <td className="px-3 py-2 text-sm text-gray-700 whitespace-nowrap">{r.requester_role ?? "—"}</td>
+                        <td className="px-3 py-2 text-sm text-black whitespace-nowrap">{r.requester_role ?? "—"}</td>
                         <td className="px-3 py-2 text-sm text-black whitespace-nowrap">{r.requested_module_key}</td>
-                        <td className="px-3 py-2 text-xs text-gray-700 whitespace-nowrap">{scopeLabel}</td>
-                        <td className="px-3 py-2 text-xs text-gray-700 whitespace-nowrap">{columnsLabel || "—"}</td>
-                        <td className="px-3 py-2 text-xs text-gray-700 whitespace-nowrap">{personLabel}</td>
-                        <td className="px-3 py-2 text-xs text-gray-700 whitespace-nowrap">{reviewerLabel}</td>
-                        <td className="px-3 py-2 text-xs text-gray-600">{r.reason ?? ""}</td>
+                        <td className="px-3 py-2 text-xs text-black whitespace-nowrap">{scopeLabel}</td>
+                        <td className="px-3 py-2 text-xs text-black whitespace-nowrap">{columnsLabel || "—"}</td>
+                        <td className="px-3 py-2 text-xs text-black whitespace-nowrap">{personLabel}</td>
+                        <td className="px-3 py-2 text-xs text-black whitespace-nowrap">{reviewerLabel}</td>
+                        <td className="px-3 py-2 text-xs text-black">{r.reason ?? ""}</td>
                         <td className="px-3 py-2">
                           <div className="flex gap-2">
                             <button
                               onClick={() => resolveRequest(r, "APPROVED")}
                               disabled={busy}
-                              className={`px-3 py-1.5 rounded-xl text-sm font-semibold ${
-                                busy ? "bg-gray-100 text-gray-400" : "bg-[#FFDA03] text-black"
+                              className={`animated-btn px-3 py-1.5 rounded-xl text-sm font-semibold ${
+                                busy ? "bg-[#FFDA03] text-black opacity-60 cursor-not-allowed" : "bg-[#FFDA03] text-black hover:bg-[#EFCB00]"
                               }`}
                             >
                               {busy ? "Working…" : "Approve"}
@@ -1320,8 +1320,8 @@ function RequestsPageContent() {
                             <button
                               onClick={() => resolveRequest(r, "REJECTED")}
                               disabled={busy}
-                              className={`px-3 py-1.5 rounded-xl text-sm font-semibold border ${
-                                busy ? "bg-gray-100 text-gray-400" : "bg-white text-gray-700"
+                              className={`animated-btn px-3 py-1.5 rounded-xl text-sm font-semibold border ${
+                                busy ? "bg-[#FFDA03] text-black opacity-60 cursor-not-allowed" : "bg-white text-black hover:bg-white"
                               }`}
                             >
                               Reject
@@ -1344,11 +1344,11 @@ function RequestsPageContent() {
         </div>
       ) : (
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
-          <div className="rounded-2xl border p-4">
+          <div className="glass-panel animate-scale-in rounded-2xl border-none p-4">
             <div className="text-sm font-semibold text-black">New Request</div>
             <div className="mt-3 space-y-3">
               <div>
-                <div className="text-xs text-gray-500 mb-1">Page / Module</div>
+                <div className="text-xs text-black mb-1">Page / Module</div>
                 <select
                   value={requestedModuleKey}
                   onChange={(e) => {
@@ -1370,13 +1370,13 @@ function RequestsPageContent() {
                     </option>
                   ))}
                 </select>
-                <div className="mt-2 text-xs text-gray-500">
+                <div className="mt-2 text-xs text-black">
                   All pages are requestable. Superadmin reviewer approval is required.
                 </div>
               </div>
 
               <div>
-                <div className="text-xs text-gray-500 mb-1">Superadmin Reviewer</div>
+                <div className="text-xs text-black mb-1">Superadmin Reviewer</div>
                 <select
                   value={approverAdminId}
                   onChange={(e) => setApproverAdminId(e.target.value)}
@@ -1390,13 +1390,13 @@ function RequestsPageContent() {
                     </option>
                   ))}
                 </select>
-                <div className="mt-1 text-xs text-gray-500">
+                <div className="mt-1 text-xs text-black">
                   Only superadmin accounts with Admin Accounts permission can review and approve requests.
                 </div>
               </div>
 
               <div>
-                <div className="text-xs text-gray-500 mb-1">Fine-grained Scope</div>
+                <div className="text-xs text-black mb-1">Fine-grained Scope</div>
                 <div className="grid grid-cols-1 gap-2">
                   <label className="inline-flex items-center gap-2 border rounded-xl px-3 py-2 text-sm text-black bg-white">
                     <input
@@ -1408,18 +1408,18 @@ function RequestsPageContent() {
                     Column-level access
                   </label>
                 </div>
-                <div className="mt-2 text-xs text-gray-500">
+                <div className="mt-2 text-xs text-black">
                   Leave unchecked to request full page access only.
                 </div>
               </div>
 
               <div>
-                <div className="text-xs text-gray-500 mb-1">Columns (checkboxes)</div>
-                <div className={`rounded-xl border p-3 ${scopeColumn ? "bg-white" : "bg-gray-50"}`}>
+                <div className="text-xs text-black mb-1">Columns (checkboxes)</div>
+                <div className={`rounded-xl border p-3 ${scopeColumn ? "bg-white" : "bg-white"}`}>
                   {!scopeColumn ? (
-                    <div className="text-xs text-gray-500">Enable Column-level access above to choose columns.</div>
+                    <div className="text-xs text-black">Enable Column-level access above to choose columns.</div>
                   ) : selectableColumns.length === 0 ? (
-                    <div className="text-xs text-gray-500">No columns defined for this module.</div>
+                    <div className="text-xs text-black">No columns defined for this module.</div>
                   ) : (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-52 overflow-auto">
                       {selectableColumns.map((col) => (
@@ -1440,7 +1440,7 @@ function RequestsPageContent() {
 
               {scopeRow && isEmployeesModule ? (
                 <div>
-                  <div className="text-xs text-gray-500 mb-1">Specific Personnel (checkboxes)</div>
+                  <div className="text-xs text-black mb-1">Specific Personnel (checkboxes)</div>
                   <input
                     value={personnelSearch}
                     onChange={(e) => setPersonnelSearch(e.target.value)}
@@ -1450,9 +1450,9 @@ function RequestsPageContent() {
                   />
                   <div className="rounded-xl border p-3 bg-white max-h-56 overflow-auto">
                     {loadingApplicants ? (
-                      <div className="text-xs text-gray-500">Loading personnel...</div>
+                      <div className="text-xs text-black">Loading personnel...</div>
                     ) : filteredApplicants.length === 0 ? (
-                      <div className="text-xs text-gray-500">No personnel found.</div>
+                      <div className="text-xs text-black">No personnel found.</div>
                     ) : (
                       <div className="grid grid-cols-1 gap-2">
                         {filteredApplicants.map((a) => (
@@ -1469,15 +1469,15 @@ function RequestsPageContent() {
                       </div>
                     )}
                   </div>
-                  <div className="mt-2 text-xs text-gray-500">
+                  <div className="mt-2 text-xs text-black">
                     Selected personnel are used as row-identifier values for Employees.
                   </div>
-                  <div className="mt-2 rounded-xl border p-3 bg-gray-50">
-                    <div className="text-xs font-semibold text-gray-700">Preview: Selected Personnel</div>
+                  <div className="mt-2 rounded-xl border border-[#FFDA03] p-3 bg-white">
+                    <div className="text-xs font-semibold text-black">Preview: Selected Personnel</div>
                     {requestedApplicantIds.length === 0 ? (
-                      <div className="mt-1 text-xs text-gray-500">No personnel selected.</div>
+                      <div className="mt-1 text-xs text-black">No personnel selected.</div>
                     ) : (
-                      <ul className="mt-1 text-xs text-gray-700 list-disc pl-4 space-y-0.5">
+                      <ul className="mt-1 text-xs text-black list-disc pl-4 space-y-0.5">
                         {requestedApplicantIds.map((id) => (
                           <li key={id}>{applicantLabelById.get(id) ?? id}</li>
                         ))}
@@ -1488,7 +1488,7 @@ function RequestsPageContent() {
               ) : null}
 
               <div>
-                <div className="text-xs text-gray-500 mb-1">Reason (optional)</div>
+                <div className="text-xs text-black mb-1">Reason (optional)</div>
                 <textarea
                   value={reason}
                   onChange={(e) => setReason(e.target.value)}
@@ -1506,29 +1506,29 @@ function RequestsPageContent() {
                   void submitRequest();
                 }}
                 disabled={disabled}
-                className={`px-4 py-2 rounded-xl font-semibold ${
-                  disabled ? "bg-gray-100 text-gray-400" : "bg-[#FFDA03] text-black"
+                className={`animated-btn px-4 py-2 rounded-xl font-semibold ${
+                  disabled ? "bg-[#FFDA03] text-black opacity-60 cursor-not-allowed" : "bg-[#FFDA03] text-black hover:bg-[#EFCB00]"
                 }`}
               >
                 {submitting ? "Submitting…" : "Submit Request"}
               </button>
 
-              <div className="text-xs text-gray-500">
-                Your role: <span className="font-semibold text-gray-700">{role ?? "(unknown)"}</span>
+              <div className="text-xs text-black">
+                Your role: <span className="font-semibold text-black">{role ?? "(unknown)"}</span>
               </div>
             </div>
           </div>
 
-          <div className="rounded-2xl border p-4">
+          <div className="glass-panel animate-scale-in rounded-2xl border-none p-4">
             <div className="text-sm font-semibold text-black">My Requests</div>
-            <div className="mt-2 text-xs text-gray-500">Last 100 requests</div>
+            <div className="mt-2 text-xs text-black">Last 100 requests</div>
 
             {loadingRequests ? (
               <div className="py-6">
                 <LoadingCircle label="Loading requests…" />
               </div>
             ) : myRequests.length === 0 ? (
-              <div className="mt-4 text-sm text-gray-500">No requests yet.</div>
+              <div className="mt-4 text-sm text-black">No requests yet.</div>
             ) : (
               <div className="mt-4 max-h-72 overflow-auto">
                 <ul className="space-y-2">
@@ -1543,7 +1543,7 @@ function RequestsPageContent() {
                         ? "text-emerald-700 font-semibold"
                         : normalizedStatus === "REJECTED"
                           ? "text-red-700 font-semibold"
-                          : "text-gray-600";
+                          : "text-black";
                     const rowClass =
                       normalizedStatus === "APPROVED"
                         ? "bg-emerald-50 border-emerald-200"
@@ -1556,33 +1556,33 @@ function RequestsPageContent() {
                     const moduleLabel = moduleLabelByKey.get(moduleKey) ?? r.requested_module_key;
 
                     return (
-                      <li key={r.id} className={`px-3 py-2 rounded-xl border ${rowClass}`}>
+                      <li key={r.id} className={`animated-row px-3 py-2 rounded-xl border ${rowClass}`}>
                         <div className="flex items-center justify-between gap-3">
                           <div className="text-sm font-semibold text-black">{moduleLabel}</div>
-                          <div className="text-xs text-gray-500">{new Date(r.created_at).toLocaleString()}</div>
+                          <div className="text-xs text-black">{new Date(r.created_at).toLocaleString()}</div>
                         </div>
-                        <div className="mt-1 text-xs text-gray-600">
+                        <div className="mt-1 text-xs text-black">
                           Scope: {[!r.request_scope_row && !r.request_scope_column ? "PAGE" : null, r.request_scope_row ? "ROW" : null, r.request_scope_column ? "COLUMN" : null].filter(Boolean).join(" + ") || "—"}
                         </div>
                         {requestedColumns.length > 0 ? (
-                          <div className="mt-1 text-xs text-gray-600">
+                          <div className="mt-1 text-xs text-black">
                             Columns: {requestedColumns.map((columnKey) => formatPermissionColumnLabel(columnKey)).join(", ")}
                           </div>
                         ) : null}
                         {requestedApplicants.length > 0 ? (
-                          <div className="mt-1 text-xs text-gray-600">
+                          <div className="mt-1 text-xs text-black">
                             Personnel: {requestedApplicants
                               .map((id) => applicantLabelById.get(id) ?? id)
                               .join(", ")}
                           </div>
                         ) : null}
                         {(r.approver_full_name || r.approver_username || r.approver_admin_id) ? (
-                          <div className="mt-1 text-xs text-gray-600">
+                          <div className="mt-1 text-xs text-black">
                             Reviewer: {reviewerDisplayName(r)}
                           </div>
                         ) : null}
                         <div className={`mt-1 text-xs ${statusClass}`}>Status: {normalizedStatus}</div>
-                        {r.reason ? <div className="mt-1 text-xs text-gray-600">Reason: {r.reason}</div> : null}
+                        {r.reason ? <div className="mt-1 text-xs text-black">Reason: {r.reason}</div> : null}
                         {canCancel || canRemove ? (
                           <div className="mt-2 flex items-center gap-2">
                             {canCancel ? (
@@ -1590,8 +1590,8 @@ function RequestsPageContent() {
                                 type="button"
                                 onClick={() => void cancelMyRequest(r)}
                                 disabled={cancelBusy}
-                                className={`px-3 py-1.5 rounded-xl text-xs font-semibold border ${
-                                  cancelBusy ? "bg-gray-100 text-gray-400" : "bg-white text-gray-700"
+                                className={`animated-btn px-3 py-1.5 rounded-xl text-xs font-semibold border ${
+                                  cancelBusy ? "bg-[#FFDA03] text-black opacity-60 cursor-not-allowed" : "bg-white text-black hover:bg-white"
                                 }`}
                               >
                                 {cancelBusy ? "Cancelling..." : "Cancel Request"}
@@ -1603,8 +1603,8 @@ function RequestsPageContent() {
                                 type="button"
                                 onClick={() => void removeMyRequest(r)}
                                 disabled={removeBusy}
-                                className={`px-3 py-1.5 rounded-xl text-xs font-semibold border ${
-                                  removeBusy ? "bg-gray-100 text-gray-400" : "bg-white text-gray-700"
+                                className={`animated-btn px-3 py-1.5 rounded-xl text-xs font-semibold border ${
+                                  removeBusy ? "bg-[#FFDA03] text-black opacity-60 cursor-not-allowed" : "bg-white text-black hover:bg-white"
                                 }`}
                               >
                                 {removeBusy ? "Removing..." : "Remove"}
@@ -1629,7 +1629,7 @@ export default function RequestsPage() {
   return (
     <Suspense
       fallback={
-        <section className="bg-white rounded-2xl shadow-sm border p-5">
+        <section className="glass-panel rounded-2xl shadow-sm p-5 animate-slide-up border-none">
           <LoadingCircle label="Loading requests..." />
         </section>
       }
@@ -1638,3 +1638,4 @@ export default function RequestsPage() {
     </Suspense>
   );
 }
+

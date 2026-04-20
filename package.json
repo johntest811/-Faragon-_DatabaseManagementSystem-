@@ -1,11 +1,12 @@
 {
   "name": "database-management-app",
+  "productName": "Faragon Database",
   "version": "0.1.1",
   "description": "Database management desktop app",
   "author": "JOHN",
   "private": true,
   "scripts": {
-    "dev": "node ./scripts/clean-next-dev-lock.mjs && concurrently \"cross-env NODE_ENV=development next dev -p 3000\" \"wait-on http://localhost:3000 && cross-env ELECTRON_DEV=1 NODE_ENV=development electron .\"",
+    "dev": "node ./scripts/clean-next-dev-lock.mjs && concurrently \"cross-env NEXT_DEV_PORT=3001 NODE_ENV=development next dev -p 3001\" \"wait-on http://localhost:3001 && cross-env NEXT_DEV_PORT=3001 ELECTRON_DEV=1 NODE_ENV=development electron .\"",
     "build": "node ./node_modules/next/dist/bin/next build",
     "start": "node ./node_modules/next/dist/bin/next start",
     "lint": "eslint",
@@ -15,11 +16,11 @@
     "@supabase/supabase-js": "^2.90.1",
     "dotenv": "^16.4.5",
     "google-auth-library": "^10.5.0",
-    "jspdf": "^4.1.0",
+    "jspdf": "^4.2.1",
     "jspdf-autotable": "^5.0.7",
     "lucide-react": "^0.562.0",
-    "next": "^16.1.2",
-    "nodemailer": "^7.0.13",
+    "next": "^16.2.3",
+    "nodemailer": "^8.0.5",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
     "xlsx": "^0.18.5"
@@ -32,18 +33,19 @@
     "@types/react-dom": "^19.2.3",
     "concurrently": "*",
     "cross-env": "^10.1.0",
-    "electron": "^39.2.7",
-    "electron-builder": "^26.4.0",
+    "electron": "^39.8.7",
+    "electron-builder": "^26.8.2",
     "eslint": "^9.39.3",
-    "eslint-config-next": "^16.1.2",
+    "eslint-config-next": "^16.2.3",
     "tailwindcss": "^4",
     "typescript": "^5.9.3",
     "wait-on": "*"
   },
   "overrides": {
+    "axios": "^1.15.0",
     "form-data": "^4.0.0",
     "qs": "^6.11.0",
-    "tar": "7.5.7",
+    "tar": "7.5.13",
     "tough-cookie": "^4.2.0"
   },
   "build": {
@@ -51,10 +53,30 @@
     "directories": {
       "output": "dist"
     },
+    "extraResources": [
+      {
+        "from": ".",
+        "to": ".",
+        "filter": [
+          ".env",
+          ".env.local"
+        ]
+      },
+      {
+        "from": "skills-lock.json",
+        "to": "skills-lock.json"
+      },
+      {
+        "from": "Supabase_database.sql",
+        "to": "Supabase_database.sql"
+      }
+    ],
     "files": [
       "out/**/*",
       "electron/**/*",
-      "package.json"
+      "package.json",
+      "skills-lock.json",
+      "Supabase_database.sql"
     ],
     "win": {
       "target": "nsis",
@@ -63,7 +85,10 @@
     "nsis": {
       "oneClick": false,
       "perMachine": false,
-      "allowToChangeInstallationDirectory": true
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon": "public/Logo.ico",
+      "uninstallerIcon": "public/Logo.ico",
+      "installerHeaderIcon": "public/Logo.ico"
     }
   },
   "main": "electron/main.js"

@@ -550,15 +550,15 @@ export default function RequestsQueuePage() {
 
   if (!canReviewRequests) {
     return (
-      <section className="bg-white rounded-2xl shadow-sm border p-5">
+      <section className="glass-panel rounded-2xl shadow-sm p-5 animate-slide-up border-none">
         <div className="flex items-start justify-between gap-3 mb-3">
           <div>
             <div className="text-lg font-semibold text-black">Reviewer Queue</div>
-            <div className="text-sm text-gray-500">
+            <div className="text-sm text-black">
               Only superadmin accounts can review pending requests.
             </div>
           </div>
-          <button onClick={() => router.push("/Main_Modules/AdminAccounts/")} className="px-4 py-2 rounded-xl bg-white border">
+          <button onClick={() => router.push("/Main_Modules/AdminAccounts/")} className="animated-btn px-4 py-2 rounded-xl bg-white border hover:bg-white">
             Back
           </button>
         </div>
@@ -567,11 +567,11 @@ export default function RequestsQueuePage() {
   }
 
   return (
-    <section className="bg-white rounded-2xl shadow-sm border p-5">
+    <section className="glass-panel animate-slide-up rounded-2xl shadow-2xl p-5 border-none">
       <div className="flex items-start justify-between gap-3 mb-3">
         <div>
           <div className="text-lg font-semibold text-black">Pending Requests (Reviewer Queue)</div>
-          <div className="text-sm text-gray-500">
+          <div className="text-sm text-black">
             Approve grants access based on selected scope (page, columns, and optional employee row scope).
           </div>
           <div className="mt-3">
@@ -582,11 +582,11 @@ export default function RequestsQueuePage() {
           <button
             type="button"
             onClick={loadPendingRequests}
-            className="px-4 py-2 rounded-xl bg-white border"
+            className="animated-btn px-4 py-2 rounded-xl bg-white border hover:bg-white"
           >
             Refresh
           </button>
-          <button onClick={() => router.push("/Main_Modules/AdminAccounts/")} className="px-4 py-2 rounded-xl bg-white border">
+          <button onClick={() => router.push("/Main_Modules/AdminAccounts/")} className="animated-btn px-4 py-2 rounded-xl bg-white border hover:bg-white">
             Back
           </button>
         </div>
@@ -597,12 +597,12 @@ export default function RequestsQueuePage() {
           <LoadingCircle label="Loading pending requests..." />
         </div>
       ) : pendingRequests.length === 0 ? (
-        <div className="mt-4 text-sm text-gray-500">No pending requests.</div>
+        <div className="mt-4 text-sm text-black">No pending requests.</div>
       ) : (
         <div className="mt-4 overflow-x-auto">
           <table className="w-full table-auto">
             <thead>
-              <tr className="text-left text-sm text-gray-600">
+              <tr className="text-left text-sm text-black">
                 <th className="px-3 py-2">When</th>
                 <th className="px-3 py-2">Requester</th>
                 <th className="px-3 py-2">Role</th>
@@ -640,24 +640,24 @@ export default function RequestsQueuePage() {
 
                 return (
                   <tr key={r.id} className="border-t align-top">
-                    <td className="px-3 py-2 text-xs text-gray-600 whitespace-nowrap">
+                    <td className="px-3 py-2 text-xs text-black whitespace-nowrap">
                       {new Date(r.created_at).toLocaleString()}
                     </td>
                     <td className="px-3 py-2 text-sm text-black whitespace-nowrap">{requesterLabel}</td>
-                    <td className="px-3 py-2 text-sm text-gray-700 whitespace-nowrap">{r.requester_role ?? "—"}</td>
+                    <td className="px-3 py-2 text-sm text-black whitespace-nowrap">{r.requester_role ?? "—"}</td>
                     <td className="px-3 py-2 text-sm text-black whitespace-nowrap">{r.requested_module_key}</td>
-                    <td className="px-3 py-2 text-xs text-gray-700 whitespace-nowrap">{scopeLabel}</td>
-                    <td className="px-3 py-2 text-xs text-gray-700 whitespace-nowrap">{columnsLabel || "—"}</td>
-                    <td className="px-3 py-2 text-xs text-gray-700 whitespace-nowrap">{personLabel}</td>
-                    <td className="px-3 py-2 text-xs text-gray-700 whitespace-nowrap">{reviewerLabel}</td>
-                    <td className="px-3 py-2 text-xs text-gray-600">{r.reason ?? ""}</td>
+                    <td className="px-3 py-2 text-xs text-black whitespace-nowrap">{scopeLabel}</td>
+                    <td className="px-3 py-2 text-xs text-black whitespace-nowrap">{columnsLabel || "—"}</td>
+                    <td className="px-3 py-2 text-xs text-black whitespace-nowrap">{personLabel}</td>
+                    <td className="px-3 py-2 text-xs text-black whitespace-nowrap">{reviewerLabel}</td>
+                    <td className="px-3 py-2 text-xs text-black">{r.reason ?? ""}</td>
                     <td className="px-3 py-2">
                       <div className="flex gap-2">
                         <button
                           onClick={() => resolveRequest(r, "APPROVED")}
                           disabled={busy}
-                          className={`px-3 py-1.5 rounded-xl text-sm font-semibold ${
-                            busy ? "bg-gray-100 text-gray-400" : "bg-[#FFDA03] text-black"
+                          className={`animated-btn px-3 py-1.5 rounded-xl text-sm font-semibold ${
+                            busy ? "bg-[#FFDA03] text-black opacity-60 cursor-not-allowed" : "bg-[#FFDA03] text-black hover:bg-[#EFCB00]"
                           }`}
                         >
                           {busy ? "Working..." : "Approve"}
@@ -665,8 +665,8 @@ export default function RequestsQueuePage() {
                         <button
                           onClick={() => resolveRequest(r, "REJECTED")}
                           disabled={busy}
-                          className={`px-3 py-1.5 rounded-xl text-sm font-semibold border ${
-                            busy ? "bg-gray-100 text-gray-400" : "bg-white text-gray-700"
+                          className={`animated-btn px-3 py-1.5 rounded-xl text-sm font-semibold border ${
+                            busy ? "bg-[#FFDA03] text-black opacity-60 cursor-not-allowed" : "bg-white text-black hover:bg-white"
                           }`}
                         >
                           Reject
@@ -683,3 +683,4 @@ export default function RequestsQueuePage() {
     </section>
   );
 }
+

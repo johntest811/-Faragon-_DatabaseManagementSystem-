@@ -282,7 +282,7 @@ export default function LogisticsReportsPage() {
   const anyLoading = contractsState.loading || inventoryState.loading || paraphernaliaState.loading || restockState.loading;
 
   return (
-    <section className="bg-white rounded-3xl border p-6 space-y-6">
+    <section className="glass-panel animate-slide-up rounded-3xl p-6 space-y-6">
       <div>
         <div className="text-lg font-semibold text-black">Logistics • Reports</div>
         <div className="text-sm text-gray-500 mt-1">Quick summaries for Client, Inventory, and Paraphernalia.</div>
@@ -295,24 +295,24 @@ export default function LogisticsReportsPage() {
       ) : null}
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <div className="rounded-2xl border bg-gray-50 p-4">
+        <div className="glass-panel animate-scale-in rounded-2xl border-none p-4">
           <div className="text-xs text-gray-500">Contracts (Active)</div>
           <div className="text-2xl font-bold text-black mt-1">{contractsSummary.active}</div>
           <div className="text-xs text-gray-500 mt-1">Total: {contractsSummary.total}</div>
           {contractsState.error ? <div className="text-xs text-red-600 mt-2">{contractsState.error}</div> : null}
         </div>
-        <div className="rounded-2xl border bg-gray-50 p-4">
+        <div className="glass-panel animate-scale-in rounded-2xl border-none p-4">
           <div className="text-xs text-gray-500">Deployed Guards</div>
           <div className="text-2xl font-bold text-black mt-1">{contractsSummary.totalDeployed}</div>
           <div className="text-xs text-gray-500 mt-1">Contracted: {contractsSummary.totalManpower}</div>
         </div>
-        <div className="rounded-2xl border bg-gray-50 p-4">
+        <div className="glass-panel animate-scale-in rounded-2xl border-none p-4">
           <div className="text-xs text-gray-500">Inventory Value</div>
           <div className="text-2xl font-bold text-black mt-1">₱ {moneyPhp(inventorySummary.totalValue)}</div>
           <div className="text-xs text-gray-500 mt-1">Total qty: {inventorySummary.totalQty}</div>
           {inventoryState.error ? <div className="text-xs text-red-600 mt-2">{inventoryState.error}</div> : null}
         </div>
-        <div className="rounded-2xl border bg-gray-50 p-4">
+        <div className="glass-panel animate-scale-in rounded-2xl border-none p-4">
           <div className="text-xs text-gray-500">Paraphernalia Stock Balance</div>
           <div className="text-2xl font-bold text-black mt-1">{paraphernaliaSummary.totalStockBalance}</div>
           <div className="text-xs text-gray-500 mt-1">Items tracked: {paraphernaliaSummary.totalItems}</div>
@@ -321,8 +321,8 @@ export default function LogisticsReportsPage() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <div className="rounded-2xl border bg-white overflow-hidden">
-          <div className="px-5 py-4 border-b bg-gray-50">
+        <div className="glass-panel rounded-2xl overflow-hidden border-none animate-slide-up">
+          <div className="px-5 py-4 border-b border-gray-100 bg-white">
             <div className="text-sm font-semibold text-black">Inventory • Totals by Category</div>
             <div className="text-xs text-gray-500">Sum of qty + value columns in inventory_fixed_asset</div>
           </div>
@@ -337,7 +337,7 @@ export default function LogisticsReportsPage() {
               </thead>
               <tbody>
                 {inventorySummary.byCategory.map((r) => (
-                  <tr key={r.label} className="border-b last:border-b-0">
+                  <tr key={r.label} className="animated-row border-b border-gray-100 last:border-b-0">
                     <td className="px-4 py-3">{r.label}</td>
                     <td className="px-4 py-3 text-right">{r.quantity}</td>
                     <td className="px-4 py-3 text-right">₱ {moneyPhp(r.value)}</td>
@@ -348,8 +348,8 @@ export default function LogisticsReportsPage() {
           </div>
         </div>
 
-        <div className="rounded-2xl border bg-white overflow-hidden">
-          <div className="px-5 py-4 border-b bg-gray-50">
+        <div className="glass-panel rounded-2xl overflow-hidden border-none animate-slide-up">
+          <div className="px-5 py-4 border-b border-gray-100 bg-white">
             <div className="text-sm font-semibold text-black">Clients • Contracts by Status</div>
             <div className="text-xs text-gray-500">Counts + manpower/deployed totals</div>
           </div>
@@ -366,7 +366,7 @@ export default function LogisticsReportsPage() {
               <tbody>
                 {contractsSummary.rows.length ? (
                   contractsSummary.rows.map((r) => (
-                    <tr key={r.status} className="border-b last:border-b-0">
+                    <tr key={r.status} className="animated-row border-b border-gray-100 last:border-b-0">
                       <td className="px-4 py-3">{r.status}</td>
                       <td className="px-4 py-3 text-right">{r.count}</td>
                       <td className="px-4 py-3 text-right">{r.manpower}</td>
@@ -387,8 +387,8 @@ export default function LogisticsReportsPage() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <div className="rounded-2xl border bg-white overflow-hidden">
-          <div className="px-5 py-4 border-b bg-gray-50">
+        <div className="glass-panel rounded-2xl overflow-hidden border-none animate-slide-up">
+          <div className="px-5 py-4 border-b border-gray-100 bg-white">
             <div className="text-sm font-semibold text-black">Paraphernalia • Lowest Stock</div>
             <div className="text-xs text-gray-500">Top 12 items with the lowest stock balance</div>
           </div>
@@ -403,7 +403,7 @@ export default function LogisticsReportsPage() {
               <tbody>
                 {paraphernaliaSummary.lowest.length ? (
                   paraphernaliaSummary.lowest.map((r) => (
-                    <tr key={r.id_paraphernalia_inventory} className="border-b last:border-b-0">
+                    <tr key={r.id_paraphernalia_inventory} className="animated-row border-b border-gray-100 last:border-b-0">
                       <td className="px-4 py-3">
                         {(r.paraphernalia?.items ?? r.items ?? "—")}
                         <div className="text-[11px] text-gray-500">{r.paraphernalia?.names ?? "—"}</div>
@@ -423,8 +423,8 @@ export default function LogisticsReportsPage() {
           </div>
         </div>
 
-        <div className="rounded-2xl border bg-white overflow-hidden">
-          <div className="px-5 py-4 border-b bg-gray-50">
+        <div className="glass-panel rounded-2xl overflow-hidden border-none animate-slide-up">
+          <div className="px-5 py-4 border-b border-gray-100 bg-white">
             <div className="text-sm font-semibold text-black">Restock • Status Summary</div>
             <div className="text-xs text-gray-500">Counts by restock.status</div>
           </div>
@@ -442,7 +442,7 @@ export default function LogisticsReportsPage() {
                   restockSummary.rows.map((r) => {
                     const latest = restockRows.find((x) => normalizeStatus(x.status) === r.status) ?? null;
                     return (
-                      <tr key={r.status} className="border-b last:border-b-0">
+                      <tr key={r.status} className="animated-row border-b border-gray-100 last:border-b-0">
                         <td className="px-4 py-3">{r.status}</td>
                         <td className="px-4 py-3 text-right">{r.count}</td>
                         <td className="px-4 py-3 text-right text-gray-600">{fmtDate(latest?.date ?? null)}</td>
@@ -465,3 +465,4 @@ export default function LogisticsReportsPage() {
     </section>
   );
 }
+

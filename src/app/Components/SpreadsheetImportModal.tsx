@@ -56,6 +56,9 @@ export default function SpreadsheetImportModal({
   const [parsingError, setParsingError] = useState<string>("");
   const [importing, setImporting] = useState(false);
   const [resultMsg, setResultMsg] = useState<string>("");
+  const canDownloadTemplate =
+    allowTemplateDownloads &&
+    (Boolean(onDownloadTemplateCsv) || Boolean(onDownloadTemplateXlsx) || Boolean(templateSampleData));
 
   function downloadTemplateCsvInternal() {
     if (onDownloadTemplateCsv) {
@@ -181,6 +184,24 @@ export default function SpreadsheetImportModal({
               </div>
 
               <div className="flex items-center gap-2">
+                {canDownloadTemplate ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={downloadTemplateCsvInternal}
+                      className="px-3 py-2 rounded-xl border bg-white text-black text-sm font-semibold"
+                    >
+                      Template CSV
+                    </button>
+                    <button
+                      type="button"
+                      onClick={downloadTemplateXlsxInternal}
+                      className="px-3 py-2 rounded-xl border bg-white text-black text-sm font-semibold"
+                    >
+                      Template XLSX
+                    </button>
+                  </>
+                ) : null}
                 <label className="px-3 py-2 rounded-xl bg-[#FFDA03] text-black text-sm font-semibold cursor-pointer">
                   Choose File
                   <input

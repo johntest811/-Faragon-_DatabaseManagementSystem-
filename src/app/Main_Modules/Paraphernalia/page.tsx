@@ -347,7 +347,7 @@ export default function ParaphernaliaPage() {
     }
   }
 
-  const parseParaphernaliaImportRow = useCallback((row: Record<string, unknown>, idx: number) => {
+  const parseParaphernaliaImportRow = useCallback((row: Record<string, unknown>) => {
     const payload = {
       names: pickByAliases(row, ["names", "name"]).trim() || null,
       items: pickByAliases(row, ["items", "item"]).trim() || null,
@@ -376,7 +376,7 @@ export default function ParaphernaliaPage() {
 
     const payloads = rawRows
       .map((row, idx) => {
-        const { payload, error } = parseParaphernaliaImportRow(row, idx);
+		const { payload, error } = parseParaphernaliaImportRow(row);
         if (!payload) {
           skipped += 1;
           if (error) rowErrors.push(`Row ${idx + 2}: ${error}`);
@@ -982,7 +982,7 @@ export default function ParaphernaliaPage() {
   }
 
   return (
-    <div className="rounded-3xl bg-white border p-6 space-y-6">
+    <div className="glass-panel animate-slide-up rounded-3xl p-6 space-y-6">
       <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
         <div>
           <div className="text-lg font-semibold text-gray-900">Logistics • Paraphernalia</div>
@@ -992,7 +992,7 @@ export default function ParaphernaliaPage() {
           <button
             type="button"
             onClick={openCreateModal}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-[#FFDA03] text-black text-sm font-medium hover:brightness-95"
+            className="animated-btn inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-[#FFDA03] text-black text-sm font-medium hover:brightness-95"
           >
             <Plus className="w-4 h-4" />
             Add Paraphernalia Data
@@ -1003,7 +1003,7 @@ export default function ParaphernaliaPage() {
               type="button"
               onClick={() => setImportModalOpen(true)}
               disabled={importBusy}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border text-sm text-black hover:bg-gray-50 disabled:opacity-60"
+              className="animated-btn inline-flex items-center gap-2 px-4 py-2 rounded-xl border bg-white text-sm text-black hover:bg-white disabled:opacity-60"
             >
               <Upload className="w-4 h-4" />
               {importBusy ? "Importing..." : "Import Excel/CSV"}
@@ -1014,7 +1014,7 @@ export default function ParaphernaliaPage() {
             <button
               type="button"
               onClick={() => setShowTemplatePopup(true)}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border text-sm font-medium text-black hover:bg-gray-50"
+              className="animated-btn inline-flex items-center gap-2 px-4 py-2 rounded-xl border bg-white text-sm font-medium text-black hover:bg-white"
             >
               <Download className="w-4 h-4" />
               Download Templates
@@ -1025,7 +1025,7 @@ export default function ParaphernaliaPage() {
             <button
               type="button"
               onClick={() => setShowExportPopup(true)}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border text-sm font-medium text-black hover:bg-gray-50"
+              className="animated-btn inline-flex items-center gap-2 px-4 py-2 rounded-xl border bg-white text-sm font-medium text-black hover:bg-white"
             >
               <FileText className="w-4 h-4" />
               Export
@@ -1058,7 +1058,7 @@ export default function ParaphernaliaPage() {
         <button
           type="button"
           onClick={() => void loadAll()}
-          className="px-4 py-2 rounded-xl border text-sm text-black hover:bg-gray-50 w-full md:w-auto"
+          className="animated-btn px-4 py-2 rounded-xl border bg-white text-sm text-black hover:bg-white w-full md:w-auto"
         >
           Refresh
         </button>
@@ -1069,9 +1069,9 @@ export default function ParaphernaliaPage() {
 
       <div className="space-y-3">
         <div className="text-sm font-semibold text-black">Paraphernalia Items</div>
-        <div className="relative overflow-x-auto rounded-2xl border">
+        <div className="relative overflow-x-auto rounded-2xl glass-panel animate-slide-up">
           <table className="w-full text-sm text-black">
-            <thead className="bg-gray-50 border-b text-black">
+            <thead className="bg-white border-b text-black">
               <tr>
                 <th className="px-4 py-3 text-left font-semibold whitespace-nowrap">Name</th>
                 <th className="px-4 py-3 text-left font-semibold whitespace-nowrap">Item</th>
@@ -1090,7 +1090,7 @@ export default function ParaphernaliaPage() {
                 </tr>
               ) : filteredParaphernalia.length ? (
                 filteredParaphernalia.map((r) => (
-                  <tr key={r.id_paraphernalia} className="border-b hover:bg-gray-50">
+                  <tr key={r.id_paraphernalia} className="animated-row border-b border-gray-100">
                     <td className="px-4 py-3">{safeText(r.names)}</td>
                     <td className="px-4 py-3">{safeText(r.items)}</td>
                     <td className="px-4 py-3">{tableCell(r.quantity)}</td>
@@ -1101,7 +1101,7 @@ export default function ParaphernaliaPage() {
                         <button
                           type="button"
                           onClick={() => openEdit("paraphernalia", r)}
-                          className="inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-xs hover:bg-gray-100"
+                          className="animated-btn inline-flex items-center gap-1 rounded-lg border bg-white px-2 py-1 text-xs hover:bg-white"
                         >
                           <Pencil className="w-3.5 h-3.5" />
                           Edit
@@ -1109,7 +1109,7 @@ export default function ParaphernaliaPage() {
                         <button
                           type="button"
                           onClick={() => openDelete("paraphernalia", r.id_paraphernalia, r.items ?? r.names ?? "paraphernalia row")}
-                          className="inline-flex items-center gap-1 rounded-lg border border-red-200 text-red-600 px-2 py-1 text-xs hover:bg-red-50"
+                          className="animated-btn inline-flex items-center gap-1 rounded-lg border border-red-200 text-red-600 px-2 py-1 text-xs hover:bg-red-50"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                           Delete
@@ -1130,9 +1130,9 @@ export default function ParaphernaliaPage() {
 
       <div className="space-y-3">
         <div className="text-sm font-semibold text-black">Inventory Stock Snapshot</div>
-        <div className="relative overflow-x-auto rounded-2xl border">
+        <div className="relative overflow-x-auto rounded-2xl glass-panel animate-slide-up">
           <table className="w-full text-sm text-black">
-            <thead className="bg-gray-50 border-b text-black">
+            <thead className="bg-white border-b text-black">
               <tr>
                 <th className="px-4 py-3 text-left font-semibold whitespace-nowrap">Name</th>
                 <th className="px-4 py-3 text-left font-semibold whitespace-nowrap">Item</th>
@@ -1151,7 +1151,7 @@ export default function ParaphernaliaPage() {
                 </tr>
               ) : filteredInventory.length ? (
                 filteredInventory.map((r) => (
-                  <tr key={r.id_paraphernalia_inventory} className="border-b hover:bg-gray-50">
+                  <tr key={r.id_paraphernalia_inventory} className="animated-row border-b border-gray-100">
                     <td className="px-4 py-3">{safeText(r.paraphernalia?.names)}</td>
                     <td className="px-4 py-3">{safeText(r.items ?? r.paraphernalia?.items)}</td>
                     <td className="px-4 py-3">{tableCell(r.stock_balance)}</td>
@@ -1162,7 +1162,7 @@ export default function ParaphernaliaPage() {
                         <button
                           type="button"
                           onClick={() => openEdit("inventory", r)}
-                          className="inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-xs hover:bg-gray-100"
+                          className="animated-btn inline-flex items-center gap-1 rounded-lg border bg-white px-2 py-1 text-xs hover:bg-white"
                         >
                           <Pencil className="w-3.5 h-3.5" />
                           Edit
@@ -1176,7 +1176,7 @@ export default function ParaphernaliaPage() {
                               r.items ?? r.paraphernalia?.items ?? "inventory row"
                             )
                           }
-                          className="inline-flex items-center gap-1 rounded-lg border border-red-200 text-red-600 px-2 py-1 text-xs hover:bg-red-50"
+                          className="animated-btn inline-flex items-center gap-1 rounded-lg border border-red-200 text-red-600 px-2 py-1 text-xs hover:bg-red-50"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                           Delete
@@ -1197,9 +1197,9 @@ export default function ParaphernaliaPage() {
 
       <div className="space-y-3">
         <div className="text-sm font-semibold text-black">Restock History</div>
-        <div className="relative overflow-x-auto rounded-2xl border">
+        <div className="relative overflow-x-auto rounded-2xl glass-panel animate-slide-up">
           <table className="w-full text-sm text-black">
-            <thead className="bg-gray-50 border-b text-black">
+            <thead className="bg-white border-b text-black">
               <tr>
                 <th className="px-4 py-3 text-left font-semibold whitespace-nowrap">Date</th>
                 <th className="px-4 py-3 text-left font-semibold whitespace-nowrap">Status</th>
@@ -1218,7 +1218,7 @@ export default function ParaphernaliaPage() {
                 </tr>
               ) : filteredRestock.length ? (
                 filteredRestock.map((r) => (
-                  <tr key={r.id_restock} className="border-b hover:bg-gray-50">
+                  <tr key={r.id_restock} className="animated-row border-b border-gray-100">
                     <td className="px-4 py-3">{safeText(r.date)}</td>
                     <td className="px-4 py-3">{safeText(r.status)}</td>
                     <td className="px-4 py-3">{safeText(r.item ?? r.paraphernalia?.items)}</td>
@@ -1229,7 +1229,7 @@ export default function ParaphernaliaPage() {
                         <button
                           type="button"
                           onClick={() => openEdit("restock", r)}
-                          className="inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-xs hover:bg-gray-100"
+                          className="animated-btn inline-flex items-center gap-1 rounded-lg border bg-white px-2 py-1 text-xs hover:bg-white"
                         >
                           <Pencil className="w-3.5 h-3.5" />
                           Edit
@@ -1237,7 +1237,7 @@ export default function ParaphernaliaPage() {
                         <button
                           type="button"
                           onClick={() => openDelete("restock", r.id_restock, r.item ?? "restock row")}
-                          className="inline-flex items-center gap-1 rounded-lg border border-red-200 text-red-600 px-2 py-1 text-xs hover:bg-red-50"
+                          className="animated-btn inline-flex items-center gap-1 rounded-lg border border-red-200 text-red-600 px-2 py-1 text-xs hover:bg-red-50"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                           Delete
@@ -1258,14 +1258,14 @@ export default function ParaphernaliaPage() {
 
       {createOpen ? (
         <div className="fixed inset-0 z-[80] bg-black/40 flex items-center justify-center p-4">
-          <div className="w-full max-w-4xl rounded-2xl border bg-white shadow-xl max-h-[90vh] overflow-y-auto">
+          <div className="w-full max-w-4xl glass-panel rounded-2xl shadow-2xl max-h-[90vh] overflow-y-auto animate-scale-in">
             <div className="px-5 py-4 border-b sticky top-0 bg-white">
               <div className="text-base font-semibold text-black">Add Paraphernalia Data</div>
               <div className="text-sm text-gray-500">Segmented form for Paraphernalia Items, Inventory Stock Snapshot, and Restock History.</div>
             </div>
 
             <form onSubmit={handleCreateSubmit} className="px-5 py-4 space-y-5">
-              <div className="rounded-2xl border p-4 space-y-3">
+              <div className="glass-panel rounded-2xl border-none p-4 space-y-3">
                 <div className="text-sm font-semibold text-black">Paraphernalia Items</div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <label className="space-y-1 text-sm">
@@ -1321,7 +1321,7 @@ export default function ParaphernaliaPage() {
                 </div>
               </div>
 
-              <div className="rounded-2xl border p-4 space-y-3">
+              <div className="glass-panel rounded-2xl border-none p-4 space-y-3">
                 <div className="flex items-center justify-between gap-2">
                   <div className="text-sm font-semibold text-black">Inventory Stock Snapshot</div>
                   <label className="flex items-center gap-2 text-xs text-gray-600">
@@ -1376,7 +1376,7 @@ export default function ParaphernaliaPage() {
                 </div>
               </div>
 
-              <div className="rounded-2xl border p-4 space-y-3">
+              <div className="glass-panel rounded-2xl border-none p-4 space-y-3">
                 <div className="flex items-center justify-between gap-2">
                   <div className="text-sm font-semibold text-black">Restock History</div>
                   <label className="flex items-center gap-2 text-xs text-gray-600">
@@ -1437,14 +1437,14 @@ export default function ParaphernaliaPage() {
                   type="button"
                   onClick={() => setCreateOpen(false)}
                   disabled={createBusy}
-                  className="px-4 py-2 rounded-xl border text-sm text-black hover:bg-gray-50 disabled:opacity-60"
+                  className="animated-btn px-4 py-2 rounded-xl border bg-white text-sm text-black hover:bg-white disabled:opacity-60"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={createBusy}
-                  className="px-4 py-2 rounded-xl bg-[#FFDA03] text-black text-sm font-medium hover:brightness-95 disabled:opacity-60"
+                  className="animated-btn px-4 py-2 rounded-xl bg-[#FFDA03] text-black text-sm font-medium hover:brightness-95 disabled:opacity-60"
                 >
                   {createBusy ? "Saving..." : "Save All Connected Data"}
                 </button>
@@ -1456,7 +1456,7 @@ export default function ParaphernaliaPage() {
 
       {editState ? (
         <div className="fixed inset-0 z-[85] bg-black/40 flex items-center justify-center p-4">
-          <div className="w-full max-w-2xl rounded-2xl border bg-white shadow-xl">
+          <div className="w-full max-w-2xl glass-panel animate-scale-in rounded-2xl shadow-2xl">
             <div className="px-5 py-4 border-b">
               <div className="text-base font-semibold text-black">Edit {editState.section === "paraphernalia" ? "Paraphernalia Item" : editState.section === "inventory" ? "Inventory Snapshot" : "Restock History"}</div>
             </div>
@@ -1671,14 +1671,14 @@ export default function ParaphernaliaPage() {
                   type="button"
                   onClick={() => setEditState(null)}
                   disabled={editBusy}
-                  className="px-4 py-2 rounded-xl border text-sm hover:bg-gray-50 disabled:opacity-60"
+                  className="animated-btn px-4 py-2 rounded-xl border bg-white text-sm hover:bg-white disabled:opacity-60"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={editBusy}
-                  className="px-4 py-2 rounded-xl bg-[#FFDA03] text-black text-sm font-medium hover:brightness-95 disabled:opacity-60"
+                  className="animated-btn px-4 py-2 rounded-xl bg-[#FFDA03] text-black text-sm font-medium hover:brightness-95 disabled:opacity-60"
                 >
                   {editBusy ? "Saving..." : "Save Changes"}
                 </button>
@@ -1690,7 +1690,7 @@ export default function ParaphernaliaPage() {
 
       {deleteState ? (
         <div className="fixed inset-0 z-[90] bg-black/40 flex items-center justify-center p-4">
-          <div className="w-full max-w-md rounded-2xl border bg-white shadow-xl">
+          <div className="w-full max-w-md glass-panel animate-scale-in rounded-2xl shadow-2xl">
             <div className="px-5 py-4 border-b">
               <div className="text-base font-semibold text-black">Confirm Delete</div>
               <div className="mt-1 text-sm text-gray-600">Delete this {deleteState.section} row: {safeText(deleteState.label)}?</div>
@@ -1702,7 +1702,7 @@ export default function ParaphernaliaPage() {
                   type="button"
                   onClick={() => setDeleteState(null)}
                   disabled={deleteBusy}
-                  className="px-4 py-2 rounded-xl border text-sm hover:bg-gray-50 disabled:opacity-60"
+                  className="animated-btn px-4 py-2 rounded-xl border bg-white text-sm hover:bg-white disabled:opacity-60"
                 >
                   Cancel
                 </button>
@@ -1710,7 +1710,7 @@ export default function ParaphernaliaPage() {
                   type="button"
                   onClick={() => void confirmDelete()}
                   disabled={deleteBusy}
-                  className="px-4 py-2 rounded-xl bg-red-600 text-white text-sm font-medium hover:bg-red-700 disabled:opacity-60"
+                  className="animated-btn px-4 py-2 rounded-xl bg-red-600 text-white text-sm font-medium hover:bg-red-700 disabled:opacity-60"
                 >
                   {deleteBusy ? "Deleting..." : "Delete"}
                 </button>
@@ -1737,21 +1737,21 @@ export default function ParaphernaliaPage() {
               <div className="flex gap-4">
                 <button
                   onClick={exportParaphernaliaXlsx}
-                  className="inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium text-black hover:bg-gray-50"
+                  className="inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium text-black hover:bg-white"
                 >
                   <FileDown className="w-4 h-4" />
                   Export XLSX
                 </button>
                 <button
                   onClick={exportParaphernaliaCsv}
-                  className="inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium text-black hover:bg-gray-50"
+                  className="inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium text-black hover:bg-white"
                 >
                   <FileDown className="w-4 h-4" />
                   Export CSV
                 </button>
                 <button
                   onClick={exportParaphernaliaPdf}
-                  className="inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium text-black hover:bg-gray-50"
+                  className="inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium text-black hover:bg-white"
                 >
                   <FileText className="w-4 h-4" />
                   Export PDF
@@ -1779,14 +1779,14 @@ export default function ParaphernaliaPage() {
               <div className="flex gap-4">
                 <button
                   onClick={() => downloadTemplate("xlsx")}
-                  className="inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium text-black hover:bg-gray-50"
+                  className="inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium text-black hover:bg-white"
                 >
                   <Download className="w-4 h-4" />
                   Template XLSX
                 </button>
                 <button
                   onClick={() => downloadTemplate("csv")}
-                  className="inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium text-black hover:bg-gray-50"
+                  className="inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium text-black hover:bg-white"
                 >
                   <Download className="w-4 h-4" />
                   Template CSV
@@ -1825,3 +1825,4 @@ export default function ParaphernaliaPage() {
     </div>
   );
 }
+

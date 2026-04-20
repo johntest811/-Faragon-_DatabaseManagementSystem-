@@ -3,7 +3,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../Client/SupabaseClients";
-import { Pencil, LayoutGrid, Table, SlidersHorizontal, Search, FileDown, FileText, Trash2 } from "lucide-react";
+import { Pencil, LayoutGrid, Table, SlidersHorizontal, Search, FileDown, FileText } from "lucide-react";
 import { useAuthRole } from "../../Client/useRbac";
 import EmployeeEditorModal from "../../Components/EmployeeEditorModal";
 import LoadingCircle from "../../Components/LoadingCircle";
@@ -617,13 +617,13 @@ export default function ReassignPage() {
       {error ? <div className="text-red-600 text-sm">{error}</div> : null}
 
       {loading ? (
-        <div className="bg-white rounded-2xl border shadow-sm p-8">
+        <div className="glass-panel animate-slide-up rounded-2xl p-8">
           <LoadingCircle label="Loading employees..." />
         </div>
       ) : filtered.length === 0 ? (
-        <div className="bg-white rounded-2xl border shadow-sm p-8 text-center text-gray-500">No employees in Reassign.</div>
+        <div className="glass-panel animate-slide-up rounded-2xl p-8 text-center text-gray-500">No employees in Reassign.</div>
       ) : viewMode === "table" ? (
-    <div className="relative overflow-x-auto rounded-2xl border bg-white">
+    <div className="relative overflow-x-auto rounded-2xl glass-panel animate-slide-up">
       <table className="w-full text-sm text-black border-separate border-spacing-y-2">
         <thead className="sticky top-0 z-10">
           <tr className="bg-[#FFDA03]">
@@ -668,7 +668,7 @@ export default function ReassignPage() {
                   if (!canClick) return;
                   router.push(detailsHref);
                 }}
-                className={`bg-white shadow-sm transition ${canClick ? "hover:shadow-md cursor-pointer" : ""}`}
+                className={`animated-row border-b border-gray-100 transition ${canClick ? "hover:shadow-md cursor-pointer" : ""}`}
               >
                 <td className="px-4 py-3 rounded-l-xl">
                   <div className="h-10 w-10 rounded-full bg-gray-100 overflow-hidden">
@@ -741,8 +741,8 @@ export default function ReassignPage() {
                   if (sessionRole === "employee") return;
                   router.push(detailsHref);
                 }}
-                className={`bg-white rounded-3xl border shadow-sm p-6 ${
-                  sessionRole !== "employee" ? "cursor-pointer hover:shadow-md transition" : ""
+                className={`glass-panel animate-slide-up rounded-3xl p-6 animated-row hover:shadow-xl ${
+                  sessionRole !== "employee" ? "cursor-pointer" : ""
                 }`}
               >
                 <div className="flex items-center gap-4">
@@ -778,7 +778,7 @@ export default function ReassignPage() {
                           ev.stopPropagation();
                           openEdit(e);
                         }}
-                        className="h-9 w-9 rounded-xl border bg-white flex items-center justify-center text-black"
+                        className="animated-btn h-9 w-9 rounded-xl border bg-white flex items-center justify-center text-black"
                         title="Edit"
                         type="button"
                       >
@@ -795,7 +795,7 @@ export default function ReassignPage() {
 
     {exportOpen && sessionRole !== "employee" ? (
       <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
-        <div className="bg-white rounded-3xl shadow-xl max-w-4xl w-full overflow-hidden">
+        <div className="glass-panel rounded-3xl shadow-2xl max-w-4xl w-full overflow-hidden animate-scale-in">
           <div className="px-6 py-4 border-b flex items-center justify-between">
             <div className="text-lg font-bold text-black">Export</div>
             <button
@@ -862,7 +862,7 @@ export default function ReassignPage() {
                 <button
                   type="button"
                   onClick={exportEmployeesPdf}
-                  className="h-10 w-10 rounded-xl border bg-white flex items-center justify-center hover:bg-gray-50"
+                  className="h-10 w-10 rounded-xl border bg-white flex items-center justify-center hover:bg-white"
                   title="Download PDF"
                   aria-label="Download PDF"
                 >
@@ -881,7 +881,7 @@ export default function ReassignPage() {
             </div>
 
             <div className="rounded-2xl border overflow-hidden">
-              <div className="px-4 py-2 bg-gray-50 text-sm text-gray-700 flex items-center justify-between">
+              <div className="px-4 py-2 bg-white text-sm text-gray-700 flex items-center justify-between">
                 <div>Preview (1+ year of service)</div>
                 <div className="text-xs text-gray-500">{getExportCandidates().length} employee(s)</div>
               </div>
@@ -917,7 +917,7 @@ export default function ReassignPage() {
 
     {filtersOpen ? (
       <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
-        <div className="bg-white rounded-3xl shadow-xl max-w-lg w-full overflow-hidden">
+        <div className="glass-panel animate-scale-in rounded-3xl shadow-2xl max-w-lg w-full overflow-hidden">
           <div className="px-6 py-4 border-b flex items-center justify-between">
             <div className="text-lg font-bold text-black">Filters</div>
             <button
@@ -1057,3 +1057,4 @@ export default function ReassignPage() {
     </div>
   );
 }
+

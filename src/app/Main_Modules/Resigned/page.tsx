@@ -442,13 +442,13 @@ export default function ResignedPage() {
       {error ? <div className="text-red-600 text-sm">{error}</div> : null}
 
       {loading ? (
-        <div className="bg-white rounded-2xl border shadow-sm p-8">
+        <div className="glass-panel animate-slide-up rounded-2xl p-8">
           <LoadingCircle label="Loading employees..." />
         </div>
       ) : filtered.length === 0 ? (
-        <div className="bg-white rounded-2xl border shadow-sm p-8 text-center text-gray-500">No employees in Resigned.</div>
+        <div className="glass-panel animate-slide-up rounded-2xl p-8 text-center text-gray-500">No employees in Resigned.</div>
       ) : viewMode === "table" ? (
-        <div className="relative overflow-x-auto rounded-2xl border bg-white">
+        <div className="relative overflow-x-auto rounded-2xl glass-panel animate-slide-up">
           <table className="w-full text-sm text-black border-separate border-spacing-y-2">
             <thead className="sticky top-0 z-10">
               <tr className="bg-[#FFDA03]">
@@ -490,7 +490,7 @@ export default function ResignedPage() {
                       if (!canClick) return;
                       router.push(detailsHref);
                     }}
-                    className={`bg-white shadow-sm transition ${canClick ? "hover:shadow-md cursor-pointer" : ""}`}
+                    className={`animated-row border-b border-gray-100 transition ${canClick ? "hover:shadow-md cursor-pointer" : ""}`}
                   >
                     <td className="px-4 py-3 rounded-l-xl">
                       <div className="h-10 w-10 rounded-full bg-gray-100 overflow-hidden">
@@ -560,8 +560,8 @@ export default function ResignedPage() {
                   if (sessionRole === "employee") return;
                   router.push(detailsHref);
                 }}
-                className={`bg-white rounded-3xl border shadow-sm p-6 ${
-                  sessionRole !== "employee" ? "cursor-pointer hover:shadow-md transition" : ""
+                className={`glass-panel animate-slide-up rounded-3xl p-6 animated-row hover:shadow-xl ${
+                  sessionRole !== "employee" ? "cursor-pointer" : ""
                 }`}
               >
                 <div className="flex items-center gap-4">
@@ -600,7 +600,7 @@ export default function ResignedPage() {
                           ev.stopPropagation();
                           openEdit(e);
                         }}
-                        className="h-9 w-9 rounded-xl border bg-white flex items-center justify-center text-black"
+                        className="animated-btn h-9 w-9 rounded-xl border bg-white flex items-center justify-center text-black"
                         title="Edit"
                         type="button"
                       >
@@ -617,7 +617,7 @@ export default function ResignedPage() {
 
       {filtersOpen ? (
         <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl shadow-xl max-w-lg w-full overflow-hidden">
+          <div className="glass-panel rounded-3xl shadow-2xl max-w-lg w-full overflow-hidden animate-scale-in">
             <div className="px-6 py-4 border-b flex items-center justify-between">
               <div className="text-lg font-bold text-black">Filters</div>
               <button onClick={() => setFiltersOpen(false)} className="px-3 py-2 rounded-xl border bg-white">
@@ -661,7 +661,11 @@ export default function ResignedPage() {
 
               <label className="text-sm text-black block">
                 <div className="text-gray-600 mb-1">Has Photo</div>
-                <select value={hasPhotoFilter} onChange={(e) => setHasPhotoFilter(e.target.value as any)} className="w-full border rounded-xl px-3 py-2 bg-white">
+                <select
+                  value={hasPhotoFilter}
+                  onChange={(e) => setHasPhotoFilter(e.target.value as "ALL" | "YES" | "NO")}
+                  className="w-full border rounded-xl px-3 py-2 bg-white"
+                >
                   <option value="ALL">All</option>
                   <option value="YES">Yes</option>
                   <option value="NO">No</option>
@@ -685,7 +689,11 @@ export default function ResignedPage() {
 
               <label className="text-sm text-black block">
                 <div className="text-gray-600 mb-1">Years of Service</div>
-                <select value={yearsServiceFilter} onChange={(e) => setYearsServiceFilter(e.target.value as any)} className="w-full border rounded-xl px-3 py-2 bg-white">
+                <select
+                  value={yearsServiceFilter}
+                  onChange={(e) => setYearsServiceFilter(e.target.value as "ALL" | "<1" | "1-5" | ">5")}
+                  className="w-full border rounded-xl px-3 py-2 bg-white"
+                >
                   <option value="ALL">All</option>
                   <option value="<1">&lt; 1</option>
                   <option value="1-5">1 - 5</option>
@@ -732,3 +740,4 @@ export default function ResignedPage() {
     </div>
   );
 }
+

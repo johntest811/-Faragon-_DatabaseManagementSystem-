@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../Client/SupabaseClients";
 import { Pencil, SlidersHorizontal, Upload, LayoutGrid, Table, Search, FileDown, FileText } from "lucide-react";
@@ -38,6 +38,18 @@ type LicensureRow = {
 	driver_expiration: string | null;
 	security_expiration: string | null;
 	insurance_expiration: string | null;
+};
+
+type EmployeeExpiringSummaryRow = {
+	applicant_id: string;
+	expires_on: string;
+	days_until_expiry: number;
+};
+
+type EmployeesElectronApi = {
+	notifications?: {
+		getExpiringSummary?: (payload?: { limit?: number }) => Promise<{ rows?: EmployeeExpiringSummaryRow[] } | null | undefined>;
+	};
 };
 
 const EMPLOYEE_COLUMN_TO_DB_FIELDS: Record<string, string[]> = {
@@ -172,13 +184,6 @@ function serviceYearsExact(fromIso: string | null, now = new Date()) {
 	return diff.years + diff.months / 12 + diff.days / 365.25;
 }
 
-function emailBadge(email: string | null) {
-	const value = (email ?? "").trim();
-	if (!value) return { label: "No Email", className: "bg-red-100 text-red-700" };
-	if (value.toLowerCase().endsWith("@gmail.com")) return { label: "Gmail", className: "bg-emerald-100 text-emerald-800" };
-	return { label: "Email", className: "bg-blue-100 text-blue-800" };
-}
-
 function downloadBlob(filename: string, blob: Blob) {
 	const url = URL.createObjectURL(blob);
 	const a = document.createElement("a");
@@ -204,7 +209,7 @@ export default function EmployeesPage() {
 		loading: loadingEmployeeColumns,
 		error: employeeColumnsError,
 	} = useMyColumnAccess("employees");
-	const api = (globalThis as unknown as { electronAPI?: any }).electronAPI;
+	const api = (globalThis as unknown as { electronAPI?: EmployeesElectronApi }).electronAPI;
 
 	const canViewEmployeeColumn = (columnKey: string) =>
 		!employeeColumnsRestricted || allowedEmployeeColumns.has(columnKey);
@@ -310,8 +315,8 @@ export default function EmployeesPage() {
 	const [importSummaryOpen, setImportSummaryOpen] = useState(false);
 
 	const [exportOpen, setExportOpen] = useState(false);
-	const [exportMonth, setExportMonth] = useState("ALL"); // MM
-	const [exportWeek, setExportWeek] = useState("ALL"); // 1..5
+	const [exportMonth] = useState("ALL"); // MM
+	const [exportWeek] = useState("ALL"); // 1..5
 	const [exportTitle, setExportTitle] = useState("Employees Export");
 	const [exportTab, setExportTab] = useState<"expiring" | "service">("expiring");
 
@@ -324,7 +329,7 @@ export default function EmployeesPage() {
 	const [archiveOpen, setArchiveOpen] = useState(false);
 	const [archiveEmployee, setArchiveEmployee] = useState<Applicant | null>(null);
 
-	async function fetchEmployees() {
+	const fetchEmployees = useCallback(async () => {
 		if (loadingEmployeeColumns) {
 			setLoading(true);
 			return;
@@ -335,7 +340,8 @@ export default function EmployeesPage() {
 		try {
 			const selectFields = new Set<string>(["applicant_id", "created_at", "is_archived", "is_trashed"]);
 			for (const [columnKey, dbFields] of Object.entries(EMPLOYEE_COLUMN_TO_DB_FIELDS)) {
-				if (!canViewEmployeeColumn(columnKey)) continue;
+				const canViewColumn = !employeeColumnsRestricted || allowedEmployeeColumns.has(columnKey);
+				if (!canViewColumn) continue;
 				for (const field of dbFields) {
 					selectFields.add(field);
 				}
@@ -391,7 +397,7 @@ export default function EmployeesPage() {
 				try {
 					if (api?.notifications?.getExpiringSummary) {
 						const res = await api.notifications.getExpiringSummary({ limit: 200 });
-						const rows = ((res as any)?.rows ?? []) as Array<{ applicant_id: string; expires_on: string; days_until_expiry: number }>;
+						const rows = ((res as { rows?: EmployeeExpiringSummaryRow[] } | null | undefined)?.rows ?? []);
 						const map: Record<string, { nextYmd: string | null; nextDays: number | null }> = {};
 						for (const r of rows) {
 							const id = String(r.applicant_id || "");
@@ -417,7 +423,13 @@ export default function EmployeesPage() {
 		} finally {
 			setLoading(false);
 		}
-	}
+	}, [
+		loadingEmployeeColumns,
+		employeeColumnsError,
+		employeeColumnsRestricted,
+		allowedEmployeeColumns,
+		api,
+	]);
 
 	useEffect(() => {
   if (typeof window !== "undefined") {
@@ -429,17 +441,19 @@ export default function EmployeesPage() {
 	useEffect(() => {
 		if (loadingEmployeeColumns) return;
 
-		fetchEmployees();
+		void fetchEmployees();
 
 		const channel = supabase
 			.channel("realtime:applicants-employees")
-			.on("postgres_changes", { event: "*", schema: "public", table: "applicants" }, () => fetchEmployees())
+			.on("postgres_changes", { event: "*", schema: "public", table: "applicants" }, () => {
+				void fetchEmployees();
+			})
 			.subscribe();
 
 		return () => {
 			supabase.removeChannel(channel);
 		};
-	}, [loadingEmployeeColumns, employeeColumnsRestricted, employeeColumnsSignature, employeeColumnsError]);
+	}, [loadingEmployeeColumns, employeeColumnsSignature, fetchEmployees]);
 
 	const filtered = useMemo(() => {
 		const q = search.trim().toLowerCase();
@@ -822,39 +836,6 @@ if (hiredMonthFilter !== "ALL") {
 		setExportOpen(false);
 	}
 
-	function exportEmployeesPdf() {
-		setError("");
-		const rows = exportCandidates;
-		if (!rows.length) {
-			setError("No employees match the export filters.");
-			return;
-		}
-		if (!exportColumnDefs.length) {
-			setError("No permitted columns are available for export.");
-			return;
-		}
-		const title = exportTitle.trim() || "Employees Export";
-
-		const now = new Date();
-		const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
-		doc.setFontSize(14);
-		doc.text(title, 40, 40);
-
-		const head = [exportColumnDefs.map((c) => c.label)];
-		const body = rows.map((e) => exportColumnDefs.map((c) => c.value(e, now)));
-
-		autoTable(doc, {
-			startY: 60,
-			head,
-			body,
-			styles: { fontSize: 8, cellPadding: 3 },
-			headStyles: { fillColor: [255, 218, 3], textColor: [0, 0, 0] },
-		});
-
-		doc.save(`${exportFileBase()}.pdf`);
-		setExportOpen(false);
-	}
-
 	function exportActiveTabPdf() {
 		setError("");
 		const title = exportTitle.trim() || "Employees Export";
@@ -1004,11 +985,11 @@ if (hiredMonthFilter !== "ALL") {
 			{error ? <div className="text-red-600 text-sm">{error}</div> : null}
 
 			{loading ? (
-				<div className="bg-white rounded-2xl border shadow-sm p-8">
+				<div className="glass-panel animate-slide-up rounded-2xl p-8">
 					<LoadingCircle label="Loading employees..." />
 				</div>
 			) : filtered.length === 0 ? (
-  <div className="bg-white rounded-2xl border shadow-sm p-8 text-center text-gray-500">
+  <div className="glass-panel animate-slide-up rounded-2xl p-8 text-center text-gray-500">
     No employees found.
   </div>
 ) : viewMode === "grid" ? (
@@ -1039,8 +1020,8 @@ if (hiredMonthFilter !== "ALL") {
 									if (!canClick) return;
 									router.push(detailsHref);
 								}}
-								className={`bg-white rounded-3xl border shadow-sm p-6 ${
-									canClick ? "cursor-pointer hover:shadow-md transition" : ""
+								className={`glass-panel animate-slide-up rounded-3xl p-6 animated-row hover:shadow-xl ${
+									canClick ? "cursor-pointer" : ""
 								}`}
 							>
 								<div className="flex items-center gap-4">
@@ -1095,7 +1076,7 @@ if (hiredMonthFilter !== "ALL") {
 												ev.stopPropagation();
 											openEdit(e);
 										}}
-										className="h-9 w-9 rounded-xl border bg-white flex items-center justify-center text-black"
+										className="animated-btn h-9 w-9 rounded-xl border bg-white flex items-center justify-center text-black"
 										title="Edit"
 									>
 										<Pencil className="w-4 h-4" />
@@ -1108,7 +1089,7 @@ if (hiredMonthFilter !== "ALL") {
 												ev.stopPropagation();
 											openArchive(e);
 										}}
-										className="h-9 px-3 rounded-xl bg-[#FFDA03] text-black text-xs font-semibold"
+										className="animated-btn h-9 px-3 rounded-xl bg-[#FFDA03] text-black text-xs font-semibold"
 										title="Archive"
 									>
 										Archive
@@ -1123,7 +1104,7 @@ if (hiredMonthFilter !== "ALL") {
 					})}
 				</div>
 ) : (
-	<div className="relative overflow-x-auto rounded-2xl border bg-white">
+	<div className="relative overflow-x-auto rounded-2xl glass-panel animate-slide-up">
 		<table className="w-full text-sm text-black border-separate border-spacing-y-2">
 			<thead className="sticky top-0 z-10">
 				<tr className="bg-[#FFDA03]">
@@ -1168,7 +1149,7 @@ if (hiredMonthFilter !== "ALL") {
 								if (!canClick) return;
 								router.push(detailsHref);
 							}}
-							className={`bg-white shadow-sm transition ${canClick ? "hover:shadow-md cursor-pointer" : ""}`}
+							className={`animated-row border-b border-gray-100 ${canClick ? "cursor-pointer hover:shadow-md" : ""}`}
 						>
 							{showPhotoColumn ? (
 								<td className="px-4 py-3 rounded-l-xl">
@@ -1252,7 +1233,7 @@ if (hiredMonthFilter !== "ALL") {
 
 			{exportOpen && canExportEmployees ? (
 				<div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
-					<div className="bg-white rounded-3xl shadow-xl max-w-4xl w-full overflow-hidden">
+					<div className="glass-panel rounded-3xl shadow-2xl max-w-4xl w-full overflow-hidden animate-scale-in">
 						<div className="px-6 py-4 border-b flex items-center justify-between">
 							<div className="text-lg font-bold text-black">Export</div>
 							<div className="flex items-center gap-2">
@@ -1282,7 +1263,7 @@ if (hiredMonthFilter !== "ALL") {
 									<button
 										type="button"
 										onClick={exportEmployeesCsv}
-										className="h-10 px-4 rounded-xl border bg-white text-xs font-semibold hover:bg-gray-50"
+										className="h-10 px-4 rounded-xl border bg-white text-xs font-semibold hover:bg-white"
 										title="Download CSV"
 										aria-label="Download CSV"
 									>
@@ -1290,8 +1271,17 @@ if (hiredMonthFilter !== "ALL") {
 									</button>
 									<button
 										type="button"
+										onClick={exportEmployeesXlsx}
+										className="h-10 px-4 rounded-xl border bg-white text-xs font-semibold hover:bg-white"
+										title="Download XLSX"
+										aria-label="Download XLSX"
+									>
+										XLSX
+									</button>
+									<button
+										type="button"
 										onClick={exportActiveTabPdf}
-										className="h-10 w-10 rounded-xl border bg-white flex items-center justify-center hover:bg-gray-50"
+										className="h-10 w-10 rounded-xl border bg-white flex items-center justify-center hover:bg-white"
 										title="Download PDF"
 										aria-label="Download PDF"
 									>
@@ -1326,7 +1316,7 @@ if (hiredMonthFilter !== "ALL") {
 									{exportTab === "expiring" ? (
 										exportExpiringRows.length ? (
 											<table className="w-full text-sm text-black">
-												<thead className="bg-gray-50 sticky top-0 z-10">
+												<thead className="bg-white sticky top-0 z-10">
 													<tr>
 														<th className="px-3 py-2 text-left">Name</th>
 														<th className="px-3 py-2 text-left">Job</th>
@@ -1352,7 +1342,7 @@ if (hiredMonthFilter !== "ALL") {
 										)
 									) : exportServiceRows.length ? (
 										<table className="w-full text-sm text-black">
-											<thead className="bg-gray-50 sticky top-0 z-10">
+											<thead className="bg-white sticky top-0 z-10">
 												<tr>
 													<th className="px-3 py-2 text-left">Name</th>
 													<th className="px-3 py-2 text-left">Job</th>
@@ -1379,7 +1369,7 @@ if (hiredMonthFilter !== "ALL") {
 								</div>
 							</div>
 
-							<div className="rounded-2xl border bg-gray-50 px-4 py-3 text-sm text-gray-700">
+							<div className="rounded-2xl border bg-white px-4 py-3 text-sm text-gray-700">
 								Years w/ Company is computed from hire date against the current date whenever the popup opens or export runs, so it stays updated even if the app was closed.
 							</div>
 						</div>
@@ -1415,7 +1405,7 @@ if (hiredMonthFilter !== "ALL") {
 
 			{filtersOpen ? (
 				<div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
-					<div className="bg-white rounded-3xl shadow-xl max-w-lg w-full overflow-hidden">
+					<div className="glass-panel animate-scale-in rounded-3xl shadow-2xl max-w-lg w-full overflow-hidden">
 						<div className="px-6 py-4 border-b flex items-center justify-between">
 							<div className="text-lg font-bold text-black">Filters</div>
 							<button
@@ -1571,7 +1561,7 @@ if (hiredMonthFilter !== "ALL") {
 
 			{archiveOpen && archiveEmployee ? (
 				<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-					<div className="w-full max-w-lg bg-white rounded-3xl border shadow-xl overflow-hidden">
+					<div className="w-full max-w-lg glass-panel animate-scale-in rounded-3xl shadow-xl overflow-hidden">
 						<div className="px-6 py-4 border-b flex items-center justify-between">
 							<div>
 								<div className="text-lg font-semibold text-black">Archive Employee</div>

@@ -106,6 +106,7 @@ CREATE TABLE public.admins (
   full_name text,
   is_active boolean DEFAULT true,
   password text NOT NULL DEFAULT 'admin123'::text,
+  profile_image_path text,
   CONSTRAINT admins_pkey PRIMARY KEY (id)
 );
 CREATE TABLE public.app_roles (
@@ -393,6 +394,19 @@ CREATE TABLE public.other_expiration_items (
   updated_at timestamp with time zone NOT NULL DEFAULT now(),
   days_before_expiry integer NOT NULL DEFAULT 30 CHECK (days_before_expiry >= 1 AND days_before_expiry <= 365),
   CONSTRAINT other_expiration_items_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.other_expiration_notification_log (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  other_expiration_item_id bigint NOT NULL,
+  item_name text NOT NULL,
+  expiration_type text NOT NULL,
+  expires_on date NOT NULL,
+  recipient_email text,
+  status text NOT NULL DEFAULT 'QUEUED'::text CHECK (status = ANY (ARRAY['QUEUED'::text, 'SENT'::text, 'FAILED'::text, 'SKIPPED'::text])),
+  error_message text,
+  CONSTRAINT other_expiration_notification_log_pkey PRIMARY KEY (id),
+  CONSTRAINT other_expiration_notification_log_other_item_fkey FOREIGN KEY (other_expiration_item_id) REFERENCES public.other_expiration_items(id) ON DELETE CASCADE
 );
 CREATE TABLE public.paraphernalia (
   id_paraphernalia uuid NOT NULL,

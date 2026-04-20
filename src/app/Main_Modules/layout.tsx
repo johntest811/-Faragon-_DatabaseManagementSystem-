@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import Link from "next/link";
 import Image from "next/image";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "../Client/SupabaseClients";
 import { useAuthRole, useMyModules } from "../Client/useRbac";
 import { useRealtimeRefresh } from "../Client/useRealtimeRefresh";
@@ -30,6 +31,142 @@ import {
 } from "lucide-react";
 
 type LayoutProps = Readonly<{ children: React.ReactNode }>;
+
+type LegacyAdminSession = {
+  id?: string;
+  username?: string;
+  role?: string;
+  full_name?: string | null;
+  profile_image_path?: string | null;
+};
+
+type AdminProfileRow = {
+  id: string;
+  username: string;
+  full_name: string | null;
+  profile_image_path?: string | null;
+};
+
+type RecentActivityRow = {
+  id: string;
+  created_at: string;
+  actor_email: string | null;
+  action: string;
+  page: string | null;
+};
+
+type ExpiringSummaryRow = {
+  applicant_id: string;
+  first_name: string | null;
+  last_name: string | null;
+  record_name?: string | null;
+  recipient_email?: string | null;
+  source_kind?: "licensure" | "other";
+  license_type: string;
+  expires_on: string;
+  days_until_expiry: number;
+  sent_count?: number;
+  last_sent_at?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+type NotificationConfigResponse = {
+  preferences?: {
+    send_to_employees?: boolean | null;
+  } | null;
+};
+
+type AuditGetRecentResponse = {
+  rows?: RecentActivityRow[];
+  count?: number | null;
+  missingTable?: boolean | null;
+};
+
+type ResendLicensureNoticePayload = {
+  applicant_id: string;
+  license_type: string;
+  expires_on: string;
+};
+
+type ExpiringSummaryResponse = {
+  rows?: ExpiringSummaryRow[];
+  count?: number | null;
+  pendingCount?: number | null;
+};
+
+type ElectronLayoutApi = {
+  settings?: {
+    loadNotificationConfig?: () => Promise<NotificationConfigResponse>;
+  };
+  audit?: {
+    logEvent?: (payload: {
+      actor_user_id: string | null;
+      actor_email: string | null;
+      action: string;
+      page: string;
+    }) => Promise<unknown>;
+    getRecent?: (payload: { limit: number; sinceIso?: string }) => Promise<AuditGetRecentResponse>;
+  };
+  notifications?: {
+    getExpiringSummary?: (payload: { limit: number }) => Promise<ExpiringSummaryResponse>;
+    resendLicensureNotice?: (payload: ResendLicensureNoticePayload) => Promise<unknown>;
+  };
+};
+
+const PROFILE_BUCKET = "Profile";
+
+function readLegacyAdminSession(): LegacyAdminSession | null {
+  try {
+    const raw = localStorage.getItem("adminSession");
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as LegacyAdminSession;
+    if (!parsed?.id) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function writeLegacyAdminSessionPatch(patch: Partial<LegacyAdminSession>) {
+  try {
+    const raw = localStorage.getItem("adminSession");
+    if (!raw) return;
+    const parsed = JSON.parse(raw) as LegacyAdminSession;
+    localStorage.setItem("adminSession", JSON.stringify({ ...parsed, ...patch }));
+  } catch {
+    // ignore
+  }
+}
+
+function profileImageUrl(profilePath: string | null, cacheBust?: number) {
+  if (!profilePath) return null;
+  const { data } = supabase.storage.from(PROFILE_BUCKET).getPublicUrl(profilePath);
+  const url = data.publicUrl || null;
+  if (!url) return null;
+  if (!cacheBust) return url;
+  const join = url.includes("?") ? "&" : "?";
+  return `${url}${join}v=${cacheBust}`;
+}
+
+function displayAdminName(fullName: string, username: string) {
+  const n = String(fullName ?? "").trim();
+  if (n) return n;
+  const u = String(username ?? "").trim();
+  if (u) return u;
+  return "Admin";
+}
+
+function initialsFromLabel(value: string) {
+  const parts = String(value ?? "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  if (!parts.length) return "AD";
+  const first = parts[0]?.[0] ?? "A";
+  const second = parts.length > 1 ? parts[1]?.[0] ?? "D" : parts[0]?.[1] ?? "D";
+  return `${first}${second}`.toUpperCase();
+}
 
 function emailBadge(email: string | null) {
   const value = (email ?? "").trim();
@@ -117,18 +254,64 @@ function titleFromPath(pathname: string) {
     .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-export default function MainModulesLayout({ children }: LayoutProps) {
+function getCollapsedFlyoutPosition(button: HTMLElement | null) {
+  if (!button || typeof window === "undefined") return null;
+
+  const rect = button.getBoundingClientRect();
+  const panelWidth = 248;
+  const panelHeight = 320;
+  const safeMargin = 8;
+
+  const top = Math.max(
+    safeMargin,
+    Math.min(rect.top, window.innerHeight - panelHeight - safeMargin)
+  );
+
+  const left = Math.max(
+    safeMargin,
+    Math.min(rect.right + 10, window.innerWidth - panelWidth - safeMargin)
+  );
+
+  return { top, left };
+}
+
+function MainModulesLayoutInner({ children }: LayoutProps) {
   const router = useRouter();
   const pathname = usePathname() ?? "";
+  const searchParams = useSearchParams();
+  const [currentAdmin, setCurrentAdmin] = useState<{
+    id: string | null;
+    username: string;
+    fullName: string;
+    profileImagePath: string | null;
+    profileImageUrl: string | null;
+  }>({
+    id: null,
+    username: "",
+    fullName: "",
+    profileImagePath: null,
+    profileImageUrl: null,
+  });
   const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
-  const [logoutBusy, setLogoutBusy] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [workforceOpen, setWorkforceOpen] = useState(false);
   const [workforceFlyoutOpen, setWorkforceFlyoutOpen] = useState(false);
+  const [workforceFlyoutPosition, setWorkforceFlyoutPosition] = useState<{ top: number; left: number } | null>(null);
   const [logisticsOpen, setLogisticsOpen] = useState(false);
   const [logisticsFlyoutOpen, setLogisticsFlyoutOpen] = useState(false);
+  const [logisticsFlyoutPosition, setLogisticsFlyoutPosition] = useState<{ top: number; left: number } | null>(null);
   const [accessOpen, setAccessOpen] = useState(false);
   const [accessFlyoutOpen, setAccessFlyoutOpen] = useState(false);
+  const [accessFlyoutPosition, setAccessFlyoutPosition] = useState<{ top: number; left: number } | null>(null);
+  const workforceGroupRef = useRef<HTMLDivElement | null>(null);
+  const logisticsGroupRef = useRef<HTMLDivElement | null>(null);
+  const accessGroupRef = useRef<HTMLDivElement | null>(null);
+  const workforceButtonRef = useRef<HTMLButtonElement | null>(null);
+  const logisticsButtonRef = useRef<HTMLButtonElement | null>(null);
+  const accessButtonRef = useRef<HTMLButtonElement | null>(null);
+  const workforceFlyoutRef = useRef<HTMLDivElement | null>(null);
+  const logisticsFlyoutRef = useRef<HTMLDivElement | null>(null);
+  const accessFlyoutRef = useRef<HTMLDivElement | null>(null);
   const [activityOpen, setActivityOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [expiringOpen, setExpiringOpen] = useState(false);
@@ -137,9 +320,7 @@ export default function MainModulesLayout({ children }: LayoutProps) {
   const [activityMissingTable, setActivityMissingTable] = useState(false);
   const [resendingKey, setResendingKey] = useState<string | null>(null);
   const [sendToEmployees, setSendToEmployees] = useState(true);
-  const [recentActivity, setRecentActivity] = useState<
-    Array<{ id: string; created_at: string; actor_email: string | null; action: string; page: string | null }>
-  >([]);
+  const [recentActivity, setRecentActivity] = useState<RecentActivityRow[]>([]);
   const [expiringCount, setExpiringCount] = useState(0);
   const [previewCount, setPreviewCount] = useState(0);
   function badgeText(n: number) {
@@ -200,22 +381,124 @@ export default function MainModulesLayout({ children }: LayoutProps) {
     is_archived: boolean | null;
     is_trashed: boolean | null;
   };
-  const [expiringRows, setExpiringRows] = useState<
-    Array<{
-      applicant_id: string;
-      first_name: string | null;
-      last_name: string | null;
-      license_type: string;
-      expires_on: string;
-      days_until_expiry: number;
-      sent_count?: number;
-      last_sent_at?: string | null;
-    }>
-  >([]);
+  const [expiringRows, setExpiringRows] = useState<ExpiringSummaryRow[]>([]);
   const [expiringEmailByApplicantId, setExpiringEmailByApplicantId] = useState<Record<string, string | null>>({});
   const { role: sessionRole } = useAuthRole();
   const { modules: myModules } = useMyModules();
-  useRealtimeRefresh(["applicants"]);
+  useRealtimeRefresh(["applicants"], { debounceMs: 900 });
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const applyFromLegacySession = () => {
+      const legacy = readLegacyAdminSession();
+      if (!legacy) {
+        setCurrentAdmin({
+          id: null,
+          username: "",
+          fullName: "",
+          profileImagePath: null,
+          profileImageUrl: null,
+        });
+        return null;
+      }
+
+      const nextId = String(legacy.id ?? "").trim() || null;
+      const nextUsername = String(legacy.username ?? "").trim();
+      const nextFullName = String(legacy.full_name ?? "").trim();
+      const nextProfilePath = String(legacy.profile_image_path ?? "").trim() || null;
+
+      setCurrentAdmin({
+        id: nextId,
+        username: nextUsername,
+        fullName: nextFullName,
+        profileImagePath: nextProfilePath,
+        profileImageUrl: profileImageUrl(nextProfilePath),
+      });
+
+      return {
+        id: nextId,
+        username: nextUsername,
+        fullName: nextFullName,
+        profileImagePath: nextProfilePath,
+      };
+    };
+
+    async function loadFromDatabase(adminId: string | null) {
+      if (!adminId) return;
+      try {
+        const wideRes = await supabase
+          .from("admins")
+          .select("id, username, full_name, profile_image_path")
+          .eq("id", adminId)
+          .maybeSingle();
+
+        let row: AdminProfileRow | null = null;
+
+        if (wideRes.error) {
+          const msg = String((wideRes.error as { message?: unknown }).message ?? "").toLowerCase();
+          if (!msg.includes("profile_image_path")) throw wideRes.error;
+
+          const fallbackRes = await supabase
+            .from("admins")
+            .select("id, username, full_name")
+            .eq("id", adminId)
+            .maybeSingle();
+          if (fallbackRes.error) throw fallbackRes.error;
+          row = (fallbackRes.data as AdminProfileRow | null) ?? null;
+        } else {
+          row = (wideRes.data as AdminProfileRow | null) ?? null;
+        }
+
+        if (cancelled || !row) return;
+
+        const nextId = String(row.id ?? "").trim() || null;
+        const nextUsername = String(row.username ?? "").trim();
+        const nextFullName = String(row.full_name ?? "").trim();
+        const nextProfilePath = String(row.profile_image_path ?? "").trim() || null;
+
+        setCurrentAdmin({
+          id: nextId,
+          username: nextUsername,
+          fullName: nextFullName,
+          profileImagePath: nextProfilePath,
+          profileImageUrl: profileImageUrl(nextProfilePath, Date.now()),
+        });
+
+        writeLegacyAdminSessionPatch({
+          id: nextId ?? undefined,
+          username: nextUsername || undefined,
+          full_name: nextFullName || null,
+          profile_image_path: nextProfilePath,
+        });
+      } catch {
+        // ignore
+      }
+    }
+
+    const fromLegacy = applyFromLegacySession();
+    void loadFromDatabase(fromLegacy?.id ?? null);
+
+    const onStorage = (e: StorageEvent) => {
+      if (e.key && e.key !== "adminSession") return;
+      const refreshed = applyFromLegacySession();
+      void loadFromDatabase(refreshed?.id ?? null);
+    };
+
+    const onProfileUpdated = () => {
+      const refreshed = applyFromLegacySession();
+      void loadFromDatabase(refreshed?.id ?? null);
+    };
+
+    window.addEventListener("storage", onStorage);
+    window.addEventListener("admin-profile-updated", onProfileUpdated);
+
+    return () => {
+      cancelled = true;
+      window.removeEventListener("storage", onStorage);
+      window.removeEventListener("admin-profile-updated", onProfileUpdated);
+    };
+  }, []);
 
   useEffect(() => {
     // Next static export + Electron can open routes without trailing slash.
@@ -234,7 +517,7 @@ export default function MainModulesLayout({ children }: LayoutProps) {
     router.replace(`${pathname}/${search}`);
   }, [pathname, router]);
 
-  const api = (globalThis as unknown as { electronAPI?: any }).electronAPI;
+  const api = (globalThis as { electronAPI?: ElectronLayoutApi }).electronAPI;
 
   async function refreshNotificationPrefs() {
     try {
@@ -243,7 +526,7 @@ export default function MainModulesLayout({ children }: LayoutProps) {
         return;
       }
       const cfg = await api.settings.loadNotificationConfig();
-      const pref = (cfg as any)?.preferences;
+      const pref = cfg?.preferences;
       setSendToEmployees(pref?.send_to_employees !== false);
     } catch {
       setSendToEmployees(true);
@@ -381,7 +664,7 @@ export default function MainModulesLayout({ children }: LayoutProps) {
       setActivityCount(Number(res?.count ?? 0));
 
       const recentRes = await api.audit.getRecent({ limit: 8 });
-      setRecentActivity((recentRes?.rows ?? []) as any);
+      setRecentActivity(recentRes?.rows ?? []);
     } catch {
       // ignore
     }
@@ -392,8 +675,8 @@ export default function MainModulesLayout({ children }: LayoutProps) {
     try {
       await refreshNotificationPrefs();
       const res = await api.notifications.getExpiringSummary({ limit: 50 });
-      setExpiringCount(Number((res as any)?.pendingCount ?? res?.count ?? 0));
-      const sortedRows = ([...((res?.rows ?? []) as any[])]).sort((a, b) => {
+      setExpiringCount(Number(res?.pendingCount ?? res?.count ?? 0));
+      const sortedRows = [...(res?.rows ?? [])].sort((a, b) => {
         const toMs = (value: unknown) => {
           const d = new Date(String(value ?? ""));
           const t = d.getTime();
@@ -413,22 +696,39 @@ export default function MainModulesLayout({ children }: LayoutProps) {
 
         return bTime - aTime;
       });
-      setExpiringRows(sortedRows as any);
+      setExpiringRows(sortedRows);
 
       try {
-        const ids = Array.from(new Set((res?.rows ?? []).map((r: any) => String(r.applicant_id || "")).filter(Boolean)));
+        const allRows = (res?.rows ?? []);
+        const map: Record<string, string | null> = {};
+
+        for (const row of allRows) {
+          const key = String(row?.applicant_id || "");
+          if (!key.startsWith("other:")) continue;
+          const recipient = String(row?.recipient_email ?? "").trim();
+          map[key] = recipient || null;
+        }
+
+        const ids = Array.from(
+          new Set(
+            allRows
+              .map((r) => String(r.applicant_id || ""))
+              .filter(Boolean)
+              .filter((id) => !id.startsWith("other:"))
+          )
+        );
+
         if (!ids.length) {
-          setExpiringEmailByApplicantId({});
+          setExpiringEmailByApplicantId(map);
         } else {
           const { data, error } = await supabase
             .from("applicants")
             .select("applicant_id, client_email")
             .in("applicant_id", ids);
           if (error) {
-            setExpiringEmailByApplicantId({});
+            setExpiringEmailByApplicantId(map);
           } else {
-            const map: Record<string, string | null> = {};
-            for (const row of (data as any[]) || []) {
+            for (const row of ((data ?? []) as Array<{ applicant_id: string; client_email: string | null }>)) {
               map[String(row.applicant_id)] = (row.client_email ?? null) as string | null;
             }
             setExpiringEmailByApplicantId(map);
@@ -445,17 +745,11 @@ export default function MainModulesLayout({ children }: LayoutProps) {
   useEffect(() => {
     refreshActivity();
     refreshExpiring();
+    refreshPreview();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api]);
 
-  const fromParam = useMemo(() => {
-    if (typeof window === "undefined") return null;
-    try {
-      return new URLSearchParams(window.location.search).get("from");
-    } catch {
-      return null;
-    }
-  }, [pathname]);
+  const fromParam = searchParams?.get("from") ?? null;
 
   const menuActivePath = useMemo(() => {
     const isDetails = pathname.startsWith("/Main_Modules/Employees/details");
@@ -507,19 +801,16 @@ export default function MainModulesLayout({ children }: LayoutProps) {
       // ignore
     }
 
+    if (typeof window !== "undefined") {
+      window.location.replace("/Login/");
+      return;
+    }
+
     router.replace("/Login/");
   }
 
   function requestLogout() {
-    if (logoutBusy) return;
     setLogoutConfirmOpen(true);
-  }
-
-  function confirmLogout() {
-    if (logoutBusy) return;
-    setLogoutBusy(true);
-    setLogoutConfirmOpen(false);
-    handleLogout();
   }
 
   useEffect(() => {
@@ -548,6 +839,11 @@ export default function MainModulesLayout({ children }: LayoutProps) {
   }, []);
 
   const pageTitle = useMemo(() => titleFromPath(pathname), [pathname]);
+  const adminDisplayName = useMemo(
+    () => displayAdminName(currentAdmin.fullName, currentAdmin.username),
+    [currentAdmin.fullName, currentAdmin.username]
+  );
+  const adminInitials = useMemo(() => initialsFromLabel(adminDisplayName), [adminDisplayName]);
 
   const allowedKeys = useMemo(() => {
     const fromDb = new Set(myModules.map((m) => m.module_key));
@@ -693,6 +989,99 @@ export default function MainModulesLayout({ children }: LayoutProps) {
   }, [collapsed]);
 
   useEffect(() => {
+    // Keep collapsed flyouts predictable after navigation.
+    setWorkforceFlyoutOpen(false);
+    setLogisticsFlyoutOpen(false);
+    setAccessFlyoutOpen(false);
+  }, [pathname]);
+
+  useEffect(() => {
+    if (!collapsed) return;
+
+    function onDocDown(e: PointerEvent) {
+      const target = e.target as Node | null;
+      if (!target) return;
+
+      const clickedWorkforce =
+        (workforceGroupRef.current?.contains(target) ?? false) ||
+        (workforceFlyoutRef.current?.contains(target) ?? false);
+      const clickedLogistics =
+        (logisticsGroupRef.current?.contains(target) ?? false) ||
+        (logisticsFlyoutRef.current?.contains(target) ?? false);
+      const clickedAccess =
+        (accessGroupRef.current?.contains(target) ?? false) ||
+        (accessFlyoutRef.current?.contains(target) ?? false);
+      if (clickedWorkforce || clickedLogistics || clickedAccess) return;
+
+      setWorkforceFlyoutOpen(false);
+      setLogisticsFlyoutOpen(false);
+      setAccessFlyoutOpen(false);
+    }
+
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key !== "Escape") return;
+      setWorkforceFlyoutOpen(false);
+      setLogisticsFlyoutOpen(false);
+      setAccessFlyoutOpen(false);
+    }
+
+    document.addEventListener("pointerdown", onDocDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onDocDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [collapsed]);
+
+  useEffect(() => {
+    if (!collapsed || !workforceFlyoutOpen) return;
+
+    const update = () => {
+      setWorkforceFlyoutPosition(getCollapsedFlyoutPosition(workforceButtonRef.current));
+    };
+
+    update();
+    window.addEventListener("resize", update);
+    window.addEventListener("scroll", update, true);
+    return () => {
+      window.removeEventListener("resize", update);
+      window.removeEventListener("scroll", update, true);
+    };
+  }, [collapsed, workforceFlyoutOpen]);
+
+  useEffect(() => {
+    if (!collapsed || !logisticsFlyoutOpen) return;
+
+    const update = () => {
+      setLogisticsFlyoutPosition(getCollapsedFlyoutPosition(logisticsButtonRef.current));
+    };
+
+    update();
+    window.addEventListener("resize", update);
+    window.addEventListener("scroll", update, true);
+    return () => {
+      window.removeEventListener("resize", update);
+      window.removeEventListener("scroll", update, true);
+    };
+  }, [collapsed, logisticsFlyoutOpen]);
+
+  useEffect(() => {
+    if (!collapsed || !accessFlyoutOpen) return;
+
+    const update = () => {
+      setAccessFlyoutPosition(getCollapsedFlyoutPosition(accessButtonRef.current));
+    };
+
+    update();
+    window.addEventListener("resize", update);
+    window.addEventListener("scroll", update, true);
+    return () => {
+      window.removeEventListener("resize", update);
+      window.removeEventListener("scroll", update, true);
+    };
+  }, [collapsed, accessFlyoutOpen]);
+
+  useEffect(() => {
     if (!collapsed && workforceActive) setWorkforceOpen(true);
   }, [collapsed, workforceActive]);
 
@@ -700,6 +1089,14 @@ export default function MainModulesLayout({ children }: LayoutProps) {
     if (sessionRole === "superadmin") return true;
     return LOGISTICS_ITEMS.some((i) => allowedKeys.has(i.moduleKey));
   }, [LOGISTICS_ITEMS, allowedKeys, sessionRole]);
+
+  const logisticsItemsVisible = useMemo(
+    () =>
+      sessionRole === "superadmin"
+        ? LOGISTICS_ITEMS
+        : LOGISTICS_ITEMS.filter((l) => allowedKeys.has(l.moduleKey)),
+    [LOGISTICS_ITEMS, allowedKeys, sessionRole]
+  );
 
   const logisticsActive = useMemo(() => {
     if (!logisticsAllowed) return false;
@@ -732,12 +1129,14 @@ export default function MainModulesLayout({ children }: LayoutProps) {
 
   function navLinkClass(active: boolean) {
     return `flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 ${
-      active ? "bg-[#FFDA03] text-black" : "text-gray-700 hover:bg-yellow-100"
+      active ? "bg-[#FFDA03] text-black" : "text-black hover:bg-yellow-100"
     }`;
   }
 
+  const canUsePortal = typeof document !== "undefined";
+
   return (
-    <div className="h-screen bg-gray-50 flex overflow-hidden">
+    <div className="h-screen bg-white flex overflow-hidden">
       <aside
         className={`bg-white border-r flex flex-col min-h-0
           transition-[width] duration-500 ease-in-out
@@ -765,12 +1164,19 @@ export default function MainModulesLayout({ children }: LayoutProps) {
               if (!workforceItems.length) return null;
 
               return (
-                <div key="workforce" className="relative mb-1">
+                <div key="workforce" ref={workforceGroupRef} className="relative mb-1">
                   <button
+                    ref={workforceButtonRef}
                     type="button"
                     onClick={() => {
-                      if (collapsed) setWorkforceFlyoutOpen((v) => !v);
-                      else setWorkforceOpen((v) => !v);
+                      if (collapsed) {
+                        setWorkforceFlyoutPosition(getCollapsedFlyoutPosition(workforceButtonRef.current));
+                        setWorkforceFlyoutOpen((v) => !v);
+                        setLogisticsFlyoutOpen(false);
+                        setAccessFlyoutOpen(false);
+                        return;
+                      }
+                      setWorkforceOpen((v) => !v);
                     }}
                     className={navLinkClass(workforceActive)}
                     aria-expanded={collapsed ? workforceFlyoutOpen : workforceOpen}
@@ -788,8 +1194,8 @@ export default function MainModulesLayout({ children }: LayoutProps) {
                     ) : null}
                   </button>
 
-                  {collapsed && workforceFlyoutOpen ? (
-                    <div className="mt-1 space-y-1">
+                  {!collapsed && workforceOpen ? (
+                    <div className="mt-1 ml-4 pl-3 border-l border-gray-200 space-y-1">
                       {workforceItems.map((w) => {
                         const active =
                           menuActivePath === w.href || menuActivePath.startsWith(w.href);
@@ -797,28 +1203,8 @@ export default function MainModulesLayout({ children }: LayoutProps) {
                           <Link
                             key={w.key}
                             href={w.href}
-                            title={w.name}
-                            aria-label={w.name}
-                            className={`flex items-center justify-center px-4 py-3 rounded-xl transition-all duration-200 ${
-                              active
-                                ? "bg-[#FFDA03] text-black"
-                                : "text-gray-700 hover:bg-yellow-100"
-                            }`}
+                            className={navLinkClass(active)}
                           >
-                            <w.icon className="w-5 h-5 shrink-0" />
-                          </Link>
-                        );
-                      })}
-                    </div>
-                  ) : null}
-
-                  {!collapsed && workforceOpen ? (
-                    <div className="mt-1 ml-4 pl-3 border-l border-gray-200 space-y-1">
-                      {workforceItems.map((w) => {
-                        const active =
-                          menuActivePath === w.href || menuActivePath.startsWith(w.href);
-                        return (
-                          <Link key={w.key} href={w.href} className={navLinkClass(active)}>
                             <w.icon className="w-5 h-5 shrink-0" />
                             <span className="text-sm font-medium whitespace-nowrap">{w.name}</span>
                           </Link>
@@ -837,18 +1223,20 @@ export default function MainModulesLayout({ children }: LayoutProps) {
             if (item.key === "logistics") {
               if (!logisticsAllowed) return null;
 
-              const logisticsItemsVisible =
-                sessionRole === "superadmin"
-                  ? LOGISTICS_ITEMS
-                  : LOGISTICS_ITEMS.filter((l) => allowedKeys.has(l.moduleKey));
-
               return (
-                <div key="logistics" className="relative mb-1">
+                <div key="logistics" ref={logisticsGroupRef} className="relative mb-1">
                   <button
+                    ref={logisticsButtonRef}
                     type="button"
                     onClick={() => {
-                      if (collapsed) setLogisticsFlyoutOpen((v) => !v);
-                      else setLogisticsOpen((v) => !v);
+                      if (collapsed) {
+                        setLogisticsFlyoutPosition(getCollapsedFlyoutPosition(logisticsButtonRef.current));
+                        setLogisticsFlyoutOpen((v) => !v);
+                        setWorkforceFlyoutOpen(false);
+                        setAccessFlyoutOpen(false);
+                        return;
+                      }
+                      setLogisticsOpen((v) => !v);
                     }}
                     className={navLinkClass(logisticsActive)}
                     aria-expanded={collapsed ? logisticsFlyoutOpen : logisticsOpen}
@@ -866,35 +1254,16 @@ export default function MainModulesLayout({ children }: LayoutProps) {
                     ) : null}
                   </button>
 
-                  {collapsed && logisticsFlyoutOpen ? (
-                    <div className="mt-1 space-y-1">
+                  {!collapsed && logisticsOpen ? (
+                    <div className="mt-1 ml-4 pl-3 border-l border-gray-200 space-y-1">
                       {logisticsItemsVisible.map((l) => {
                         const active = pathname === l.href || pathname.startsWith(l.href);
                         return (
                           <Link
                             key={l.key}
                             href={l.href}
-                            title={l.name}
-                            aria-label={l.name}
-                            className={`flex items-center justify-center px-4 py-3 rounded-xl transition-all duration-200 ${
-                              active
-                                ? "bg-[#FFDA03] text-black"
-                                : "text-gray-700 hover:bg-yellow-100"
-                            }`}
+                            className={navLinkClass(active)}
                           >
-                            <l.icon className="w-5 h-5 shrink-0" />
-                          </Link>
-                        );
-                      })}
-                    </div>
-                  ) : null}
-
-                  {!collapsed && logisticsOpen ? (
-                    <div className="mt-1 ml-4 pl-3 border-l border-gray-200 space-y-1">
-                      {logisticsItemsVisible.map((l) => {
-                        const active = pathname === l.href || pathname.startsWith(l.href);
-                        return (
-                          <Link key={l.key} href={l.href} className={navLinkClass(active)}>
                             <l.icon className="w-5 h-5 shrink-0" />
                             <span className="text-sm font-medium whitespace-nowrap">{l.name}</span>
                           </Link>
@@ -908,12 +1277,19 @@ export default function MainModulesLayout({ children }: LayoutProps) {
 
             if (item.key === "access" && sessionRole === "superadmin") {
               return (
-                <div key="access" className="relative mb-1">
+                <div key="access" ref={accessGroupRef} className="relative mb-1">
                   <button
+                    ref={accessButtonRef}
                     type="button"
                     onClick={() => {
-                      if (collapsed) setAccessFlyoutOpen((v) => !v);
-                      else setAccessOpen((v) => !v);
+                      if (collapsed) {
+                        setAccessFlyoutPosition(getCollapsedFlyoutPosition(accessButtonRef.current));
+                        setAccessFlyoutOpen((v) => !v);
+                        setWorkforceFlyoutOpen(false);
+                        setLogisticsFlyoutOpen(false);
+                        return;
+                      }
+                      setAccessOpen((v) => !v);
                     }}
                     className={navLinkClass(accessActive)}
                     aria-expanded={collapsed ? accessFlyoutOpen : accessOpen}
@@ -931,35 +1307,16 @@ export default function MainModulesLayout({ children }: LayoutProps) {
                     ) : null}
                   </button>
 
-                  {collapsed && accessFlyoutOpen ? (
-                    <div className="mt-1 space-y-1">
+                  {!collapsed && accessOpen ? (
+                    <div className="mt-1 ml-4 pl-3 border-l border-gray-200 space-y-1">
                       {ACCESS_ITEMS.map((a) => {
                         const active = pathname === a.href || pathname.startsWith(a.href);
                         return (
                           <Link
                             key={a.key}
                             href={a.href}
-                            title={a.name}
-                            aria-label={a.name}
-                            className={`flex items-center justify-center px-4 py-3 rounded-xl transition-all duration-200 ${
-                              active
-                                ? "bg-[#FFDA03] text-black"
-                                : "text-gray-700 hover:bg-yellow-100"
-                            }`}
+                            className={navLinkClass(active)}
                           >
-                            <a.icon className="w-5 h-5 shrink-0" />
-                          </Link>
-                        );
-                      })}
-                    </div>
-                  ) : null}
-
-                  {!collapsed && accessOpen ? (
-                    <div className="mt-1 ml-4 pl-3 border-l border-gray-200 space-y-1">
-                      {ACCESS_ITEMS.map((a) => {
-                        const active = pathname === a.href || pathname.startsWith(a.href);
-                        return (
-                          <Link key={a.key} href={a.href} className={navLinkClass(active)}>
                             <a.icon className="w-5 h-5 shrink-0" />
                             <span className="text-sm font-medium whitespace-nowrap">{a.name}</span>
                           </Link>
@@ -976,7 +1333,11 @@ export default function MainModulesLayout({ children }: LayoutProps) {
               !(item.key === "requests" && pathname.startsWith("/Main_Modules/Requests/Queue/"));
 
             return (
-              <Link key={item.name} href={item.href} className={navLinkClass(active)}>
+              <Link
+                key={item.name}
+                href={item.href}
+                className={navLinkClass(active)}
+              >
                 <item.icon className="w-5 h-5 shrink-0" />
                 <span
                   className={`text-sm font-medium whitespace-nowrap transition-all duration-300 ${
@@ -1017,7 +1378,7 @@ export default function MainModulesLayout({ children }: LayoutProps) {
 
       <div className="flex-1 min-w-0 flex flex-col min-h-0">
         {/* Top Navigation */}
-        <header className="bg-gray-50 sticky top-0 z-40">
+        <header className="bg-white sticky top-0 z-40">
           <div className="px-6 pt-6">
             <div className="flex items-center justify-between gap-4">
               <div>
@@ -1066,7 +1427,7 @@ export default function MainModulesLayout({ children }: LayoutProps) {
                       </div>
 
                       {activityMissingTable ? (
-                        <div className="px-4 py-3 text-sm text-yellow-800 bg-yellow-50">
+                        <div className="px-4 py-3 text-sm text-yellow-800 bg-white">
                           Install the audit table (Supabase_audit_log.sql).
                         </div>
                       ) : null}
@@ -1086,7 +1447,7 @@ export default function MainModulesLayout({ children }: LayoutProps) {
                         )}
                       </div>
 
-                      <div className="px-4 py-3 border-t bg-gray-50">
+                      <div className="px-4 py-3 border-t bg-white">
                         <button
                           type="button"
                           className="text-xs text-gray-700 hover:underline"
@@ -1118,13 +1479,13 @@ export default function MainModulesLayout({ children }: LayoutProps) {
                       refreshExpiring();
                     }}
                     className="relative h-10 w-10 rounded-xl bg-[#FFDA03] text-black flex items-center justify-center"
-                    aria-label="Expiring Licenses"
+                    aria-label="Expiring Licenses and Records"
                   >
                     <CreditCard className="w-5 h-5" />
 						{expiringCount > 0 ? (
 							<span
 								className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-red-600 text-white text-[10px] font-bold leading-[18px] text-center shadow"
-								aria-label={`Expiring licenses count ${expiringCount}`}
+                aria-label={`Expiring licenses and records count ${expiringCount}`}
 							>
 								{badgeText(expiringCount)}
 							</span>
@@ -1134,7 +1495,7 @@ export default function MainModulesLayout({ children }: LayoutProps) {
                   {expiringOpen ? (
                     <div className="absolute right-0 mt-2 w-[420px] max-w-[92vw] rounded-2xl border bg-white shadow-lg overflow-hidden z-50">
                       <div className="px-4 py-3 border-b flex items-center justify-between">
-                        <div className="text-sm font-semibold text-black">Expiring Licenses</div>
+                        <div className="text-sm font-semibold text-black">Expiring Licenses and Records</div>
                         <Link
                           href="/Main_Modules/Settings/"
                           className="text-xs text-blue-600 hover:underline"
@@ -1146,98 +1507,106 @@ export default function MainModulesLayout({ children }: LayoutProps) {
 
                       <div className="max-h-[360px] overflow-auto">
                         {expiringRows.length ? (
-                          expiringRows.map((r, idx) => (
-                            <div
-                              key={`${r.applicant_id}:${r.license_type}:${idx}`}
-                              role="button"
-                              tabIndex={0}
-                              onKeyDown={(ev) => {
-                                if (ev.key !== "Enter" && ev.key !== " ") return;
-                                ev.preventDefault();
-                                router.push(
-                                  `/Main_Modules/Employees/details/?id=${encodeURIComponent(
-                                    r.applicant_id
-                                  )}&from=${encodeURIComponent("/Main_Modules/Employees/")}`
-                                );
-                                setExpiringOpen(false);
-                              }}
-                              onClick={() => {
-                                router.push(
-                                  `/Main_Modules/Employees/details/?id=${encodeURIComponent(
-                                    r.applicant_id
-                                  )}&from=${encodeURIComponent("/Main_Modules/Employees/")}`
-                                );
-                                setExpiringOpen(false);
-                              }}
-                              className="px-4 py-3 border-b last:border-b-0 cursor-pointer hover:bg-gray-50"
-                              title="Open employee details"
-                            >
-                              <div className="flex items-center justify-between gap-3">
-                                <div className="text-sm font-medium text-black">{r.license_type}</div>
-                                <div className="text-xs text-gray-600 whitespace-nowrap">{r.expires_on}</div>
-                              </div>
-                              <div className="text-xs text-gray-600">
-                                {(r.first_name || r.last_name)
-                                  ? `${r.first_name ?? ""} ${r.last_name ?? ""}`.trim()
-                                  : r.applicant_id}
-                              </div>
-                              <div className="mt-1 flex items-center justify-between gap-3">
-                                <div className="text-[11px] text-gray-500">Days: {r.days_until_expiry}</div>
-                                <div className="flex items-center gap-2">
-                                  {(() => {
-                                    const badge = emailBadge(expiringEmailByApplicantId[String(r.applicant_id)] ?? null);
-                                    return (
-                                      <span className={`text-[11px] px-2 py-0.5 rounded-full border ${badge.className}`}>
-                                        {badge.label}
-                                      </span>
-                                    );
-                                  })()}
-                                  <span
-                                    className={
-                                      (Number(r.sent_count ?? 0) > 0)
-                                        ? "text-[11px] px-2 py-0.5 rounded-full bg-green-50 text-green-700 border border-green-200"
-                                        : "text-[11px] px-2 py-0.5 rounded-full bg-gray-50 text-gray-700 border"
-                                    }
-                                  >
-                                    {(Number(r.sent_count ?? 0) > 0) ? `Sent ${r.sent_count}x` : "Not sent"}
-                                  </span>
+                          expiringRows.map((r, idx) => {
+                            const isOtherRow = r.source_kind === "other" || String(r.applicant_id).startsWith("other:");
+                            const canOpenDetails = !isOtherRow && Boolean(r.applicant_id);
+                            const displayName = isOtherRow
+                              ? (String(r.record_name ?? "").trim() || "Other Record")
+                              : ((r.first_name || r.last_name)
+                                ? `${r.first_name ?? ""} ${r.last_name ?? ""}`.trim()
+                                : r.applicant_id);
 
-                                  {sendToEmployees ? (
-                                    <button
-                                      type="button"
-                                      disabled={!api?.notifications?.resendLicensureNotice || resendingKey === `${r.applicant_id}:${r.license_type}:${r.expires_on}`}
-                                      className="text-[11px] px-2 py-0.5 rounded-full border bg-white text-gray-800 hover:bg-gray-50 disabled:opacity-50"
-                                      onClick={async (ev) => {
-                                        ev.stopPropagation();
-                                        const k = `${r.applicant_id}:${r.license_type}:${r.expires_on}`;
-                                        if (!api?.notifications?.resendLicensureNotice) return;
-                                        try {
-                                          setResendingKey(k);
-                                          await api.notifications.resendLicensureNotice({
-                                            applicant_id: r.applicant_id,
-                                            license_type: r.license_type,
-                                            expires_on: r.expires_on,
-                                          });
-                                          await refreshExpiring();
-                                        } catch {
-                                          // ignore (Electron main logs failures)
-                                        } finally {
-                                          setResendingKey(null);
-                                        }
-                                      }}
-                                    >
-                                      Resend
-                                    </button>
-                                  ) : null}
+                            return (
+                              <div
+                                key={`${r.applicant_id}:${r.license_type}:${idx}`}
+                                role={canOpenDetails ? "button" : undefined}
+                                tabIndex={canOpenDetails ? 0 : -1}
+                                onKeyDown={(ev) => {
+                                  if (!canOpenDetails) return;
+                                  if (ev.key !== "Enter" && ev.key !== " ") return;
+                                  ev.preventDefault();
+                                  router.push(
+                                    `/Main_Modules/Employees/details/?id=${encodeURIComponent(
+                                      r.applicant_id
+                                    )}&from=${encodeURIComponent("/Main_Modules/Employees/")}`
+                                  );
+                                  setExpiringOpen(false);
+                                }}
+                                onClick={() => {
+                                  if (!canOpenDetails) return;
+                                  router.push(
+                                    `/Main_Modules/Employees/details/?id=${encodeURIComponent(
+                                      r.applicant_id
+                                    )}&from=${encodeURIComponent("/Main_Modules/Employees/")}`
+                                  );
+                                  setExpiringOpen(false);
+                                }}
+                                className={`px-4 py-3 border-b last:border-b-0 ${canOpenDetails ? "cursor-pointer hover:bg-white" : "cursor-default"}`}
+                                title={canOpenDetails ? "Open employee details" : "Other expiration record"}
+                              >
+                                <div className="flex items-center justify-between gap-3">
+                                  <div className="text-sm font-medium text-black">{r.license_type}</div>
+                                  <div className="text-xs text-gray-600 whitespace-nowrap">{r.expires_on}</div>
                                 </div>
+                                <div className="text-xs text-gray-600">{displayName}</div>
+                                <div className="mt-1 flex items-center justify-between gap-3">
+                                  <div className="text-[11px] text-gray-500">Days: {r.days_until_expiry}</div>
+                                  <div className="flex items-center gap-2">
+                                    {(() => {
+                                      const badge = emailBadge(expiringEmailByApplicantId[String(r.applicant_id)] ?? null);
+                                      return (
+                                        <span className={`text-[11px] px-2 py-0.5 rounded-full border ${badge.className}`}>
+                                          {badge.label}
+                                        </span>
+                                      );
+                                    })()}
+                                    <span
+                                      className={
+                                        (Number(r.sent_count ?? 0) > 0)
+                                          ? "text-[11px] px-2 py-0.5 rounded-full bg-green-50 text-green-700 border border-green-200"
+                                          : "text-[11px] px-2 py-0.5 rounded-full bg-white text-gray-700 border"
+                                      }
+                                    >
+                                      {(Number(r.sent_count ?? 0) > 0) ? `Sent ${r.sent_count}x` : "Not sent"}
+                                    </span>
+
+                                    {sendToEmployees && !isOtherRow ? (
+                                      <button
+                                        type="button"
+                                        disabled={!api?.notifications?.resendLicensureNotice || resendingKey === `${r.applicant_id}:${r.license_type}:${r.expires_on}`}
+                                        className="text-[11px] px-2 py-0.5 rounded-full border bg-white text-gray-800 hover:bg-white disabled:opacity-50"
+                                        onClick={async (ev) => {
+                                          ev.stopPropagation();
+                                          const k = `${r.applicant_id}:${r.license_type}:${r.expires_on}`;
+                                          if (!api?.notifications?.resendLicensureNotice) return;
+                                          try {
+                                            setResendingKey(k);
+                                            await api.notifications.resendLicensureNotice({
+                                              applicant_id: r.applicant_id,
+                                              license_type: r.license_type,
+                                              expires_on: r.expires_on,
+                                            });
+                                            await refreshExpiring();
+                                          } catch {
+                                            // ignore (Electron main logs failures)
+                                          } finally {
+                                            setResendingKey(null);
+                                          }
+                                        }}
+                                      >
+                                        Resend
+                                      </button>
+                                    ) : null}
+                                  </div>
+                                </div>
+                                {r.last_sent_at ? (
+                                  <div className="text-[11px] text-gray-400 mt-1">Last sent: {new Date(r.last_sent_at).toLocaleString()}</div>
+                                ) : null}
                               </div>
-                              {r.last_sent_at ? (
-                                <div className="text-[11px] text-gray-400 mt-1">Last sent: {new Date(r.last_sent_at).toLocaleString()}</div>
-                              ) : null}
-                            </div>
-                          ))
+                            );
+                          })
                         ) : (
-                          <div className="px-4 py-6 text-sm text-gray-500">No expiring licenses found.</div>
+                          <div className="px-4 py-6 text-sm text-gray-500">No expiring licenses or records found.</div>
                         )}
                       </div>
                     </div>
@@ -1301,7 +1670,7 @@ export default function MainModulesLayout({ children }: LayoutProps) {
                                 );
                                 setPreviewOpen(false);
                               }}
-                              className="px-4 py-3 border-b last:border-b-0 cursor-pointer hover:bg-gray-50"
+                              className="px-4 py-3 border-b last:border-b-0 cursor-pointer hover:bg-white"
                               title="Open employee details"
                             >
                               <div className="flex items-center justify-between gap-3">
@@ -1361,18 +1730,18 @@ export default function MainModulesLayout({ children }: LayoutProps) {
                     <div className="absolute right-0 mt-2 w-[340px] max-w-[90vw] rounded-2xl border bg-white shadow-lg overflow-hidden z-50">
                       <div className="px-4 py-3 border-b">
                         <div className="text-sm font-semibold text-black">Admin Alert Center</div>
-                        <div className="text-xs text-gray-500">Quick actions for pending admin work.</div>
+                        <div className="text-xs text-black">Quick actions for pending admin work.</div>
                       </div>
 
                       <div className="p-4 space-y-3">
-                        <div className="rounded-xl border bg-gray-50 px-3 py-2 flex items-center justify-between">
+                        <div className="rounded-xl border bg-white border-[#FFDA03] px-3 py-2 flex items-center justify-between">
                           <div>
-                            <div className="text-xs text-gray-500">Unread Activity</div>
+                            <div className="text-xs text-black">Unread Activity</div>
                             <div className="text-sm font-semibold text-black">{activityCount}</div>
                           </div>
                           <button
                             type="button"
-                            className="text-xs px-3 py-1.5 rounded-lg border bg-white hover:bg-gray-50"
+                            className="text-xs px-3 py-1.5 rounded-lg border bg-[#FFDA03] text-black hover:bg-[#EFCB00]"
                             onClick={() => {
                               setAdminAlertOpen(false);
                               router.push("/Main_Modules/Audit/");
@@ -1382,14 +1751,14 @@ export default function MainModulesLayout({ children }: LayoutProps) {
                           </button>
                         </div>
 
-                        <div className="rounded-xl border bg-gray-50 px-3 py-2 flex items-center justify-between">
+                        <div className="rounded-xl border bg-white border-[#FFDA03] px-3 py-2 flex items-center justify-between">
                           <div>
-                            <div className="text-xs text-gray-500">Pending License Notices</div>
+                            <div className="text-xs text-black">Pending License Notices</div>
                             <div className="text-sm font-semibold text-black">{expiringCount}</div>
                           </div>
                           <button
                             type="button"
-                            className="text-xs px-3 py-1.5 rounded-lg border bg-white hover:bg-gray-50"
+                            className="text-xs px-3 py-1.5 rounded-lg border bg-[#FFDA03] text-black hover:bg-[#EFCB00]"
                             onClick={() => {
                               setAdminAlertOpen(false);
                               router.push("/Main_Modules/Settings/");
@@ -1402,7 +1771,7 @@ export default function MainModulesLayout({ children }: LayoutProps) {
                         <div className="grid grid-cols-2 gap-2">
                           <button
                             type="button"
-                            className="text-xs px-3 py-2 rounded-lg border bg-white hover:bg-gray-50"
+                            className="text-xs px-3 py-2 rounded-lg border bg-[#FFDA03] text-black hover:bg-[#EFCB00]"
                             onClick={() => {
                               setAdminAlertOpen(false);
                               router.push("/Main_Modules/Inventory/");
@@ -1416,8 +1785,23 @@ export default function MainModulesLayout({ children }: LayoutProps) {
                   ) : null}
                 </div>
 
-                <div className="h-10 w-10 rounded-xl overflow-hidden bg-gray-200 flex items-center justify-center">
-                  <span className="text-xs font-semibold text-gray-600">AD</span>
+                <div className="min-w-0 rounded-xl border border-gray-200 bg-white px-2 py-1.5 flex items-center gap-2">
+                  <div className="h-10 w-10 rounded-xl overflow-hidden bg-gray-200 flex items-center justify-center shrink-0">
+                    {currentAdmin.profileImageUrl ? (
+                      <div
+                        role="img"
+                        aria-label={adminDisplayName}
+                        className="h-full w-full bg-cover bg-center"
+                        style={{ backgroundImage: `url("${currentAdmin.profileImageUrl}")` }}
+                      />
+                    ) : (
+                      <span className="text-xs font-semibold text-gray-600">{adminInitials}</span>
+                    )}
+                  </div>
+                  <div className="hidden sm:block min-w-0">
+                    <div className="text-sm font-semibold text-gray-900 truncate">{adminDisplayName}</div>
+                    <div className="text-[11px] text-gray-500 truncate">{currentAdmin.username || (sessionRole ?? "Admin")}</div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -1438,23 +1822,129 @@ export default function MainModulesLayout({ children }: LayoutProps) {
               <button
                 type="button"
                 onClick={() => setLogoutConfirmOpen(false)}
-                disabled={logoutBusy}
-                className="px-4 py-2 rounded-xl border text-sm text-black hover:bg-gray-50 disabled:opacity-60"
+                className="px-4 py-2 rounded-xl border text-sm text-black hover:bg-white"
               >
                 Cancel
               </button>
               <button
                 type="button"
-                onClick={confirmLogout}
-                disabled={logoutBusy}
-                className="px-4 py-2 rounded-xl text-sm font-medium text-white bg-red-600 hover:bg-red-700 disabled:opacity-60"
+                onClick={handleLogout}
+                className="px-4 py-2 rounded-xl text-sm font-medium text-white bg-red-600 hover:bg-red-700"
               >
-                {logoutBusy ? "Logging out..." : "Log Out"}
+                Log Out
               </button>
             </div>
           </div>
         </div>
       ) : null}
+
+      {collapsed && workforceFlyoutOpen && workforceFlyoutPosition && canUsePortal
+        ? createPortal(
+            <div
+              ref={workforceFlyoutRef}
+              className="fixed z-[85] w-60 rounded-2xl border border-gray-200 bg-white p-2 shadow-2xl"
+              style={{ top: workforceFlyoutPosition.top, left: workforceFlyoutPosition.left }}
+            >
+              <div className="px-2 py-1 text-xs font-semibold uppercase tracking-wide text-gray-500">Workforce</div>
+              <div className="mt-1 space-y-1 max-h-[62vh] overflow-y-auto">
+                {workforceItems.map((w) => {
+                  const active = menuActivePath === w.href || menuActivePath.startsWith(w.href);
+                  return (
+                    <Link
+                      key={w.key}
+                      href={w.href}
+                      title={w.name}
+                      aria-label={w.name}
+                      onClick={() => setWorkforceFlyoutOpen(false)}
+                      className={`flex items-center gap-2 px-3 py-2 rounded-xl transition-all duration-200 ${
+                        active ? "bg-[#FFDA03] text-black" : "text-gray-700 hover:bg-yellow-100"
+                      }`}
+                    >
+                      <w.icon className="w-4 h-4 shrink-0" />
+                      <span className="text-sm font-medium whitespace-nowrap">{w.name}</span>
+                    </Link>
+                  );
+                })}
+              </div>
+            </div>,
+            document.body
+          )
+        : null}
+
+      {collapsed && logisticsFlyoutOpen && logisticsFlyoutPosition && canUsePortal
+        ? createPortal(
+            <div
+              ref={logisticsFlyoutRef}
+              className="fixed z-[85] w-60 rounded-2xl border border-gray-200 bg-white p-2 shadow-2xl"
+              style={{ top: logisticsFlyoutPosition.top, left: logisticsFlyoutPosition.left }}
+            >
+              <div className="px-2 py-1 text-xs font-semibold uppercase tracking-wide text-gray-500">Logistics</div>
+              <div className="mt-1 space-y-1 max-h-[62vh] overflow-y-auto">
+                {logisticsItemsVisible.map((l) => {
+                  const active = pathname === l.href || pathname.startsWith(l.href);
+                  return (
+                    <Link
+                      key={l.key}
+                      href={l.href}
+                      title={l.name}
+                      aria-label={l.name}
+                      onClick={() => setLogisticsFlyoutOpen(false)}
+                      className={`flex items-center gap-2 px-3 py-2 rounded-xl transition-all duration-200 ${
+                        active ? "bg-[#FFDA03] text-black" : "text-gray-700 hover:bg-yellow-100"
+                      }`}
+                    >
+                      <l.icon className="w-4 h-4 shrink-0" />
+                      <span className="text-sm font-medium whitespace-nowrap">{l.name}</span>
+                    </Link>
+                  );
+                })}
+              </div>
+            </div>,
+            document.body
+          )
+        : null}
+
+      {sessionRole === "superadmin" && collapsed && accessFlyoutOpen && accessFlyoutPosition && canUsePortal
+        ? createPortal(
+            <div
+              ref={accessFlyoutRef}
+              className="fixed z-[85] w-60 rounded-2xl border border-gray-200 bg-white p-2 shadow-2xl"
+              style={{ top: accessFlyoutPosition.top, left: accessFlyoutPosition.left }}
+            >
+              <div className="px-2 py-1 text-xs font-semibold uppercase tracking-wide text-gray-500">Admin Accounts</div>
+              <div className="mt-1 space-y-1 max-h-[62vh] overflow-y-auto">
+                {ACCESS_ITEMS.map((a) => {
+                  const active = pathname === a.href || pathname.startsWith(a.href);
+                  return (
+                    <Link
+                      key={a.key}
+                      href={a.href}
+                      title={a.name}
+                      aria-label={a.name}
+                      onClick={() => setAccessFlyoutOpen(false)}
+                      className={`flex items-center gap-2 px-3 py-2 rounded-xl transition-all duration-200 ${
+                        active ? "bg-[#FFDA03] text-black" : "text-gray-700 hover:bg-yellow-100"
+                      }`}
+                    >
+                      <a.icon className="w-4 h-4 shrink-0" />
+                      <span className="text-sm font-medium whitespace-nowrap">{a.name}</span>
+                    </Link>
+                  );
+                })}
+              </div>
+            </div>,
+            document.body
+          )
+        : null}
     </div>
   );
 }
+
+export default function MainModulesLayout({ children }: LayoutProps) {
+  return (
+    <Suspense fallback={<section className="min-h-screen w-full bg-[#F5F6F8]" />}>
+      <MainModulesLayoutInner>{children}</MainModulesLayoutInner>
+    </Suspense>
+  );
+}
+

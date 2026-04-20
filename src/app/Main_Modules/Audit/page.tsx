@@ -1,8 +1,22 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Activity, AlertTriangle, ClipboardList, RefreshCw } from "lucide-react";
+import { AlertTriangle, ClipboardList, RefreshCw } from "lucide-react";
 import LoadingCircle from "../../Components/LoadingCircle";
+
+type AuditPageResponse = {
+  rows?: AuditRow[];
+  count?: number | null;
+  missingTable?: boolean | null;
+  unavailable?: boolean | null;
+  error?: string | null;
+};
+
+type ElectronApi = {
+  audit?: {
+    getPage?: (payload: { page: number; pageSize: number }) => Promise<AuditPageResponse>;
+  };
+};
 
 type AuditRow = {
   id: string;
@@ -29,8 +43,15 @@ function formatWhen(iso: string) {
   }
 }
 
+function errorMessage(e: unknown) {
+  if (e && typeof e === "object" && "message" in e) {
+    return safeText((e as { message?: unknown }).message) || "Failed to load audit log";
+  }
+  return safeText(e) || "Failed to load audit log";
+}
+
 export default function AuditPage() {
-  const api = (globalThis as unknown as { electronAPI?: any }).electronAPI;
+  const api = (globalThis as { electronAPI?: ElectronApi }).electronAPI;
 
   const [rows, setRows] = useState<AuditRow[]>([]);
   const [count, setCount] = useState(0);
@@ -64,12 +85,16 @@ export default function AuditPage() {
         const res = await api.audit.getPage({ page, pageSize });
         if (cancelled) return;
 
+        if (Boolean(res?.unavailable)) {
+          setError(safeText(res?.error) || "Supabase is temporarily unreachable. Try again shortly.");
+        }
+
         setMissingTable(Boolean(res?.missingTable));
         setRows((res?.rows ?? []) as AuditRow[]);
         setCount(Number(res?.count ?? 0));
-      } catch (e: any) {
+      } catch (e: unknown) {
         if (cancelled) return;
-        setError(safeText(e?.message || e) || "Failed to load audit log");
+        setError(errorMessage(e));
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -100,7 +125,7 @@ export default function AuditPage() {
     if (key.includes("DELETE") || key.includes("TRASH")) return "bg-red-50 text-red-700 border-red-200";
     if (key.includes("CREATE") || key.includes("INSERT")) return "bg-emerald-50 text-emerald-700 border-emerald-200";
     if (key.includes("UPDATE") || key.includes("EDIT")) return "bg-blue-50 text-blue-700 border-blue-200";
-    return "bg-gray-50 text-gray-700 border-gray-200";
+    return "bg-white text-gray-700 border-gray-200";
   }
 
   async function refreshCurrentPage() {
@@ -114,19 +139,22 @@ export default function AuditPage() {
         return;
       }
       const res = await api.audit.getPage({ page, pageSize });
+      if (Boolean(res?.unavailable)) {
+        setError(safeText(res?.error) || "Supabase is temporarily unreachable. Try again shortly.");
+      }
       setMissingTable(Boolean(res?.missingTable));
       setRows((res?.rows ?? []) as AuditRow[]);
       setCount(Number(res?.count ?? 0));
-    } catch (e: any) {
-      setError(safeText(e?.message || e) || "Failed to load audit log");
+    } catch (e: unknown) {
+      setError(errorMessage(e));
     } finally {
       setLoading(false);
     }
   }
 
   return (
-    <section className="space-y-4">
-      <div className="bg-white rounded-3xl border p-6">
+    <section className="space-y-4 animate-slide-up">
+      <div className="glass-panel rounded-3xl border-none p-6">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <div>
             <div className="text-xl font-semibold text-black">Audit Log</div>
@@ -138,7 +166,7 @@ export default function AuditPage() {
           <button
             type="button"
             onClick={refreshCurrentPage}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border bg-white text-sm text-gray-800 hover:bg-gray-50"
+            className="animated-btn inline-flex items-center gap-2 px-4 py-2 rounded-xl border bg-white text-sm text-gray-800 hover:bg-white"
           >
             <RefreshCw className="w-4 h-4" />
             Refresh
@@ -146,15 +174,15 @@ export default function AuditPage() {
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-5">
-          <div className="rounded-2xl border bg-gray-50 p-4">
+          <div className="glass-panel animate-scale-in rounded-2xl border-none p-4">
             <div className="text-xs text-gray-500">Total Events</div>
             <div className="mt-1 text-2xl font-semibold text-black">{count}</div>
           </div>
-          <div className="rounded-2xl border bg-gray-50 p-4">
+          <div className="glass-panel animate-scale-in rounded-2xl border-none p-4">
             <div className="text-xs text-gray-500">Actors (This Page)</div>
             <div className="mt-1 text-2xl font-semibold text-black">{uniqueActors}</div>
           </div>
-          <div className="rounded-2xl border bg-gray-50 p-4">
+          <div className="glass-panel animate-scale-in rounded-2xl border-none p-4">
             <div className="text-xs text-gray-500">Most Recent Event</div>
             <div className="mt-1 text-sm font-medium text-black break-words">{latestWhen}</div>
           </div>
@@ -162,7 +190,7 @@ export default function AuditPage() {
       </div>
 
       {missingTable ? (
-        <div className="rounded-2xl border bg-yellow-50 px-4 py-3 text-sm text-yellow-800 flex items-start gap-2">
+        <div className="rounded-2xl border bg-white px-4 py-3 text-sm text-yellow-800 flex items-start gap-2">
           <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
           <div>
             Audit table is not installed yet. Run the SQL in
@@ -178,9 +206,9 @@ export default function AuditPage() {
         </div>
       ) : null}
 
-      <div className="relative overflow-auto max-h-[70vh] rounded-2xl border bg-white">
+      <div className="relative overflow-auto max-h-[70vh] glass-panel rounded-2xl border-none animate-slide-up">
         <table className="w-full text-sm text-black">
-          <thead className="bg-gray-50 border-b sticky top-0 z-10">
+          <thead className="bg-white border-b border-gray-100 sticky top-0 z-10">
             <tr>
               <th className="px-4 py-3 text-left">When</th>
               <th className="px-4 py-3 text-left">Actor</th>
@@ -200,7 +228,7 @@ export default function AuditPage() {
               </tr>
             ) : rows.length ? (
               rows.map((r) => (
-                <tr key={r.id} className="border-b hover:bg-gray-50 align-top">
+                <tr key={r.id} className="animated-row border-b border-gray-100 align-top">
                   <td className="px-4 py-3 whitespace-nowrap">
                     {formatWhen(r.created_at)}
                   </td>
@@ -219,13 +247,13 @@ export default function AuditPage() {
                       <div className="space-y-2">
                         <button
                           type="button"
-                          className="text-xs px-2 py-1 rounded-lg border bg-white hover:bg-gray-50"
+                          className="animated-btn text-xs px-2 py-1 rounded-lg border bg-white hover:bg-white"
                           onClick={() => setExpandedId((prev) => (prev === r.id ? null : r.id))}
                         >
                           {expandedId === r.id ? "Hide details" : "Show details"}
                         </button>
                         {expandedId === r.id ? (
-                          <pre className="whitespace-pre-wrap break-words text-xs bg-gray-50 border rounded-xl px-3 py-2 overflow-auto">
+                          <pre className="whitespace-pre-wrap break-words text-xs bg-white border-none rounded-xl px-3 py-2 overflow-auto">
                             {JSON.stringify(r.details, null, 2)}
                           </pre>
                         ) : null}
@@ -258,14 +286,14 @@ export default function AuditPage() {
           <button
             disabled={page <= 1}
             onClick={() => setPage((p) => Math.max(1, p - 1))}
-            className="px-3 py-1.5 border rounded-lg disabled:opacity-40"
+            className="animated-btn px-3 py-1.5 border bg-white rounded-lg disabled:opacity-40 hover:bg-white"
           >
             Prev
           </button>
           <button
             disabled={page >= totalPages}
             onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-            className="px-3 py-1.5 border rounded-lg disabled:opacity-40"
+            className="animated-btn px-3 py-1.5 border bg-white rounded-lg disabled:opacity-40 hover:bg-white"
           >
             Next
           </button>
@@ -274,3 +302,4 @@ export default function AuditPage() {
     </section>
   );
 }
+

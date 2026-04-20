@@ -2,7 +2,7 @@
 
 import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { Download, Plus, FileDown, FileSpreadsheet, FileText, Search, Trash2, Upload } from "lucide-react";
+import { Download, FileDown, FileText, Search, Trash2, Upload } from "lucide-react";
 import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -209,7 +209,7 @@ function toDatetimeLocalValue(v: string | null) {
 
 export default function ClientsPage() {
   const { role } = useAuthRole();
-  const { allowedColumns, restricted, loading: loadingColumnAccess } = useMyColumnAccess("client");
+  const { allowedColumns, restricted } = useMyColumnAccess("client");
   const toast = useToast();
   const lastToastRef = useRef<{ error: string; save: string }>({ error: "", save: "" });
 
@@ -257,7 +257,7 @@ export default function ClientsPage() {
   const [editorMode, setEditorMode] = useState<"create" | "edit">("create");
   const [editingContractId, setEditingContractId] = useState<string | null>(null);
   const [detailsRow, setDetailsRow] = useState<ClientRow | null>(null);
-  const [importing, setImporting] = useState(false);
+  const [, setImporting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [importSummary, setImportSummary] = useState<ImportSummaryData | null>(null);
   const [importSummaryOpen, setImportSummaryOpen] = useState(false);
@@ -266,8 +266,6 @@ export default function ClientsPage() {
   const [exportModalOpen, setExportModalOpen] = useState(false);
   const [templateModalOpen, setTemplateModalOpen] = useState(false);
   const [importModalOpen, setImportModalOpen] = useState(false);
-  const [exportOpen, setExportOpen] = useState(false);
-const [templateOpen, setTemplateOpen] = useState(false);
 
   const pageSize = 10;
 
@@ -465,13 +463,7 @@ const [templateOpen, setTemplateOpen] = useState(false);
     }
   }
 
-  function handleImportChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    void handleImportFile(file);
-  }
-
-  const parseClientImportRow = useCallback((row: Record<string, unknown>, idx: number) => {
+  const parseClientImportRow = useCallback((row: Record<string, unknown>) => {
     const payload = {
       contract_no: toNullableText(findValueByAliases(row, ["contract_no", "contract number", "contractno", "contract"])),
       contract_no_date: toNullableText(findValueByAliases(row, ["contract_no_date", "contract no date", "contract date"])),
@@ -508,7 +500,7 @@ const [templateOpen, setTemplateOpen] = useState(false);
 
     const importedPayloads = rawRows
       .map((row, idx) => {
-        const { payload, error } = parseClientImportRow(row, idx);
+        const { payload, error } = parseClientImportRow(row);
         if (!payload) {
           skipped += 1;
           if (error) rowErrors.push(`Row ${idx + 2}: ${error}`);
@@ -1235,7 +1227,7 @@ const [templateOpen, setTemplateOpen] = useState(false);
         </div>
       </div>
 
-      <div className="rounded-2xl border bg-white p-4 space-y-3">
+      <div className="glass-panel animate-slide-up rounded-2xl p-4 space-y-3">
         <div className="font-semibold text-black">Create Contracts</div>
         <div className="text-sm text-gray-500">Create a connected contract record with full fields.</div>
         <div className="flex flex-wrap gap-2">
@@ -1250,7 +1242,7 @@ const [templateOpen, setTemplateOpen] = useState(false);
                 setApplicantSearch("");
                 setEditorOpen(true);
               }}
-              className="rounded-xl bg-[#FFDA03] px-4 py-2 text-sm font-semibold text-black"
+              className="animated-btn rounded-xl bg-[#FFDA03] px-4 py-2 text-sm font-semibold text-black"
             >
               Create Contract
             </button>
@@ -1266,7 +1258,7 @@ const [templateOpen, setTemplateOpen] = useState(false);
   <button
     type="button"
     onClick={() => setImportModalOpen(true)}
-    className="flex items-center gap-3 rounded-xl border px-4 py-2 text-sm font-medium text-black hover:bg-gray-50"
+    className="animated-btn flex items-center gap-3 rounded-xl border bg-white px-4 py-2 text-sm font-medium text-black hover:bg-white"
   >
     <Upload className="w-4 h-4" />
     Import
@@ -1282,7 +1274,7 @@ const [templateOpen, setTemplateOpen] = useState(false);
   <button
     type="button"
     onClick={() => setExportModalOpen(true)}
-    className="flex items-center gap-3 rounded-xl border px-4 py-2 text-sm font-medium text-black hover:bg-gray-50"
+    className="animated-btn flex items-center gap-3 rounded-xl border bg-white px-4 py-2 text-sm font-medium text-black hover:bg-white"
   >
     <FileText className="w-4 h-4" />
     Export
@@ -1293,7 +1285,7 @@ const [templateOpen, setTemplateOpen] = useState(false);
   <button
     type="button"
     onClick={() => setTemplateModalOpen(true)}
-    className="flex items-center gap-3 rounded-xl border px-4 py-2 text-sm font-medium text-black hover:bg-gray-50"
+    className="animated-btn flex items-center gap-3 rounded-xl border bg-white px-4 py-2 text-sm font-medium text-black hover:bg-white"
   >
     <Download className="w-4 h-4" />
     Download Templates
@@ -1359,7 +1351,7 @@ const [templateOpen, setTemplateOpen] = useState(false);
       <button
         type="button"
         onClick={exportClientPdf}
-        className="inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium text-black hover:bg-gray-50"
+        className="inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium text-black hover:bg-white"
       >
         <FileText className="w-4 h-4" />
         Export PDF
@@ -1368,7 +1360,7 @@ const [templateOpen, setTemplateOpen] = useState(false);
       <button
         type="button"
         onClick={exportClientXlsx}
-        className="inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium text-black hover:bg-gray-50"
+        className="inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium text-black hover:bg-white"
       >
         <FileDown className="w-4 h-4" />
         Export XLSX
@@ -1377,7 +1369,7 @@ const [templateOpen, setTemplateOpen] = useState(false);
       <button
         type="button"
         onClick={exportClientCsv}
-        className="inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium text-black hover:bg-gray-50"
+        className="inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium text-black hover:bg-white"
       >
         <FileDown className="w-4 h-4" />
         Export CSV
@@ -1561,7 +1553,7 @@ const [templateOpen, setTemplateOpen] = useState(false);
         </form>
       </ModalShell>
 
-      <div className="relative overflow-x-auto rounded-2xl border bg-white">
+      <div className="relative overflow-x-auto rounded-2xl glass-panel animate-slide-up">
         <table className="w-full text-sm text-black border-separate border-spacing-y-2">
           <thead className="sticky top-0 z-10">
             <tr className="bg-[#FFDA03]">
@@ -1602,7 +1594,7 @@ const [templateOpen, setTemplateOpen] = useState(false);
                 <tr
                   key={row.contract_id}
                   onClick={() => void openDetails(row)}
-                  className="bg-white shadow-sm transition hover:shadow-md cursor-pointer"
+                  className="animated-row border-b border-gray-100 transition hover:shadow-md cursor-pointer"
                 >
                   <td className="px-4 py-3 rounded-l-xl">{fmt(row.contract_no)}</td>
                   <td className="px-4 py-3">{fmt(row.contract_no_date)}</td>
@@ -1665,7 +1657,7 @@ const [templateOpen, setTemplateOpen] = useState(false);
                       setDetailsRow(null);
                       if (row) void openEditModal(row);
                     }}
-                    className="rounded-xl bg-[#FFDA03] px-4 py-2 text-sm font-semibold text-black"
+                    className="animated-btn rounded-xl bg-[#FFDA03] px-4 py-2 text-sm font-semibold text-black"
                   >
                     Edit Contract
                   </button>
@@ -1674,7 +1666,7 @@ const [templateOpen, setTemplateOpen] = useState(false);
                     type="button"
                     onClick={() => void deleteContract(detailsRow.contract_id)}
                     disabled={savingKey === "delete-contract"}
-                    className="inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-semibold text-red-600 bg-white disabled:opacity-60"
+                    className="animated-btn inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-semibold text-red-600 bg-white disabled:opacity-60"
                     title="Delete contract"
                   >
                     <Trash2 className="w-4 h-4" /> Delete
@@ -1682,7 +1674,7 @@ const [templateOpen, setTemplateOpen] = useState(false);
                 </div>
               ) : null}
             </div>
-            <div className="rounded-2xl border bg-white p-4">
+            <div className="glass-panel rounded-2xl p-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {[
                   { label: "Contract No", value: fmt(detailsRow.contract_no) },
@@ -1710,7 +1702,7 @@ const [templateOpen, setTemplateOpen] = useState(false);
               </div>
             </div>
 
-            <div className="rounded-2xl border bg-white p-4 space-y-3">
+            <div className="glass-panel rounded-2xl p-4 space-y-3">
               <div>
                 <div className="text-sm font-semibold text-black">Connected Employees</div>
                 <div className="text-xs text-gray-500">Click a name to open the employee details page.</div>
@@ -1731,7 +1723,7 @@ const [templateOpen, setTemplateOpen] = useState(false);
                           <Link
                             key={employee.applicant_id}
                             href={`/Main_Modules/Employees/details/?id=${encodeURIComponent(employee.applicant_id)}&from=${encodeURIComponent("/Main_Modules/Client/")}`}
-                            className="inline-flex items-center rounded-full border bg-white px-3 py-1 text-sm font-medium text-blue-700 hover:bg-blue-50 hover:text-blue-800"
+                            className="animated-btn inline-flex items-center rounded-full border bg-white px-3 py-1 text-sm font-medium text-blue-700 hover:bg-blue-50 hover:text-blue-800"
                           >
                             {employee.name}
                           </Link>

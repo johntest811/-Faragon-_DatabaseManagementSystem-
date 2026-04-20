@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/app/Client/SupabaseClients";
 import { useAuthRole } from "@/app/Client/useRbac";
@@ -108,6 +109,84 @@ type RunNowResult = {
 	summary?: { sent?: number; failed?: number; skipped?: number };
 };
 
+type LegacyAdminSession = {
+	id?: string;
+	username?: string;
+	role?: string;
+	full_name?: string | null;
+	profile_image_path?: string | null;
+};
+
+type AdminProfileRow = {
+	id: string;
+	username: string;
+	full_name: string | null;
+	profile_image_path?: string | null;
+};
+
+type NotificationConfigLike = {
+	email?: EmailSettingsRow | null;
+	preferences?: PreferencesRow | null;
+	recipients?: string[];
+	localPrefs?: LocalNotificationPrefs;
+	env?: { hasGmailUser?: boolean; hasGmailPass?: boolean; gmailUser?: string | null };
+	unavailable?: boolean;
+	error?: string | null;
+};
+
+const PROFILE_BUCKET = "Profile";
+const MAX_PROFILE_IMAGE_SIZE_BYTES = 5 * 1024 * 1024;
+
+function readLegacyAdminSession(): LegacyAdminSession | null {
+	try {
+		const raw = localStorage.getItem("adminSession");
+		if (!raw) return null;
+		const parsed = JSON.parse(raw) as LegacyAdminSession;
+		if (!parsed?.id) return null;
+		return parsed;
+	} catch {
+		return null;
+	}
+}
+
+function writeLegacyAdminSessionPatch(patch: Partial<LegacyAdminSession>) {
+	try {
+		const raw = localStorage.getItem("adminSession");
+		if (!raw) return;
+		const parsed = JSON.parse(raw) as LegacyAdminSession;
+		localStorage.setItem("adminSession", JSON.stringify({ ...parsed, ...patch }));
+	} catch {
+		// ignore
+	}
+}
+
+function profileImagePublicUrl(profilePath: string | null, cacheBust?: number) {
+	if (!profilePath) return null;
+	const { data } = supabase.storage.from(PROFILE_BUCKET).getPublicUrl(profilePath);
+	const url = data.publicUrl || null;
+	if (!url) return null;
+	if (!cacheBust) return url;
+	const join = url.includes("?") ? "&" : "?";
+	return `${url}${join}v=${cacheBust}`;
+}
+
+function profileInitials(name: string, username: string) {
+	const source = safeText(name) || safeText(username) || "Admin";
+	const parts = source.split(/\s+/).filter(Boolean);
+	if (!parts.length) return "AD";
+	const first = parts[0]?.[0] ?? "A";
+	const second = parts.length > 1 ? parts[1]?.[0] ?? "D" : parts[0]?.[1] ?? "D";
+	return `${first}${second}`.toUpperCase();
+}
+
+function notifyAdminProfileUpdated() {
+	try {
+		window.dispatchEvent(new Event("admin-profile-updated"));
+	} catch {
+		// ignore
+	}
+}
+
 function getElectronAPI() {
 	const w = globalThis as unknown as { window?: unknown };
 	const anyWin = (w as unknown as { electronAPI?: unknown }).electronAPI as
@@ -128,6 +207,8 @@ function getElectronAPI() {
 					recipients?: string[];
 					localPrefs?: LocalNotificationPrefs;
 					env?: { hasGmailUser?: boolean; hasGmailPass?: boolean; gmailUser?: string | null };
+					unavailable?: boolean;
+					error?: string | null;
 				}>;
 				saveNotificationConfig?: (payload: unknown) => Promise<unknown>;
 				saveLocalNotificationPrefs?: (payload: unknown) => Promise<unknown>;
@@ -150,6 +231,14 @@ function getElectronAPI() {
 
 function safeText(v: unknown) {
 	return String(v ?? "").trim();
+}
+
+function errorTextWithMessageFallback(value: unknown) {
+	if (value && typeof value === "object") {
+		const msg = (value as { message?: unknown }).message;
+		if (msg != null) return safeText(msg);
+	}
+	return safeText(value);
 }
 
 function escapeHtml(s: string) {
@@ -415,15 +504,29 @@ function RichTextEditor({ value, onChange }: { value: string; onChange: (next: s
 export default function SettingsPage() {
 	const router = useRouter();
 	const electronAPI = useMemo(() => getElectronAPI(), []);
-	const isDesktop = Boolean(electronAPI?.settings?.loadNotificationConfig);
+	const [hydrated, setHydrated] = useState(false);
+	const isDesktop = hydrated && Boolean(electronAPI?.settings?.loadNotificationConfig);
 	const { role: sessionRole } = useAuthRole();
 	const canAdminExport = sessionRole === "admin" || sessionRole === "superadmin";
+
+	useEffect(() => {
+		setHydrated(true);
+	}, []);
 
 	const [loading, setLoading] = useState(true);
 	const [saving, setSaving] = useState(false);
 	const [exporting, setExporting] = useState(false);
 	const [error, setError] = useState<string>("");
 	const [success, setSuccess] = useState<string>("");
+	const profileFileInputRef = useRef<HTMLInputElement | null>(null);
+	const [profileAdminId, setProfileAdminId] = useState("");
+	const [profileUsername, setProfileUsername] = useState("");
+	const [profileDisplayName, setProfileDisplayName] = useState("");
+	const [profileImagePath, setProfileImagePath] = useState<string | null>(null);
+	const [profileImageUrl, setProfileImageUrl] = useState<string | null>(null);
+	const [profileSaving, setProfileSaving] = useState(false);
+	const [profileUploading, setProfileUploading] = useState(false);
+	const [profileRemoving, setProfileRemoving] = useState(false);
 
 	// Email settings (gmail)
 	const [gmailUser, setGmailUser] = useState("");
@@ -458,8 +561,6 @@ export default function SettingsPage() {
 	const [logStatus, setLogStatus] = useState<string>("SENT");
 	const [logs, setLogs] = useState<LogRow[]>([]);
 	const [logsLoading, setLogsLoading] = useState(false);
-	const [testToEmail, setTestToEmail] = useState("");
-	const [testSending, setTestSending] = useState(false);
 	const [runSending, setRunSending] = useState(false);
 	const [runSummary, setRunSummary] = useState<string>("");
 	const [envHasGmailUser, setEnvHasGmailUser] = useState<boolean | null>(null);
@@ -499,16 +600,53 @@ export default function SettingsPage() {
 		() => enabled && Number.isFinite(daysBeforeNum) && daysBeforeNum >= 1 && daysBeforeNum <= 365,
 		[enabled, daysBeforeNum]
 	);
+	const profileDisplayLabel = useMemo(
+		() => safeText(profileDisplayName) || safeText(profileUsername) || "Admin",
+		[profileDisplayName, profileUsername]
+	);
+	const profileBadgeLabel = useMemo(
+		() => profileInitials(profileDisplayName, profileUsername),
+		[profileDisplayName, profileUsername]
+	);
+	const centeredModalOverlayClass =
+		"fixed inset-0 z-50 bg-black/35 backdrop-blur-[2px] flex items-center justify-center p-4 overflow-y-auto";
+	const floatingModalCardClass =
+		"w-full rounded-2xl glass-panel border-white/50 shadow-2xl p-5 animate-scale-in";
+	const canUsePortal = typeof document !== "undefined";
+	const isAnySettingsModalOpen =
+		addRecipientOpen || editingRecipientId !== null || addOtherOpen || editingOtherId !== null;
+
+	useEffect(() => {
+		if (!canUsePortal || !isAnySettingsModalOpen) return;
+
+		const previousOverflow = document.body.style.overflow;
+		const previousPaddingRight = document.body.style.paddingRight;
+		const scrollBarWidth = window.innerWidth - document.documentElement.clientWidth;
+
+		document.body.style.overflow = "hidden";
+		if (scrollBarWidth > 0) {
+			document.body.style.paddingRight = `${scrollBarWidth}px`;
+		}
+
+		return () => {
+			document.body.style.overflow = previousOverflow;
+			document.body.style.paddingRight = previousPaddingRight;
+		};
+	}, [canUsePortal, isAnySettingsModalOpen]);
 
 	function applyLoadedConfig(cfg: unknown) {
-		setEnvHasGmailUser(Boolean((cfg as any)?.env?.hasGmailUser));
-		setEnvHasGmailPass(Boolean((cfg as any)?.env?.hasGmailPass));
-		setIncludeExpired(Boolean((cfg as any)?.localPrefs?.includeExpired));
-		setExpiredWithinDays(Number((cfg as any)?.localPrefs?.expiredWithinDays ?? 7));
+		const loaded = ((cfg && typeof cfg === "object") ? (cfg as NotificationConfigLike) : {}) as NotificationConfigLike;
+		const env = loaded.env;
+		const localPrefs = loaded.localPrefs;
 
-		const email = (((cfg as any)?.email as EmailSettingsRow) || null) as EmailSettingsRow | null;
+		setEnvHasGmailUser(Boolean(env?.hasGmailUser));
+		setEnvHasGmailPass(Boolean(env?.hasGmailPass));
+		setIncludeExpired(Boolean(localPrefs?.includeExpired));
+		setExpiredWithinDays(Number(localPrefs?.expiredWithinDays ?? 7));
+
+		const email = loaded.email ?? null;
 		if (email) {
-			setGmailUser(email.gmail_user ?? safeText((cfg as any)?.env?.gmailUser) ?? "");
+			setGmailUser(email.gmail_user ?? safeText(env?.gmailUser) ?? "");
 			setIsActive(Boolean(email.is_active));
 			const tpl = parseTemplateNotes(email.notes);
 			setEmailSubject(tpl.subject || DEFAULT_NOTICE_SUBJECT);
@@ -518,20 +656,18 @@ export default function SettingsPage() {
 			setGmailAppPassword("");
 			setStoreAppPassword(false);
 			setLoadedStoredPassword(false);
-			setTestToEmail(email.gmail_user ?? safeText((cfg as any)?.env?.gmailUser) ?? "");
 		} else {
 			setDbHasStoredPassword(false);
 			setDbStoredPasswordCache("");
-			setGmailUser(safeText((cfg as any)?.env?.gmailUser) || "");
+			setGmailUser(safeText(env?.gmailUser) || "");
 			setEmailSubject(DEFAULT_NOTICE_SUBJECT);
 			setEmailBodyHtml(DEFAULT_NOTICE_BODY);
-			setTestToEmail(safeText((cfg as any)?.env?.gmailUser) || "");
 		}
 
-		const pref = (((cfg as any)?.preferences as PreferencesRow) || null) as PreferencesRow | null;
+		const pref = loaded.preferences ?? null;
 		if (pref) {
 			setEnabled(Boolean(pref.is_enabled));
-			setSendToEmployees((pref as any)?.send_to_employees !== false);
+			setSendToEmployees(pref.send_to_employees !== false);
 			setDaysBeforeInput(String(pref.days_before_expiry ?? 30));
 			setIncludeDriver(Boolean(pref.include_driver_license));
 			setIncludeSecurity(Boolean(pref.include_security_license));
@@ -539,6 +675,192 @@ export default function SettingsPage() {
 			setUseScheduledSend(pref.use_scheduled_send !== false);
 			setSendTimeLocal(String(pref.send_time_local ?? "08:00").slice(0, 5));
 			setTimezone(pref.timezone ?? "Asia/Manila");
+		}
+	}
+
+	async function loadMyProfile() {
+		const legacy = readLegacyAdminSession();
+		if (!legacy?.id) {
+			setProfileAdminId("");
+			setProfileUsername("");
+			setProfileDisplayName("");
+			setProfileImagePath(null);
+			setProfileImageUrl(null);
+			return;
+		}
+
+		const legacyId = safeText(legacy.id);
+		const legacyUsername = safeText(legacy.username);
+		const legacyFullName = safeText(legacy.full_name);
+		const legacyProfilePath = safeText(legacy.profile_image_path) || null;
+
+		setProfileAdminId(legacyId);
+		setProfileUsername(legacyUsername);
+		setProfileDisplayName(legacyFullName || legacyUsername);
+		setProfileImagePath(legacyProfilePath);
+		setProfileImageUrl(profileImagePublicUrl(legacyProfilePath));
+
+		try {
+			const wideRes = await supabase
+				.from("admins")
+				.select("id, username, full_name, profile_image_path")
+				.eq("id", legacyId)
+				.maybeSingle();
+
+			let row: AdminProfileRow | null = null;
+
+			if (wideRes.error) {
+				const msg = safeText((wideRes.error as { message?: unknown }).message ?? "").toLowerCase();
+				if (!msg.includes("profile_image_path")) throw wideRes.error;
+
+				const fallbackRes = await supabase
+					.from("admins")
+					.select("id, username, full_name")
+					.eq("id", legacyId)
+					.maybeSingle();
+				if (fallbackRes.error) throw fallbackRes.error;
+				row = (fallbackRes.data as AdminProfileRow | null) ?? null;
+			} else {
+				row = (wideRes.data as AdminProfileRow | null) ?? null;
+			}
+
+			if (!row) return;
+
+			const nextId = safeText(row.id) || legacyId;
+			const nextUsername = safeText(row.username) || legacyUsername;
+			const nextFullName = safeText(row.full_name);
+			const nextProfilePath = safeText(row.profile_image_path) || null;
+
+			setProfileAdminId(nextId);
+			setProfileUsername(nextUsername);
+			setProfileDisplayName(nextFullName || nextUsername);
+			setProfileImagePath(nextProfilePath);
+			setProfileImageUrl(profileImagePublicUrl(nextProfilePath, Date.now()));
+
+			writeLegacyAdminSessionPatch({
+				id: nextId,
+				username: nextUsername,
+				full_name: nextFullName || null,
+				profile_image_path: nextProfilePath,
+			});
+		} catch {
+			// ignore bootstrap errors for profile card
+		}
+	}
+
+	async function saveProfileName() {
+		const adminId = safeText(profileAdminId);
+		const nextName = safeText(profileDisplayName);
+		if (!adminId) {
+			setError("No active admin session found.");
+			return;
+		}
+		if (!nextName) {
+			setError("Display name is required.");
+			return;
+		}
+
+		setProfileSaving(true);
+		setError("");
+		setSuccess("");
+		try {
+			const upd = await supabase.from("admins").update({ full_name: nextName }).eq("id", adminId);
+			if (upd.error) throw upd.error;
+
+			setProfileDisplayName(nextName);
+			writeLegacyAdminSessionPatch({ full_name: nextName });
+			notifyAdminProfileUpdated();
+			setSuccess("Profile name updated.");
+		} catch (e: unknown) {
+			setError(errorMessage(e));
+		} finally {
+			setProfileSaving(false);
+		}
+	}
+
+	async function uploadProfileImage(file: File | null) {
+		if (!file) return;
+
+		const adminId = safeText(profileAdminId);
+		if (!adminId) {
+			setError("No active admin session found.");
+			return;
+		}
+
+		if (!String(file.type || "").startsWith("image/")) {
+			setError("Please upload an image file.");
+			return;
+		}
+
+		if (file.size > MAX_PROFILE_IMAGE_SIZE_BYTES) {
+			setError("Profile image must be 5MB or smaller.");
+			return;
+		}
+
+		setProfileUploading(true);
+		setError("");
+		setSuccess("");
+
+		try {
+			const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+			const path = `${adminId}/profile-${Date.now()}-${safeName}`;
+
+			const uploadRes = await supabase.storage.from(PROFILE_BUCKET).upload(path, file, { upsert: true });
+			if (uploadRes.error) {
+				throw new Error(`Upload failed in bucket ${PROFILE_BUCKET}: ${uploadRes.error.message}`);
+			}
+
+			const upd = await supabase.from("admins").update({ profile_image_path: path }).eq("id", adminId);
+			if (upd.error) {
+				const msg = safeText((upd.error as { message?: unknown }).message ?? upd.error).toLowerCase();
+				if (msg.includes("profile_image_path")) {
+					throw new Error("Missing admins.profile_image_path column. Run SQL/supabase_add_admin_profile_image_path.sql first.");
+				}
+				throw upd.error;
+			}
+
+			const previousPath = profileImagePath;
+			setProfileImagePath(path);
+			setProfileImageUrl(profileImagePublicUrl(path, Date.now()));
+			writeLegacyAdminSessionPatch({ profile_image_path: path });
+			notifyAdminProfileUpdated();
+			setSuccess("Profile image updated.");
+
+			if (previousPath && previousPath !== path) {
+				void supabase.storage.from(PROFILE_BUCKET).remove([previousPath]);
+			}
+		} catch (e: unknown) {
+			setError(errorMessage(e));
+		} finally {
+			setProfileUploading(false);
+		}
+	}
+
+	async function removeProfileImage() {
+		const adminId = safeText(profileAdminId);
+		if (!adminId || !profileImagePath) return;
+
+		setProfileRemoving(true);
+		setError("");
+		setSuccess("");
+		try {
+			const previousPath = profileImagePath;
+			const upd = await supabase.from("admins").update({ profile_image_path: null }).eq("id", adminId);
+			if (upd.error) throw upd.error;
+
+			setProfileImagePath(null);
+			setProfileImageUrl(null);
+			writeLegacyAdminSessionPatch({ profile_image_path: null });
+			notifyAdminProfileUpdated();
+			setSuccess("Profile image removed.");
+
+			if (previousPath) {
+				void supabase.storage.from(PROFILE_BUCKET).remove([previousPath]);
+			}
+		} catch (e: unknown) {
+			setError(errorMessage(e));
+		} finally {
+			setProfileRemoving(false);
 		}
 	}
 
@@ -575,7 +897,7 @@ export default function SettingsPage() {
 				.limit(300);
 
 			if (res.error) {
-				const msg = safeText((res.error as any)?.message || res.error);
+				const msg = errorTextWithMessageFallback(res.error);
 				if (!/days_before_expiry/i.test(msg)) throw res.error;
 
 				const fallback = await supabase
@@ -710,7 +1032,7 @@ export default function SettingsPage() {
 
 			const ins = await supabase.from("other_expiration_items").insert(insertPayload);
 			if (ins.error) {
-				const msg = safeText((ins.error as any)?.message || ins.error);
+				const msg = errorTextWithMessageFallback(ins.error);
 				if (!/days_before_expiry/i.test(msg)) throw ins.error;
 
 				const fallbackPayload = { ...insertPayload };
@@ -779,7 +1101,7 @@ export default function SettingsPage() {
 
 			const upd = await supabase.from("other_expiration_items").update(updatePayload).eq("id", editingOtherId);
 			if (upd.error) {
-				const msg = safeText((upd.error as any)?.message || upd.error);
+				const msg = errorTextWithMessageFallback(upd.error);
 				if (!/days_before_expiry/i.test(msg)) throw upd.error;
 
 				const fallbackPayload = { ...updatePayload };
@@ -859,7 +1181,14 @@ export default function SettingsPage() {
 				if (electronAPI?.settings?.loadNotificationConfig) {
 					const cfg = await electronAPI.settings.loadNotificationConfig();
 					if (cancelled) return;
-					applyLoadedConfig(cfg);
+					const loadedCfg = cfg as NotificationConfigLike;
+					applyLoadedConfig(loadedCfg);
+					if (loadedCfg.unavailable) {
+						setError(
+							safeText(loadedCfg.error) ||
+							"Supabase is temporarily unreachable. Showing local/default settings until the connection recovers."
+						);
+					}
 				} else {
 					// Web fallback (anon key) – may be blocked by RLS depending on your policies.
 					const [emailRes, prefRes] = await Promise.all([
@@ -879,7 +1208,7 @@ export default function SettingsPage() {
 								.limit(1)
 								.maybeSingle();
 							if (!wide.error) return wide;
-							const msg = safeText((wide.error as any)?.message || wide.error);
+							const msg = errorTextWithMessageFallback(wide.error);
 							if (!/send_to_employees/i.test(msg)) return wide;
 							return await supabase
 								.from("notification_preferences")
@@ -917,7 +1246,7 @@ export default function SettingsPage() {
 					const pref = (prefRes.data as PreferencesRow | null) ?? null;
 					if (pref) {
 						setEnabled(Boolean(pref.is_enabled));
-						setSendToEmployees((pref as any)?.send_to_employees !== false);
+						setSendToEmployees(pref.send_to_employees !== false);
 						setDaysBeforeInput(String(pref.days_before_expiry ?? 30));
 						setIncludeDriver(Boolean(pref.include_driver_license));
 						setIncludeSecurity(Boolean(pref.include_security_license));
@@ -940,9 +1269,10 @@ export default function SettingsPage() {
 		return () => {
 			cancelled = true;
 		};
-	}, []);
+	}, [electronAPI]);
 
 	useEffect(() => {
+		void loadMyProfile();
 		void loadRecipientRows();
 		void loadOtherExpirationRows();
 	}, []);
@@ -967,7 +1297,7 @@ export default function SettingsPage() {
 
 			let rows: Array<{ id: number; item_name: string; expiration_type: string; expires_on: string; days_before_expiry?: number | null; recipient_email: string | null }> = [];
 			if (res.error) {
-				const msg = safeText((res.error as any)?.message || res.error);
+				const msg = errorTextWithMessageFallback(res.error);
 				if (!/days_before_expiry/i.test(msg)) throw res.error;
 				const fallback = await supabase
 					.from("other_expiration_items")
@@ -1229,7 +1559,14 @@ export default function SettingsPage() {
 			if (electronAPI?.settings?.loadNotificationConfig) {
 				try {
 					const cfg = await electronAPI.settings.loadNotificationConfig();
-					applyLoadedConfig(cfg);
+					const loadedCfg = cfg as NotificationConfigLike;
+					applyLoadedConfig(loadedCfg);
+					if (loadedCfg.unavailable) {
+						setError(
+							safeText(loadedCfg.error) ||
+							"Supabase is temporarily unreachable. Saved values may not be fully reloaded yet."
+						);
+					}
 				} catch {
 					// ignore reload errors
 				}
@@ -1249,11 +1586,11 @@ export default function SettingsPage() {
 	}
 
 	return (
-		<section className="bg-white rounded-2xl shadow-sm border p-5 space-y-6">
+		<section className="glass-panel animate-slide-up rounded-2xl shadow-2xl p-5 space-y-6 border-none">
 			<div className="flex items-center justify-between gap-3 mb-4">
 				<div>
 					<div className="text-lg font-semibold text-black">Settings</div>
-					<div className="text-sm text-gray-500">Email notifications for expiring licensures</div>
+					<div className="text-sm text-gray-500">Email notifications for expiring licenses and other records</div>
 				</div>
 				<div className="flex items-center gap-2">
 					{canAdminExport ? (
@@ -1285,14 +1622,14 @@ export default function SettingsPage() {
 								}
 						}}
 							disabled={exporting || !isDesktop}
-							className="px-4 py-2 rounded-xl bg-[#FFDA03] text-black font-medium disabled:opacity-50"
+							className="animated-btn px-4 py-2 rounded-xl bg-[#FFDA03] text-black font-medium disabled:opacity-50 hover:brightness-95"
 						>
 							{exporting ? "Exporting…" : "Export database"}
 						</button>
 					) : null}
 					<button
 						onClick={() => router.push("/Main_Modules/Dashboard/")}
-						className="px-4 py-2 rounded-xl bg-white border"
+						className="animated-btn px-4 py-2 rounded-xl bg-white border hover:bg-white"
 					>
 						Back
 					</button>
@@ -1320,7 +1657,9 @@ export default function SettingsPage() {
 						<option value="QUEUED" className="text-black">Queued</option>
 					</select>
 				</div>
-				{isDesktop ? (
+				{!hydrated ? (
+					<div className="text-xs text-gray-500">Checking desktop integration...</div>
+				) : isDesktop ? (
 					<div className="text-xs text-gray-500">
 						Gmail user in env: {envHasGmailUser ? "yes" : envHasGmailUser === false ? "no" : "unknown"} • Gmail pass in env:{" "}
 						{envHasGmailPass ? "yes" : envHasGmailPass === false ? "no" : "unknown"}
@@ -1333,7 +1672,7 @@ export default function SettingsPage() {
 			</div>
 
 			{loading ? (
-				<div className="rounded-2xl border bg-white p-8">
+				<div className="glass-panel rounded-2xl border-none p-8">
 					<LoadingCircle label="Loading settings..." />
 				</div>
 			) : (
@@ -1349,8 +1688,102 @@ export default function SettingsPage() {
 						</div>
 					) : null}
 
+					<div className="glass-panel animate-scale-in rounded-2xl border-none p-4">
+						<div className="flex flex-wrap items-start justify-between gap-3 mb-3">
+							<div>
+								<div className="font-semibold text-black">My profile</div>
+								<div className="text-xs text-gray-500">
+									Shown in top navigation. Images are stored in bucket <span className="font-mono">{PROFILE_BUCKET}</span>.
+								</div>
+							</div>
+							<div className="text-xs text-gray-500">Account: {profileUsername || "-"}</div>
+						</div>
+
+						{profileAdminId ? (
+							<div className="grid grid-cols-1 md:grid-cols-[auto,1fr] gap-4 items-start">
+								<div className="h-24 w-24 rounded-2xl overflow-hidden border bg-gray-100 flex items-center justify-center shrink-0">
+									{profileImageUrl ? (
+										<div
+											role="img"
+											aria-label={profileDisplayLabel}
+											className="h-full w-full bg-cover bg-center"
+											style={{ backgroundImage: `url("${profileImageUrl}")` }}
+										/>
+									) : (
+										<span className="text-xl font-semibold text-gray-500">{profileBadgeLabel}</span>
+									)}
+								</div>
+
+								<div className="space-y-3 min-w-0">
+									<div>
+										<label className="block text-sm mb-1 text-black">Display name</label>
+										<input
+											value={profileDisplayName}
+											onChange={(e) => setProfileDisplayName(e.target.value)}
+											placeholder="Enter your display name"
+											className="w-full rounded-xl border px-3 py-2 text-black"
+										/>
+									</div>
+
+									<div className="text-xs text-gray-500 break-all">
+										Current image path: {profileImagePath || "Not uploaded"}
+									</div>
+
+									<div className="flex flex-wrap items-center gap-2">
+										<button
+											type="button"
+											onClick={() => void saveProfileName()}
+											disabled={profileSaving || profileUploading || profileRemoving}
+											className="animated-btn px-4 py-2 rounded-xl bg-black text-white disabled:opacity-50 hover:bg-gray-800"
+										>
+											{profileSaving ? "Saving..." : "Save name"}
+										</button>
+
+										<button
+											type="button"
+											onClick={() => profileFileInputRef.current?.click()}
+											disabled={profileUploading || profileSaving || profileRemoving}
+											className="animated-btn px-4 py-2 rounded-xl bg-[#FFDA03] text-black font-medium disabled:opacity-50 hover:brightness-95"
+										>
+											{profileUploading ? "Uploading..." : "Upload image"}
+										</button>
+
+										{profileImagePath ? (
+											<button
+												type="button"
+												onClick={() => void removeProfileImage()}
+												disabled={profileRemoving || profileUploading || profileSaving}
+												className="animated-btn px-4 py-2 rounded-xl bg-white border text-black disabled:opacity-50 hover:bg-white"
+											>
+												{profileRemoving ? "Removing..." : "Remove image"}
+											</button>
+										) : null}
+									</div>
+
+									<div className="text-xs text-gray-500">Accepted image files up to 5MB.</div>
+								</div>
+							</div>
+						) : (
+							<div className="rounded-xl border border-yellow-200 bg-yellow-50 px-3 py-2 text-sm text-yellow-800">
+								No active admin session found. Sign in again to edit your profile.
+							</div>
+						)}
+
+						<input
+							ref={profileFileInputRef}
+							type="file"
+							accept="image/*"
+							className="hidden"
+							onChange={(e) => {
+								const file = e.target.files?.[0] ?? null;
+								e.currentTarget.value = "";
+								void uploadProfileImage(file);
+							}}
+						/>
+					</div>
+
 					<div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
-						<div className="rounded-2xl border p-4">
+						<div className="glass-panel animate-scale-in rounded-2xl border-none p-4">
 							<div className="font-semibold mb-2 text-black">Gmail Sender</div>
 							<div className="text-xs text-gray-500 mb-4">
 								Used to send notification emails. This app uses Gmail App Password auth only.
@@ -1358,7 +1791,7 @@ export default function SettingsPage() {
 							</div>
 
 							{isDesktop ? (
-								<div className="rounded-xl border bg-gray-50 px-3 py-2 text-sm text-gray-700 mb-3">
+								<div className="rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700 mb-3">
 									<div className="flex flex-wrap items-center gap-2">
 										<span className="font-semibold">Sender priority:</span>
 										<span className="font-mono">GMAIL_USER</span>
@@ -1391,7 +1824,7 @@ export default function SettingsPage() {
 												}
 										}}
 										disabled={!dbHasStoredPassword}
-										className="px-3 py-2 rounded-xl bg-white border disabled:opacity-50 text-black"
+										className="animated-btn px-3 py-2 rounded-xl bg-white border disabled:opacity-50 text-black hover:bg-white"
 									>
 										Clear stored app password
 									</button>
@@ -1420,7 +1853,7 @@ export default function SettingsPage() {
 													setError(errorMessage(e));
 												}
 										}}
-										className="px-3 py-2 rounded-xl bg-red-600 text-white"
+										className="animated-btn px-3 py-2 rounded-xl bg-red-600 text-white hover:bg-red-700"
 									>
 										Remove sender
 									</button>
@@ -1536,7 +1969,7 @@ export default function SettingsPage() {
 							</div>
 						</div>
 
-						<div className="rounded-2xl border p-4">
+						<div className="glass-panel animate-scale-in rounded-2xl border-none p-4">
 							<div className="font-semibold mb-2 text-black">Expiring Licensure Preferences</div>
 
 							<div className="flex items-center gap-2 text-black">
@@ -1650,7 +2083,7 @@ export default function SettingsPage() {
 								value={sendTimeLocal}
 								onChange={(e) => setSendTimeLocal(e.target.value)}
 								disabled={!useScheduledSend}
-								className={`w-full rounded-xl border px-3 py-2 text-black ${!useScheduledSend ? "bg-gray-100 text-gray-500" : ""}`}
+								className={`w-full rounded-xl border px-3 py-2 text-black ${!useScheduledSend ? "bg-white text-gray-500" : ""}`}
 							/>
 
 							<label className="block text-sm mt-3 mb-1 text-black">Timezone</label>
@@ -1659,7 +2092,7 @@ export default function SettingsPage() {
 								onChange={(e) => setTimezone(e.target.value)}
 								placeholder="Asia/Manila"
 								disabled={!useScheduledSend}
-								className={`w-full rounded-xl border px-3 py-2 text-black ${!useScheduledSend ? "bg-gray-100 text-gray-500" : ""}`}
+								className={`w-full rounded-xl border px-3 py-2 text-black ${!useScheduledSend ? "bg-white text-gray-500" : ""}`}
 							/>
 
 							<div className="mt-4 rounded-xl border p-3">
@@ -1702,31 +2135,9 @@ export default function SettingsPage() {
 						<button
 							onClick={() => void saveAll()}
 							disabled={saving}
-							className="px-4 py-2 rounded-xl bg-black text-white disabled:opacity-50"
+							className="animated-btn px-4 py-2 rounded-xl bg-black text-white disabled:opacity-50 hover:bg-gray-800"
 						>
 							{saving ? "Saving…" : "Save"}
-						</button>
-						<button
-							onClick={async () => {
-								setTestSending(true);
-								setError("");
-								setSuccess("");
-								try {
-									if (!electronAPI?.notifications?.sendTestEmail) {
-										throw new Error("Test run is only available in the Electron desktop app.");
-									}
-									await electronAPI.notifications.sendTestEmail({ to: safeText(testToEmail) || safeText(gmailUser) });
-									setSuccess("Test email sent. Check the inbox/spam folder.");
-								} catch (e: unknown) {
-									setError(errorMessage(e));
-								} finally {
-									setTestSending(false);
-								}
-							}}
-							disabled={testSending}
-							className="px-4 py-2 rounded-xl bg-white border disabled:opacity-50 text-black"
-						>
-							{testSending ? "Sending test…" : "Test run"}
 						</button>
 						<button
 							onClick={async () => {
@@ -1738,11 +2149,8 @@ export default function SettingsPage() {
 									if (!electronAPI?.notifications?.resendAllExpiring) {
 										throw new Error("Resend all is only available in the Electron desktop app.");
 									}
-									if (!sendToEmployees) {
-										throw new Error("Sending to employee emails is disabled. Enable it to use Resend all.");
-									}
 									const ok = window.confirm(
-										"This will resend emails for ALL currently expiring licenses. Continue?"
+										"This will resend emails for ALL currently expiring license and other-expiration records. Continue?"
 									);
 									if (!ok) return;
 									const r = (await electronAPI.notifications.resendAllExpiring()) as RunNowResult;
@@ -1770,39 +2178,25 @@ export default function SettingsPage() {
 								}
 							}}
 							disabled={runSending}
-							className="px-4 py-2 rounded-xl bg-[#8B1C1C] text-white disabled:opacity-50"
+							className="animated-btn px-4 py-2 rounded-xl bg-[#8B1C1C] text-white disabled:opacity-50 hover:bg-red-800"
 						>
-							{runSending ? "Resending…" : "Resend all"}
+							{runSending ? "Resending…" : "Resend all records"}
 						</button>
 						<button
 							onClick={() => void loadPreview()}
 							disabled={previewLoading || !canPreview}
-							className="px-4 py-2 rounded-xl bg-white border disabled:opacity-50 text-black"
+							className="animated-btn px-4 py-2 rounded-xl bg-white border disabled:opacity-50 text-black hover:bg-white"
 						>
-							{previewLoading ? "Loading preview…" : "Preview expiring licensures"}
+							{previewLoading ? "Loading preview…" : "Preview expiring records"}
 						</button>
+						{runSummary ? <div className="text-xs text-gray-600">Last run: {runSummary}</div> : null}
 					</div>
 
 					<div className="grid grid-cols-1 gap-4">
-						<div className="rounded-2xl border p-4">
-							<div className="font-semibold mb-2 text-black">Test recipient</div>
-							<div className="text-xs text-gray-500 mb-3">
-								Used for the “Test run” button. This does not send to employees.
-							</div>
-							<label className="block text-sm mb-1 text-black">Send test email to</label>
-							<input
-								value={testToEmail}
-								onChange={(e) => setTestToEmail(e.target.value)}
-								placeholder="admin@example.com"
-								className="w-full rounded-xl border px-3 py-2 text-black"
-							/>
-							{runSummary ? <div className="text-xs text-gray-600 mt-2">Last run: {runSummary}</div> : null}
-						</div>
-
-						<div className="rounded-2xl border p-4 space-y-3">
+						<div className="glass-panel animate-scale-in rounded-2xl border-none p-4 space-y-3">
 							<div className="font-semibold text-black">Notification recipients</div>
 							<div className="text-xs text-gray-500">
-								When recipient emails are listed here, all notification sends go to these emails.
+								Automatic sends include all expiring-license accounts to these emails. Other-expiration records are also sent automatically to these emails, and to each record-specific recipient email when provided.
 							</div>
 							<div className="flex items-center justify-end">
 								<button
@@ -1812,7 +2206,7 @@ export default function SettingsPage() {
 										setError("");
 										setSuccess("");
 									}}
-									className="rounded-xl bg-[#FFDA03] px-3 py-2 text-black font-medium"
+									className="animated-btn rounded-xl bg-[#FFDA03] px-3 py-2 text-black font-medium hover:brightness-95"
 								>
 									Add recipient
 								</button>
@@ -1829,7 +2223,7 @@ export default function SettingsPage() {
 									<tbody>
 										{recipientRows.length ? (
 											recipientRows.map((row) => (
-												<tr key={row.id} className="border-b">
+												<tr key={row.id} className="animated-row border-b border-gray-100">
 													<td className="py-2 px-3">{row.email}</td>
 													<td className="py-2 px-3">
 														<input
@@ -1842,11 +2236,11 @@ export default function SettingsPage() {
 														<div className="flex items-center gap-2">
 															<button
 																onClick={() => openRecipientEditor(row)}
-																className="rounded-lg border px-2 py-1"
+																className="animated-btn rounded-lg border bg-white px-2 py-1 hover:bg-white"
 															>
 																Edit
 															</button>
-															<button onClick={() => void removeRecipient(row.id)} className="rounded-lg border px-2 py-1">
+															<button onClick={() => void removeRecipient(row.id)} className="animated-btn rounded-lg border bg-white px-2 py-1 hover:bg-white">
 																Remove
 															</button>
 														</div>
@@ -1863,7 +2257,7 @@ export default function SettingsPage() {
 							</div>
 						</div>
 
-						<div className="rounded-2xl border p-4 space-y-3">
+						<div className="glass-panel animate-scale-in rounded-2xl border-none p-4 space-y-3">
 							<div className="font-semibold text-black">Other expiration records</div>
 							<div className="text-xs text-gray-500">Manage additional expiration items with custom type names and per-item lead days.</div>
 							<div className="flex items-center justify-end">
@@ -1874,7 +2268,7 @@ export default function SettingsPage() {
 										setError("");
 										setSuccess("");
 									}}
-									className="rounded-xl bg-[#FFDA03] px-3 py-2 text-black font-medium"
+									className="animated-btn rounded-xl bg-[#FFDA03] px-3 py-2 text-black font-medium hover:brightness-95"
 								>
 									Add item
 								</button>
@@ -1894,7 +2288,7 @@ export default function SettingsPage() {
 									<tbody>
 										{otherRows.length ? (
 											otherRows.map((row) => (
-												<tr key={row.id} className="border-b">
+												<tr key={row.id} className="animated-row border-b border-gray-100">
 													<td className="py-2 px-3">{row.item_name}</td>
 													<td className="py-2 px-3">{row.expiration_type}</td>
 													<td className="py-2 px-3">{row.days_before_expiry ?? daysBeforeInput}</td>
@@ -1910,11 +2304,11 @@ export default function SettingsPage() {
 														<div className="flex items-center gap-2">
 															<button
 																onClick={() => openOtherEditor(row)}
-																className="rounded-lg border px-2 py-1"
+																className="animated-btn rounded-lg border bg-white px-2 py-1 hover:bg-white"
 															>
 																Edit
 															</button>
-															<button onClick={() => void removeOtherExpiration(row.id)} className="rounded-lg border px-2 py-1">
+															<button onClick={() => void removeOtherExpiration(row.id)} className="animated-btn rounded-lg border bg-white px-2 py-1 hover:bg-white">
 																Remove
 															</button>
 														</div>
@@ -1931,10 +2325,10 @@ export default function SettingsPage() {
 							</div>
 						</div>
 
-						<div className="rounded-2xl border p-4">
+						<div className="glass-panel animate-scale-in rounded-2xl border-none p-4">
 							<div className="font-semibold mb-2 text-black">Sent Gmail log</div>
 							<div className="text-xs text-gray-500 mb-3">
-								Shows recent emails sent to employees (from licensure_notification_log).
+								Shows recent emails sent for expiring licenses and other expiration records.
 							</div>
 							<button
 								onClick={async () => {
@@ -1953,7 +2347,7 @@ export default function SettingsPage() {
 								}
 							}}
 								disabled={!isDesktop || logsLoading}
-								className="px-3 py-2 rounded-xl bg-white border disabled:opacity-50 text-black"
+								className="animated-btn px-3 py-2 rounded-xl bg-white border disabled:opacity-50 text-black hover:bg-white"
 							>
 								{logsLoading ? "Loading…" : "Refresh log"}
 							</button>
@@ -1972,7 +2366,7 @@ export default function SettingsPage() {
 										</thead>
 										<tbody>
 											{logs.map((r) => (
-												<tr key={r.id} className="border-b">
+												<tr key={r.id} className="animated-row border-b border-gray-100">
 													<td className="py-2 pr-3 whitespace-nowrap text-black">{String(r.created_at).slice(0, 19)}</td>
 													<td className="py-2 pr-3 whitespace-nowrap text-black">{r.status}</td>
 													<td className="py-2 pr-3 whitespace-nowrap text-black">{r.license_type}</td>
@@ -1985,15 +2379,16 @@ export default function SettingsPage() {
 							</div>
 						</div>
 
-						{addRecipientOpen ? (
-							<div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={() => setAddRecipientOpen(false)}>
-								<div className="w-full max-w-lg rounded-2xl border bg-white p-5" onClick={(e) => e.stopPropagation()}>
+						{addRecipientOpen && canUsePortal
+							? createPortal(
+									<div className={centeredModalOverlayClass} onClick={() => setAddRecipientOpen(false)}>
+										<div className={`${floatingModalCardClass} max-w-lg`} onClick={(e) => e.stopPropagation()}>
 									<div className="flex items-center justify-between gap-3 mb-4">
 										<div>
 											<div className="text-lg font-semibold text-black">Add recipient</div>
-											<div className="text-sm text-gray-500">Receives all expiring-license notifications.</div>
+											<div className="text-sm text-gray-500">Receives all expiring-license and other-expiration notifications.</div>
 										</div>
-										<button type="button" className="px-3 py-2 rounded-xl border bg-white text-sm" onClick={() => setAddRecipientOpen(false)}>
+										<button type="button" className="animated-btn px-3 py-2 rounded-xl border bg-white text-sm hover:bg-white" onClick={() => setAddRecipientOpen(false)}>
 											Cancel
 										</button>
 									</div>
@@ -2015,31 +2410,34 @@ export default function SettingsPage() {
 									/>
 
 									<div className="mt-4 flex items-center justify-end gap-2">
-										<button type="button" className="px-4 py-2 rounded-xl border bg-white text-black" onClick={() => setAddRecipientOpen(false)}>
+										<button type="button" className="animated-btn px-4 py-2 rounded-xl border bg-white text-black hover:bg-white" onClick={() => setAddRecipientOpen(false)}>
 											Close
 										</button>
 										<button
 											type="button"
 											onClick={() => void addRecipient()}
 											disabled={recipientSaving}
-											className="px-4 py-2 rounded-xl bg-black text-white disabled:opacity-50"
+											className="animated-btn px-4 py-2 rounded-xl bg-black text-white disabled:opacity-50 hover:bg-gray-800"
 										>
 											{recipientSaving ? "Adding…" : "Add"}
 										</button>
 									</div>
-								</div>
-							</div>
-						) : null}
+										</div>
+									</div>,
+									document.body
+								)
+							: null}
 
-						{editingRecipientId !== null ? (
-							<div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={() => setEditingRecipientId(null)}>
-								<div className="w-full max-w-lg rounded-2xl border bg-white p-5" onClick={(e) => e.stopPropagation()}>
+						{editingRecipientId !== null && canUsePortal
+							? createPortal(
+									<div className={centeredModalOverlayClass} onClick={() => setEditingRecipientId(null)}>
+										<div className={`${floatingModalCardClass} max-w-lg`} onClick={(e) => e.stopPropagation()}>
 									<div className="flex items-center justify-between gap-3 mb-4">
 										<div>
 											<div className="text-lg font-semibold text-black">Edit recipient</div>
 											<div className="text-sm text-gray-500">Update recipient email and notification note.</div>
 										</div>
-										<button type="button" className="px-3 py-2 rounded-xl border bg-white text-sm" onClick={() => setEditingRecipientId(null)}>
+										<button type="button" className="animated-btn px-3 py-2 rounded-xl border bg-white text-sm hover:bg-white" onClick={() => setEditingRecipientId(null)}>
 											Cancel
 										</button>
 									</div>
@@ -2070,31 +2468,34 @@ export default function SettingsPage() {
 									</label>
 
 									<div className="mt-4 flex items-center justify-end gap-2">
-										<button type="button" className="px-4 py-2 rounded-xl border bg-white text-black" onClick={() => setEditingRecipientId(null)}>
+										<button type="button" className="animated-btn px-4 py-2 rounded-xl border bg-white text-black hover:bg-white" onClick={() => setEditingRecipientId(null)}>
 											Close
 										</button>
 										<button
 											type="button"
 											onClick={() => void saveRecipientEdit()}
 											disabled={recipientSaving}
-											className="px-4 py-2 rounded-xl bg-black text-white disabled:opacity-50"
+											className="animated-btn px-4 py-2 rounded-xl bg-black text-white disabled:opacity-50 hover:bg-gray-800"
 										>
 											{recipientSaving ? "Saving..." : "Save"}
 										</button>
 									</div>
-								</div>
-							</div>
-						) : null}
+										</div>
+									</div>,
+									document.body
+								)
+							: null}
 
-						{addOtherOpen ? (
-							<div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={() => setAddOtherOpen(false)}>
-								<div className="w-full max-w-2xl rounded-2xl border bg-white p-5" onClick={(e) => e.stopPropagation()}>
+						{addOtherOpen && canUsePortal
+							? createPortal(
+									<div className={centeredModalOverlayClass} onClick={() => setAddOtherOpen(false)}>
+										<div className={`${floatingModalCardClass} max-w-2xl`} onClick={(e) => e.stopPropagation()}>
 									<div className="flex items-center justify-between gap-3 mb-4">
 										<div>
 											<div className="text-lg font-semibold text-black">Add expiration item</div>
 											<div className="text-sm text-gray-500">Tracks additional expiring records like OCR and registration.</div>
 										</div>
-										<button type="button" className="px-3 py-2 rounded-xl border bg-white text-sm" onClick={() => setAddOtherOpen(false)}>
+										<button type="button" className="animated-btn px-3 py-2 rounded-xl border bg-white text-sm hover:bg-white" onClick={() => setAddOtherOpen(false)}>
 											Cancel
 									</button>
 									</div>
@@ -2153,31 +2554,34 @@ export default function SettingsPage() {
 									</div>
 
 									<div className="mt-4 flex items-center justify-end gap-2">
-										<button type="button" className="px-4 py-2 rounded-xl border bg-white text-black" onClick={() => setAddOtherOpen(false)}>
+										<button type="button" className="animated-btn px-4 py-2 rounded-xl border bg-white text-black hover:bg-white" onClick={() => setAddOtherOpen(false)}>
 											Close
 										</button>
 										<button
 											type="button"
 											onClick={() => void addOtherExpiration()}
 											disabled={otherSaving}
-											className="px-4 py-2 rounded-xl bg-black text-white disabled:opacity-50"
+											className="animated-btn px-4 py-2 rounded-xl bg-black text-white disabled:opacity-50 hover:bg-gray-800"
 										>
 											{otherSaving ? "Adding…" : "Add"}
 										</button>
 									</div>
-								</div>
-							</div>
-						) : null}
+										</div>
+									</div>,
+									document.body
+								)
+							: null}
 
-						{editingOtherId !== null ? (
-							<div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={() => setEditingOtherId(null)}>
-								<div className="w-full max-w-2xl rounded-2xl border bg-white p-5" onClick={(e) => e.stopPropagation()}>
+						{editingOtherId !== null && canUsePortal
+							? createPortal(
+									<div className={centeredModalOverlayClass} onClick={() => setEditingOtherId(null)}>
+										<div className={`${floatingModalCardClass} max-w-2xl`} onClick={(e) => e.stopPropagation()}>
 									<div className="flex items-center justify-between gap-3 mb-4">
 										<div>
 											<div className="text-lg font-semibold text-black">Edit expiration item</div>
 											<div className="text-sm text-gray-500">Update item details, reminder lead days, and recipient.</div>
 										</div>
-										<button type="button" className="px-3 py-2 rounded-xl border bg-white text-sm" onClick={() => setEditingOtherId(null)}>
+										<button type="button" className="animated-btn px-3 py-2 rounded-xl border bg-white text-sm hover:bg-white" onClick={() => setEditingOtherId(null)}>
 											Cancel
 										</button>
 									</div>
@@ -2270,24 +2674,26 @@ export default function SettingsPage() {
 									</label>
 
 									<div className="mt-4 flex items-center justify-end gap-2">
-										<button type="button" className="px-4 py-2 rounded-xl border bg-white text-black" onClick={() => setEditingOtherId(null)}>
+										<button type="button" className="animated-btn px-4 py-2 rounded-xl border bg-white text-black hover:bg-white" onClick={() => setEditingOtherId(null)}>
 											Close
 										</button>
 										<button
 											type="button"
 											onClick={() => void saveOtherEdit()}
 											disabled={otherSaving}
-											className="px-4 py-2 rounded-xl bg-black text-white disabled:opacity-50"
+											className="animated-btn px-4 py-2 rounded-xl bg-black text-white disabled:opacity-50 hover:bg-gray-800"
 										>
 											{otherSaving ? "Saving..." : "Save"}
 										</button>
 									</div>
-								</div>
-							</div>
-						) : null}
+										</div>
+									</div>,
+									document.body
+								)
+							: null}
 					</div>
 
-					<div className="rounded-2xl border p-4">
+					<div className="glass-panel animate-scale-in rounded-2xl border-none p-4">
 						<div className="font-semibold mb-2 text-black">Preview (next 25)</div>
 						{preview.length === 0 ? (
 							<div className="text-sm text-gray-600">No preview loaded yet.</div>
@@ -2305,7 +2711,7 @@ export default function SettingsPage() {
 									</thead>
 									<tbody>
 										{preview.map((r) => (
-											<tr key={`${r.applicant_id}:${r.license_type}:${r.expires_on}`} className="border-b">
+											<tr key={`${r.applicant_id}:${r.license_type}:${r.expires_on}`} className="animated-row border-b border-gray-100">
 												<td className="py-2 pr-3 whitespace-nowrap">{fullName(r)}</td>
 												<td className="py-2 pr-3 whitespace-nowrap">{r.license_type}</td>
 												<td className="py-2 pr-3 whitespace-nowrap">{r.expires_on}</td>
@@ -2323,3 +2729,4 @@ export default function SettingsPage() {
 		</section>
 	);
 }
+

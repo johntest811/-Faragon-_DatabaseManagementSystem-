@@ -5,83 +5,96 @@ import { usePathname } from "next/navigation";
 import SplashScreen from "./SplashScreen";
 import ToastProvider from "./ToastProvider";
 
+type SplashReason = "startup" | "logout" | "login" | null;
+
 export default function ClientRoot({
   children,
 }: {
   children: React.ReactNode;
 }) {
   const pathname = usePathname() ?? "";
-  const [logoutSplashRequested, setLogoutSplashRequested] = useState(() => {
-    if (typeof window === "undefined") return false;
-    return window.sessionStorage.getItem("showLogoutSplash") === "1";
-  });
-  const shouldSkipSplash = pathname.startsWith("/Login") && !logoutSplashRequested;
-  const [showSplash, setShowSplash] = useState(() => {
-    if (typeof window === "undefined") return true;
-    const requested = window.sessionStorage.getItem("showLogoutSplash") === "1";
-    if (requested) return true;
-    return !window.location.pathname.startsWith("/Login");
-  });
+  const [startupSplashPending, setStartupSplashPending] = useState(true);
+  const [showSplash, setShowSplash] = useState(true);
   const [splashFadingOut, setSplashFadingOut] = useState(false);
+  const [splashReason, setSplashReason] = useState<SplashReason>("startup");
 
   useEffect(() => {
-    if (shouldSkipSplash) {
-      setShowSplash(false);
+    let logoutRequested = false;
+    let loginRequested = false;
+    try {
+      logoutRequested = window.sessionStorage.getItem("showLogoutSplash") === "1";
+      loginRequested = window.sessionStorage.getItem("showLoginSplash") === "1";
+    } catch {
+      logoutRequested = false;
+      loginRequested = false;
+    }
+
+    const shouldShowLogoutSplash = pathname.startsWith("/Login") && logoutRequested;
+    const shouldShowLoginSplash = pathname.startsWith("/Main_Modules") && loginRequested;
+
+    if (shouldShowLogoutSplash) {
+      setSplashReason("logout");
+      setShowSplash(true);
+      setSplashFadingOut(false);
+      return;
+    }
+
+    if (shouldShowLoginSplash) {
+      setSplashReason("login");
+      setShowSplash(true);
+      setSplashFadingOut(false);
+      return;
+    }
+
+    if (startupSplashPending) {
+      setSplashReason("startup");
+      setShowSplash(true);
+      return;
+    }
+
+    setShowSplash(false);
+    setSplashReason(null);
+    if (!startupSplashPending) {
       setSplashFadingOut(false);
     }
-  }, [shouldSkipSplash]);
-
-  useEffect(() => {
-    // If some page (Dashboard/sidebar logout) requested a logout splash, ensure we
-    // show it even though ClientRoot stays mounted across route changes.
-    if (!pathname.startsWith("/Login")) return;
-    let requested = false;
-    try {
-      requested = window.sessionStorage.getItem("showLogoutSplash") === "1";
-    } catch {
-      requested = false;
-    }
-    if (!requested) return;
-
-    setLogoutSplashRequested(true);
-    setShowSplash(true);
-    setSplashFadingOut(false);
-  }, [pathname]);
+  }, [pathname, startupSplashPending]);
 
   function handleSplashFinish() {
+    const reason = splashReason;
     setSplashFadingOut(true);
     window.setTimeout(() => {
-      const wasLogoutSplash = logoutSplashRequested;
       setShowSplash(false);
       setSplashFadingOut(false);
+
+      if (startupSplashPending) {
+        setStartupSplashPending(false);
+      }
+
       try {
-        window.sessionStorage.removeItem("showLogoutSplash");
+        if (reason === "logout") {
+          window.sessionStorage.removeItem("showLogoutSplash");
+        }
+        if (reason === "login") {
+          window.sessionStorage.removeItem("showLoginSplash");
+        }
       } catch {
         // ignore
       }
-      setLogoutSplashRequested(false);
 
-      // If this splash was triggered by logout, force a full refresh on the Login page.
-      // This avoids stale UI state and improves Electron focus/typing reliability.
-      if (wasLogoutSplash && window.location.pathname.startsWith("/Login")) {
-        window.setTimeout(() => {
-          try {
-            window.location.reload();
-          } catch {
-            // ignore
-          }
-        }, 50);
-      }
+      setSplashReason(null);
     }, 500);
   }
 
   return (
     <ToastProvider>
-      <div className={`transition-opacity duration-500 ${showSplash && !shouldSkipSplash ? "opacity-0" : "opacity-100"}`}>
+      <div className={`transition-opacity duration-500 ${showSplash ? "opacity-0" : "opacity-100"}`}>
         {children}
       </div>
-      {showSplash && !shouldSkipSplash ? (
-        <SplashScreen fadingOut={splashFadingOut} onFinish={handleSplashFinish} />
+      {showSplash ? (
+        <SplashScreen
+          fadingOut={splashFadingOut}
+          onFinish={handleSplashFinish}
+        />
       ) : null}
     </ToastProvider>
   );

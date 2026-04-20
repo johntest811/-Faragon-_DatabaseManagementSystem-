@@ -293,14 +293,45 @@ export default function LogisticsInventoryPage() {
   const [showExportPopup, setShowExportPopup] = useState(false);
   const [importModalOpen, setImportModalOpen] = useState(false);
 
-  const [showTemplateModalOpen, setTemplateModalOpen] = useState(false);
-
-
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
   const pageSize = 10;
 
   const [formData, setFormData] = useState<InventoryForm>(EMPTY_FORM);
+
+  const loadData = useCallback(async () => {
+    if (loadingInventoryColumns) {
+      setLoading(true);
+      return;
+    }
+
+    setLoading(true);
+    setError(inventoryColumnsError || "");
+
+    const selectFields = new Set<string>(["id", "last_updated_at"]);
+    for (const [columnKey, dbFields] of Object.entries(INVENTORY_COLUMN_TO_DB_FIELDS)) {
+      const canViewColumn = !inventoryColumnsRestricted || allowedInventoryColumns.has(columnKey);
+      if (!canViewColumn) continue;
+      for (const field of dbFields) {
+        selectFields.add(field);
+      }
+    }
+
+    const res = await supabase
+      .from("inventory_fixed_asset")
+      .select(Array.from(selectFields).join(", "))
+      .order("date", { ascending: false })
+      .limit(1000);
+
+    if (res.error) {
+      setError(res.error.message || "Failed to load inventory");
+      setRows([]);
+    } else {
+      setRows((res.data as unknown as InventoryRow[]) || []);
+    }
+
+    setLoading(false);
+  }, [loadingInventoryColumns, inventoryColumnsError, inventoryColumnsRestricted, allowedInventoryColumns]);
 
   function downloadTemplate(format: "xlsx" | "csv") {
 
@@ -508,7 +539,7 @@ function downloadInventoryTemplateXlsx() {
     }
   }
 
-  const parseInventoryImportRow = useCallback((row: Record<string, unknown>, idx: number) => {
+  const parseInventoryImportRow = useCallback((row: Record<string, unknown>) => {
     const firearmsPrice = toNumber(pickByAliases(row, ["firearms_price", "firearms price", "firearms amount"]));
     const communicationsPrice = toNumber(pickByAliases(row, ["communications_price", "communications price", "communications amount"]));
     const furniturePrice = toNumber(pickByAliases(row, ["furniture_price", "furniture price", "furniture amount"]));
@@ -571,7 +602,7 @@ function downloadInventoryTemplateXlsx() {
 
     const importedRows = rawRows
       .map((row, idx) => {
-        const { payload, error } = parseInventoryImportRow(row, idx);
+        const { payload, error } = parseInventoryImportRow(row);
         if (!payload) {
           skipped += 1;
           if (error) rowErrors.push(`Row ${idx + 2}: ${error}`);
@@ -650,54 +681,23 @@ function downloadInventoryTemplateXlsx() {
     await loadData();
 
     return { inserted, updated, skipped, errors: rowErrors };
-  }, [canImportInventory, parseInventoryImportRow]);
-
-  async function loadData() {
-    if (loadingInventoryColumns) {
-      setLoading(true);
-      return;
-    }
-
-    setLoading(true);
-    setError(inventoryColumnsError || "");
-
-    const selectFields = new Set<string>(["id", "last_updated_at"]);
-    for (const [columnKey, dbFields] of Object.entries(INVENTORY_COLUMN_TO_DB_FIELDS)) {
-      if (!canViewInventoryColumn(columnKey)) continue;
-      for (const field of dbFields) {
-        selectFields.add(field);
-      }
-    }
-
-    const res = await supabase
-      .from("inventory_fixed_asset")
-      .select(Array.from(selectFields).join(", "))
-      .order("date", { ascending: false })
-      .limit(1000);
-
-    if (res.error) {
-      setError(res.error.message || "Failed to load inventory");
-      setRows([]);
-    } else {
-      setRows((res.data as unknown as InventoryRow[]) || []);
-    }
-
-    setLoading(false);
-  }
+  }, [canImportInventory, parseInventoryImportRow, loadData]);
 
   useEffect(() => {
     if (loadingInventoryColumns) return;
 
-    loadData();
+    void loadData();
     const channel = supabase
       .channel("realtime:inventory-fixed-asset-page")
-      .on("postgres_changes", { event: "*", schema: "public", table: "inventory_fixed_asset" }, loadData)
+      .on("postgres_changes", { event: "*", schema: "public", table: "inventory_fixed_asset" }, () => {
+        void loadData();
+      })
       .subscribe();
 
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [loadingInventoryColumns, inventoryColumnsRestricted, inventoryColumnsSignature, inventoryColumnsError]);
+  }, [loadingInventoryColumns, inventoryColumnsSignature, loadData]);
 
   const filtered = useMemo(() => {
     const q = search.toLowerCase();
@@ -981,7 +981,7 @@ function downloadInventoryTemplateXlsx() {
 
   return (
     <>
-      <section className="bg-white rounded-3xl border p-6 space-y-5">
+      <section className="glass-panel animate-slide-up rounded-3xl p-6 space-y-5">
         <div className="flex justify-between items-start gap-4">
           <div>
             <div className="text-lg font-semibold text-black">Logistics • Fixed Asset Inventory</div>
@@ -993,7 +993,7 @@ function downloadInventoryTemplateXlsx() {
               <button
                 type="button"
                 onClick={() => setShowAddModal(true)}
-                className="px-4 py-2 rounded-xl bg-[#FFDA03] text-black font-semibold"
+                className="animated-btn px-4 py-2 rounded-xl bg-[#FFDA03] text-black font-semibold"
               >
                 Insert Information
               </button>
@@ -1004,7 +1004,7 @@ function downloadInventoryTemplateXlsx() {
                 type="button"
                 onClick={() => setImportModalOpen(true)}
                 disabled={importing}
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border text-sm text-black hover:bg-gray-50 disabled:opacity-60"
+                className="animated-btn inline-flex items-center gap-2 px-4 py-2 rounded-xl border bg-white text-sm text-black hover:bg-white disabled:opacity-60"
               >
                 <Upload className="w-4 h-4" />
                 {importing ? "Importing..." : "Import Excel/CSV"}
@@ -1018,7 +1018,7 @@ function downloadInventoryTemplateXlsx() {
                 <button
     type="button"
     onClick={() => setShowTemplatePopup(true)}
-    className="flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium text-black hover:bg-gray-50"
+    className="animated-btn flex items-center gap-2 rounded-xl border bg-white px-4 py-2 text-sm font-medium text-black hover:bg-white"
   >
     <Download className="w-4 h-4" />
     Download Templates
@@ -1036,7 +1036,7 @@ function downloadInventoryTemplateXlsx() {
                <button
     type="button"
     onClick={() => setShowExportPopup(true)}
-    className="flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium text-black hover:bg-gray-50"
+    className="animated-btn flex items-center gap-2 rounded-xl border bg-white px-4 py-2 text-sm font-medium text-black hover:bg-white"
   >
     <FileText className="w-4 h-4" />
     Export
@@ -1067,19 +1067,19 @@ function downloadInventoryTemplateXlsx() {
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           {canViewInventoryColumn("quanitity") ? (
-            <div className="rounded-2xl border bg-gray-50 p-4">
+            <div className="glass-panel animate-slide-up rounded-2xl border-none p-4">
               <div className="text-xs text-gray-500">Total Quantity</div>
               <div className="text-xl font-semibold text-black">{totalQuantity.toLocaleString()}</div>
             </div>
           ) : null}
           {showRowTotalColumn ? (
-            <div className="rounded-2xl border bg-gray-50 p-4">
+            <div className="glass-panel animate-slide-up rounded-2xl border-none p-4">
               <div className="text-xs text-gray-500">Total Amount (Sum of Rows)</div>
               <div className="text-xl font-semibold text-black">₱ {toMoney(grandTotal)}</div>
             </div>
           ) : null}
           {showGrandTotalColumn ? (
-            <div className="rounded-2xl border bg-gray-50 p-4">
+            <div className="glass-panel animate-slide-up rounded-2xl border-none p-4">
               <div className="text-xs text-gray-500">Grand Total</div>
               <div className="text-xl font-semibold text-black">₱ {toMoney(grandTotal)}</div>
             </div>
@@ -1088,7 +1088,7 @@ function downloadInventoryTemplateXlsx() {
 
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
           {totalsByCategory.filter((item) => visibleCategoryConfigs.some((cfg) => cfg.key === item.key)).map((item) => (
-            <div key={item.key} className="rounded-2xl border bg-white p-4">
+            <div key={item.key} className="glass-panel animate-slide-up rounded-2xl p-4">
               <div className="text-sm font-medium text-gray-700">{item.label}</div>
               <div className="mt-2 text-xs text-gray-500">Qty: {item.quantity.toLocaleString()}</div>
               <div className="text-base font-semibold text-black">₱ {toMoney(item.value)}</div>
@@ -1096,7 +1096,7 @@ function downloadInventoryTemplateXlsx() {
           ))}
         </div>
 
-        <div className="flex items-center gap-3 border rounded-2xl px-4 py-3 max-w-xl">
+        <div className="flex items-center gap-3 glass-panel rounded-2xl px-4 py-3 max-w-xl">
           <div className="h-10 w-10 rounded-xl bg-[#FFDA03] flex items-center justify-center">
             <Search className="w-5 h-5 text-black" />
           </div>
@@ -1114,7 +1114,7 @@ function downloadInventoryTemplateXlsx() {
         {error ? <div className="rounded-2xl border bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
         {success ? <div className="rounded-2xl border bg-green-50 px-4 py-3 text-sm text-green-700">{success}</div> : null}
 
-        <div className="relative overflow-x-auto rounded-2xl border bg-white">
+        <div className="relative overflow-x-auto rounded-2xl glass-panel animate-slide-up">
           <table className="w-full text-sm text-black min-w-[1500px] border-separate border-spacing-y-2">
             <thead className="sticky top-0 z-10">
               <tr className="bg-[#FFDA03]">
@@ -1143,7 +1143,7 @@ function downloadInventoryTemplateXlsx() {
                 </tr>
               ) : paginated.length ? (
                 paginated.map((row) => (
-                  <tr key={row.id} className="bg-white shadow-sm transition hover:shadow-md">
+                  <tr key={row.id} className="animated-row border-b border-gray-100 transition hover:shadow-md">
                     {showDateColumn ? <td className="px-4 py-3 whitespace-nowrap rounded-l-xl">{row.date || "—"}</td> : null}
                     {showParticularColumn ? <td className="px-4 py-3">{row.particular || "—"}</td> : null}
                     {visibleCategoryConfigs.map((cfg) => {
@@ -1170,7 +1170,7 @@ function downloadInventoryTemplateXlsx() {
                       <td className="px-4 py-3 text-center rounded-r-xl">
                         <button
                           type="button"
-                          className="px-3 py-1.5 rounded-lg border bg-white text-sm hover:bg-gray-50"
+                          className="animated-btn px-3 py-1.5 rounded-lg border bg-white text-sm hover:bg-white"
                           onClick={() => openEditModal(row)}
                         >
                           Edit
@@ -1189,7 +1189,7 @@ function downloadInventoryTemplateXlsx() {
         </div>
 
         {showGrandTotalColumn ? (
-          <div className="rounded-2xl border bg-gray-50 px-4 py-3 flex items-center justify-between">
+          <div className="glass-panel rounded-2xl border-none px-4 py-3 flex items-center justify-between">
             <div className="text-sm text-gray-700">Grand Total (Bottom)</div>
             <div className="text-lg font-semibold text-black">₱ {toMoney(grandTotal)}</div>
           </div>
@@ -1250,21 +1250,21 @@ function downloadInventoryTemplateXlsx() {
 
                 <button 
                 onClick={exportInventoryXlsx}
-                className="inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium text-black hover:bg-gray-50">
+                className="inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium text-black hover:bg-white">
                   <FileDown className="w-4 h-4" />
                   Export XLSX
                 </button>
 
                 <button 
                 onClick={exportInventoryCsv}
-                className="inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium text-black hover:bg-gray-50">
+                className="inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium text-black hover:bg-white">
                   <FileDown className="w-4 h-4" />
                   Export CSV
                 </button>
 
                 <button 
                 onClick={exportInventoryPdf}
-                className="inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium text-black hover:bg-gray-50">
+                className="inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium text-black hover:bg-white">
                   <FileText className="w-4 h-4" />
                   Export PDF
                 </button>
@@ -1309,14 +1309,14 @@ function downloadInventoryTemplateXlsx() {
 
                 <button 
                 onClick={downloadInventoryTemplateXlsx}
-                className="inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium text-black hover:bg-gray-50">
+                className="inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium text-black hover:bg-white">
                  <Download className="w-4 h-4" />
                   Template XLSX
                 </button>
 
                 <button 
                 onClick={downloadInventoryTemplateCsv}
-                className="inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium text-black hover:bg-gray-50">
+                className="inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium text-black hover:bg-white">
                   <Download className="w-4 h-4" />
                   Template CSV
                 </button>
@@ -1337,7 +1337,7 @@ function downloadInventoryTemplateXlsx() {
           onClick={closeModals}
         >
           <div
-            className="bg-white rounded-2xl p-6 w-full max-w-5xl space-y-4"
+            className="glass-panel rounded-2xl shadow-2xl p-6 w-full max-w-5xl space-y-4 animate-scale-in"
             onClick={(e) => e.stopPropagation()}
           >
             <h2 className="text-lg font-semibold text-black">
@@ -1362,7 +1362,7 @@ function downloadInventoryTemplateXlsx() {
                 />
               ) : null}
               {showRowTotalColumn ? (
-                <div className="border rounded-xl px-3 py-2 bg-gray-50 text-sm text-gray-700">
+                <div className="border rounded-xl px-3 py-2 bg-white text-sm text-gray-700">
                   Row Total (sum of all prices):
                   <span className="ml-2 font-semibold text-black">₱ {toMoney(totalFromPrices(formData))}</span>
                 </div>
@@ -1372,7 +1372,7 @@ function downloadInventoryTemplateXlsx() {
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
               {visibleCategoryConfigs.map((cfg) => {
                 return (
-                  <div key={cfg.key} className="rounded-2xl border bg-gray-50 p-4 space-y-3">
+                  <div key={cfg.key} className="rounded-2xl border bg-white p-4 space-y-3">
                     <div className="font-medium text-gray-900">{cfg.label}</div>
                     <div>
                       <label className="block text-xs text-gray-600 mb-1">Kind / Name</label>

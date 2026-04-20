@@ -142,6 +142,11 @@ export default function DashboardPage() {
       // ignore
     }
 
+    if (typeof window !== 'undefined') {
+      window.location.replace('/Login/');
+      return;
+    }
+
     router.replace('/Login/');
   }
 
