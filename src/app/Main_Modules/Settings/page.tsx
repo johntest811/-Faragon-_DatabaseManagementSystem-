@@ -285,7 +285,7 @@ function buildTemplateNotes(subject: string, bodyHtml: string) {
 }
 
 const DEFAULT_NOTICE_SUBJECT = "NOTICE: LICENSE EXPIRATION ALERT ({count})";
-const DEFAULT_NOTICE_BODY = `<div><b>To all concerned,</b></div><div>This serves as a notice that the records listed below are nearing expiration. Please coordinate renewal processing immediately.</div>`;
+const DEFAULT_NOTICE_BODY = `<div><b>To all concerned,</b></div><div>This serves as a formal notice that the records listed below are nearing expiration.</div><div>Please review each item and coordinate the appropriate renewal action before the listed date.</div><div>If renewal has already been completed, you may disregard this message.</div>`;
 
 function errorMessage(e: unknown) {
 	if (e instanceof Error) return e.message;
@@ -2507,7 +2507,14 @@ export default function SettingsPage() {
 										</div>
 										<div>
 											<label className="block text-sm mb-1 text-black">Type</label>
-											<input value={otherType} onChange={(e) => setOtherType(e.target.value)} placeholder="e.g. Car OCR" className="w-full rounded-xl border px-3 py-2 text-black" />
+											<input
+												value={otherType}
+												onChange={(e) => setOtherType(e.target.value)}
+												placeholder="Enter a custom type"
+												autoComplete="off"
+												spellCheck={false}
+												className="w-full rounded-xl border px-3 py-2 text-black"
+											/>
 										</div>
 										<div>
 											<label className="block text-sm mb-1 text-black">Days before expiry</label>
@@ -2601,7 +2608,9 @@ export default function SettingsPage() {
 											<input
 												value={editOtherType}
 												onChange={(e) => setEditOtherType(e.target.value)}
-												placeholder="e.g. Car OCR"
+												placeholder="Enter a custom type"
+												autoComplete="off"
+												spellCheck={false}
 												className="w-full rounded-xl border px-3 py-2 text-black"
 											/>
 										</div>

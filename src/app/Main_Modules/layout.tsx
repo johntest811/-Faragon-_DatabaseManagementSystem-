@@ -23,11 +23,14 @@ import {
   Power,
   ClipboardList,
   Activity,
+  BadgeCheck,
   CreditCard,
   Package,
   FileText,
   ClipboardCheck,
   CircleAlert,
+  KeyRound,
+  Sparkles,
 } from "lucide-react";
 
 type LayoutProps = Readonly<{ children: React.ReactNode }>;
@@ -75,6 +78,13 @@ type NotificationConfigResponse = {
   preferences?: {
     send_to_employees?: boolean | null;
   } | null;
+};
+
+type PageMeta = {
+  title: string;
+  description: string;
+  badge: string;
+  icon: typeof LayoutGrid;
 };
 
 type AuditGetRecentResponse = {
@@ -173,6 +183,191 @@ function emailBadge(email: string | null) {
   if (!value) return { label: "No Email", className: "bg-red-100 text-red-700" };
   if (value.toLowerCase().endsWith("@gmail.com")) return { label: "Gmail", className: "bg-emerald-100 text-emerald-800" };
   return { label: "Email", className: "bg-blue-100 text-blue-800" };
+}
+
+function pageMetaForPath(pathname: string): PageMeta {
+  const cleanPath = String(pathname ?? "").replace(/\/+$/, "") || "/Main_Modules/Dashboard";
+
+  const entries: Array<{ test: (value: string) => boolean; meta: PageMeta }> = [
+    {
+      test: (value) => value.startsWith("/Main_Modules/Requests/Queue"),
+      meta: {
+        title: "Reviewer Queue",
+        description: "Review queued requests and notification items with quick approval cues.",
+        badge: "Approvals",
+        icon: ClipboardCheck,
+      },
+    },
+    {
+      test: (value) => value.startsWith("/Main_Modules/Requests"),
+      meta: {
+        title: "Requests",
+        description: "Track access requests, queue status, and ongoing workflow items.",
+        badge: "Workflow",
+        icon: ClipboardList,
+      },
+    },
+    {
+      test: (value) => value.startsWith("/Main_Modules/AdminAccounts"),
+      meta: {
+        title: "Admin Accounts",
+        description: "Manage privileged users, access, and desktop sign-in accounts.",
+        badge: "Superadmin",
+        icon: Shield,
+      },
+    },
+    {
+      test: (value) => value.startsWith("/Main_Modules/Roles"),
+      meta: {
+        title: "Roles",
+        description: "Define how administrators and staff move through the system.",
+        badge: "Access map",
+        icon: KeyRound,
+      },
+    },
+    {
+      test: (value) => value.startsWith("/Main_Modules/Permissions"),
+      meta: {
+        title: "Permissions",
+        description: "Fine-tune access controls and column-level visibility.",
+        badge: "Security",
+        icon: BadgeCheck,
+      },
+    },
+    {
+      test: (value) => value.startsWith("/Main_Modules/Audit"),
+      meta: {
+        title: "Audit",
+        description: "Monitor recent activity and review system actions at a glance.",
+        badge: "Traceable",
+        icon: ClipboardList,
+      },
+    },
+    {
+      test: (value) => value.startsWith("/Main_Modules/Archive"),
+      meta: {
+        title: "Archive",
+        description: "Browse archived records and older operational data safely.",
+        badge: "History",
+        icon: Archive,
+      },
+    },
+    {
+      test: (value) => value.startsWith("/Main_Modules/Employees/details"),
+      meta: {
+        title: "Employee Details",
+        description: "Inspect an employee profile, history, and record-specific fields.",
+        badge: "Profile",
+        icon: Users,
+      },
+    },
+    {
+      test: (value) => value.startsWith("/Main_Modules/Employees"),
+      meta: {
+        title: "Employees",
+        description: "Manage workforce records and keep employee information current.",
+        badge: "Workforce",
+        icon: Users,
+      },
+    },
+    {
+      test: (value) => value.startsWith("/Main_Modules/Inventory/InventoryDetailClient"),
+      meta: {
+        title: "Inventory Details",
+        description: "Review item-level inventory information with a clean detail view.",
+        badge: "Asset detail",
+        icon: Package,
+      },
+    },
+    {
+      test: (value) => value.startsWith("/Main_Modules/Inventory/"),
+      meta: {
+        title: "Inventory",
+        description: "Track assets, categories, and stock records in one workspace.",
+        badge: "Assets",
+        icon: Package,
+      },
+    },
+    {
+      test: (value) => value.startsWith("/Main_Modules/Paraphernalia"),
+      meta: {
+        title: "Paraphernalia",
+        description: "Keep auxiliary inventory items organized and easy to review.",
+        badge: "Tools",
+        icon: Package,
+      },
+    },
+    {
+      test: (value) => value.startsWith("/Main_Modules/Reassign"),
+      meta: {
+        title: "Reassign",
+        description: "Move records to the right owner with clear workflow context.",
+        badge: "Transfer",
+        icon: Repeat2,
+      },
+    },
+    {
+      test: (value) => value.startsWith("/Main_Modules/Reports"),
+      meta: {
+        title: "Reports",
+        description: "Summarize key operational data with a clean reporting surface.",
+        badge: "Insights",
+        icon: FileText,
+      },
+    },
+    {
+      test: (value) => value.startsWith("/Main_Modules/Resigned"),
+      meta: {
+        title: "Resigned",
+        description: "Review resigned employee records with a focused archive view.",
+        badge: "Offboarded",
+        icon: UserMinus,
+      },
+    },
+    {
+      test: (value) => value.startsWith("/Main_Modules/Retired"),
+      meta: {
+        title: "Retired",
+        description: "Review retired employee records in a clean, readable layout.",
+        badge: "Completed",
+        icon: UserX,
+      },
+    },
+    {
+      test: (value) => value.startsWith("/Main_Modules/Client"),
+      meta: {
+        title: "Client",
+        description: "Track client-facing data, profiles, and related workflow items.",
+        badge: "Client view",
+        icon: Users,
+      },
+    },
+    {
+      test: (value) => value.startsWith("/Main_Modules/Settings"),
+      meta: {
+        title: "Settings",
+        description: "Configure notifications, recipients, and operational preferences.",
+        badge: "System",
+        icon: Settings,
+      },
+    },
+    {
+      test: (value) => value.startsWith("/Main_Modules/Dashboard") || value === "/Main_Modules",
+      meta: {
+        title: "Dashboard",
+        description: "Monitor employee totals, admin activity, and high-level system health.",
+        badge: "Live",
+        icon: LayoutGrid,
+      },
+    },
+  ];
+
+  return entries.find((entry) => entry.test(cleanPath))?.meta ?? {
+    title: "Dashboard",
+    description: "Monitor employee totals, admin activity, and high-level system health.",
+    badge: "Live",
+    icon: LayoutGrid,
+  };
 }
 
 const ALL_MENU = [
@@ -358,6 +553,9 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
     if (months <= 0) return `${wholeYears}y`;
     return `${wholeYears}y ${months}m`;
   }
+
+  const pageMeta = useMemo(() => pageMetaForPath(pathname), [pathname]);
+  const PageIcon = pageMeta.icon;
 
   const [previewRows, setPreviewRows] = useState<
     Array<{
@@ -1808,7 +2006,36 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
           </div>
         </header>
 
-        <main className="flex-1 min-h-0 px-6 pb-10 pt-6 overflow-y-auto overflow-x-hidden">{children}</main>
+        <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden bg-[linear-gradient(180deg,rgba(255,255,255,0.82)_0%,rgba(248,244,236,0.76)_40%,rgba(236,242,249,0.84)_100%)]">
+          <div className="pointer-events-none absolute inset-0 overflow-hidden">
+            <div className="absolute -right-20 top-10 h-64 w-64 rounded-full bg-[#FFDA03]/15 blur-3xl" />
+            <div className="absolute bottom-8 left-6 h-72 w-72 rounded-full bg-[#8B1C1C]/10 blur-3xl" />
+            <div className="absolute inset-x-0 top-0 h-24 bg-gradient-to-b from-white/80 to-transparent" />
+          </div>
+
+          <div className="relative border-b border-white/70 bg-white/75 px-6 py-4 backdrop-blur-xl animate-fade-in">
+            <div className="flex flex-wrap items-start gap-4">
+              <div className="flex items-center gap-3">
+                <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#8B1C1C] text-white shadow-lg shadow-[#8B1C1C]/20">
+                  <PageIcon className="h-5 w-5" />
+                </div>
+                <div>
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#8B1C1C]">Current module</div>
+                  <div className="text-xl font-semibold text-slate-900">{pageMeta.title}</div>
+                </div>
+              </div>
+              <div className="ml-auto inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-800">
+                <Sparkles className="h-3.5 w-3.5 text-emerald-600" />
+                {pageMeta.badge}
+              </div>
+            </div>
+            <p className="mt-2 max-w-4xl text-sm leading-6 text-slate-500">{pageMeta.description}</p>
+          </div>
+
+          <main className="relative flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-4 pb-10 pt-6 sm:px-6 lg:px-8">
+            <div className="mx-auto flex w-full max-w-[1680px] flex-col gap-6">{children}</div>
+          </main>
+        </div>
       </div>
 
       {logoutConfirmOpen ? (

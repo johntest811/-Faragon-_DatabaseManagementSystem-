@@ -952,70 +952,164 @@ function computeEmailSubject(templateSubject, itemsCount) {
 
 function normalizeOtherExpirationType(value) {
   const raw = safeText(value)
+    .trim();
+  if (!raw) return 'OTHER_RECORD';
+  if (!/^[A-Z0-9]+(?:[_-][A-Z0-9]+)+$/.test(raw)) return raw;
+  return raw
     .replace(/[\s\-\/]+/g, '_')
     .replace(/[^a-zA-Z0-9_]/g, '_')
     .replace(/_+/g, '_')
-    .replace(/^_+|_+$/g, '');
-  return raw ? raw.toUpperCase() : 'OTHER_RECORD';
+    .replace(/^_+|_+$/g, '')
+    .toUpperCase() || 'OTHER_RECORD';
 }
 
 function prettyExpirationType(value) {
-  return normalizeOtherExpirationType(value).replace(/_/g, ' ');
+  const raw = safeText(value);
+  if (!raw) return 'Other Record';
+  if (/^[A-Z0-9]+(?:[_-][A-Z0-9]+)+$/.test(raw)) return raw.replace(/[_-]+/g, ' ');
+  return raw;
 }
 
-function renderEmailHtml({ subject, recipientName, items, daysBefore, bodyHtml, legacyMessage }) {
+let cachedBrandLogoPath = null;
+let cachedBrandLogoPathResolved = false;
+
+function resolveBrandLogoPath() {
+  if (cachedBrandLogoPathResolved) return cachedBrandLogoPath;
+
+  const candidates = [
+    path.join(__dirname, '..', 'public', 'Logo.png'),
+    path.join(__dirname, '..', 'out', 'Logo.png'),
+    path.join(process.resourcesPath || '', 'app.asar', 'out', 'Logo.png'),
+    path.join(__dirname, '..', 'public', 'Logo.ico'),
+    path.join(__dirname, '..', 'out', 'Logo.ico'),
+    path.join(process.resourcesPath || '', 'app.asar', 'out', 'Logo.ico'),
+  ];
+
+  for (const candidate of candidates) {
+    try {
+      if (candidate && fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
+        cachedBrandLogoPathResolved = true;
+        cachedBrandLogoPath = candidate;
+        return candidate;
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  cachedBrandLogoPathResolved = true;
+  cachedBrandLogoPath = null;
+  return null;
+}
+
+function buildEmailBrandingAssets() {
+  const logoPath = resolveBrandLogoPath();
+  if (!logoPath) return { logoCid: null, attachments: [] };
+
+  const logoCid = 'faragon-logo';
+  return {
+    logoCid,
+    attachments: [
+      {
+        filename: path.basename(logoPath),
+        path: logoPath,
+        cid: logoCid,
+        contentDisposition: 'inline',
+      },
+    ],
+  };
+}
+
+function renderEmailHtml({ subject, recipientName, items, daysBefore, bodyHtml, legacyMessage, brandLogoCid }) {
+  const companyName = 'Faragon Security Agency Inc.';
   const msg = safeText(legacyMessage);
   const safeBody = safeText(bodyHtml) ? sanitizeEmailBodyHtml(bodyHtml) : '';
   const heading = safeText(subject) || 'NOTICE: LICENSE EXPIRATION ALERT';
+  const itemCount = Array.isArray(items) ? items.length : 0;
+  const itemSummary =
+    itemCount === 1 ? '1 record requires immediate attention.' : `${itemCount} records require immediate attention.`;
 
   function fmtDays(d) {
     const n = Number(d);
-    if (!Number.isFinite(n)) return '';
-    if (n >= 0) return String(n);
-    const abs = Math.abs(n);
-    return `Expired ${abs} day${abs === 1 ? '' : 's'} ago`;
+    if (!Number.isFinite(n)) return 'Review pending';
+    if (n < 0) {
+      const abs = Math.abs(n);
+      return `Expired ${abs} day${abs === 1 ? '' : 's'} ago`;
+    }
+    if (n === 0) return 'Due today';
+    return `Due in ${n} day${n === 1 ? '' : 's'}`;
   }
+
+  const logoMarkup = brandLogoCid
+    ? `<img src="cid:${escapeHtml(brandLogoCid)}" alt="${escapeHtml(companyName)} logo" style="width:100%;height:100%;object-fit:contain;display:block;" />`
+    : `<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;border-radius:18px;background:linear-gradient(135deg,#8B1C1C,#111827);color:#ffffff;font-size:20px;font-weight:800;letter-spacing:0.12em;">F</div>`;
 
   const rows = items
     .map((it) => {
       const recordName = safeText(it.record_name || it.item_name || displayNameFromRow(it)) || 'Record';
       const typeName = safeText(it.license_type || it.expiration_type) || 'EXPIRATION';
+      const daysValue = Number(it.days_until_expiry);
+      const statusLabel = fmtDays(daysValue);
+      const statusStyle =
+        Number.isFinite(daysValue) && daysValue < 0
+          ? 'background:#fee2e2;color:#991b1b;'
+          : Number.isFinite(daysValue) && daysValue <= 7
+            ? 'background:#fef3c7;color:#92400e;'
+            : 'background:#dcfce7;color:#166534;';
       return `
         <tr>
-          <td style="padding:8px 6px;border-bottom:1px solid #eee;">${escapeHtml(recordName)}</td>
-          <td style="padding:8px 6px;border-bottom:1px solid #eee;">${escapeHtml(typeName)}</td>
-          <td style="padding:8px 6px;border-bottom:1px solid #eee;">${escapeHtml(it.expires_on)}</td>
-          <td style="padding:8px 6px;border-bottom:1px solid #eee;">${escapeHtml(fmtDays(it.days_until_expiry))}</td>
+          <td style="padding:12px 10px;border-bottom:1px solid #e5e7eb;color:#111827;font-size:13px;font-weight:600;">${escapeHtml(recordName)}</td>
+          <td style="padding:12px 10px;border-bottom:1px solid #e5e7eb;color:#374151;font-size:13px;">${escapeHtml(typeName)}</td>
+          <td style="padding:12px 10px;border-bottom:1px solid #e5e7eb;color:#374151;font-size:13px;">${escapeHtml(it.expires_on)}</td>
+          <td style="padding:12px 10px;border-bottom:1px solid #e5e7eb;font-size:13px;"><span style="display:inline-flex;align-items:center;justify-content:center;min-width:120px;padding:6px 10px;border-radius:999px;font-weight:700;${statusStyle}">${escapeHtml(statusLabel)}</span></td>
         </tr>`;
     })
     .join('');
 
   return `
-  <div style="font-family:Arial,Helvetica,sans-serif;line-height:1.45;color:#111;background:#f7f7f7;padding:20px;">
-    <div style="max-width:760px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden;">
-      <div style="background:#facc15;color:#111;padding:14px 18px;font-weight:700;font-size:16px;">${escapeHtml(heading)}</div>
-      <div style="padding:18px;">
-        <div style="margin:0 0 10px 0;">Dear Sir/Ma'am${recipientName ? ` (${escapeHtml(recipientName)})` : ''},</div>
-        <div style="margin:0 0 12px 0;color:#374151;">This is to formally notify you of licenses and related records nearing expiration within ${escapeHtml(
-          String(daysBefore)
-        )} days.</div>
-        ${safeBody ? `<div style="margin:0 0 12px 0;">${safeBody}</div>` : ''}
-        ${!safeBody && msg ? `<div style="margin:0 0 12px 0;padding:10px 12px;border:1px solid #eee;background:#fafafa;border-radius:8px;">${escapeHtml(msg)}</div>` : ''}
-        <table style="border-collapse:collapse;width:100%;max-width:100%;font-size:13px;">
-          <thead>
-            <tr>
-              <th align="left" style="padding:10px 8px;border-bottom:2px solid #ddd;background:#fafafa;">Account / Record</th>
-              <th align="left" style="padding:10px 8px;border-bottom:2px solid #ddd;background:#fafafa;">Type</th>
-              <th align="left" style="padding:10px 8px;border-bottom:2px solid #ddd;background:#fafafa;">Expires On</th>
-              <th align="left" style="padding:10px 8px;border-bottom:2px solid #ddd;background:#fafafa;">Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${rows}
-          </tbody>
-        </table>
-        <div style="margin-top:14px;color:#374151;">Please process the renewal before expiration to avoid service disruptions.</div>
-        <div style="margin-top:16px;color:#6b7280;font-size:12px;">This is a system-generated notice from Database Management App.</div>
+  <div style="margin:0;padding:0;background:#f4f6f8;">
+    <div style="max-width:760px;margin:0 auto;padding:24px 16px 32px;">
+      <div style="overflow:hidden;border:1px solid #e5e7eb;border-radius:20px;background:#ffffff;box-shadow:0 18px 40px rgba(15,23,42,0.08);">
+        <div style="padding:22px 24px;background:linear-gradient(135deg,#111827 0%,#7f1d1d 58%,#8B1C1C 100%);color:#ffffff;">
+          <div style="display:flex;align-items:center;gap:16px;">
+            <div style="width:64px;height:64px;padding:8px;border-radius:18px;background:#ffffff;box-sizing:border-box;overflow:hidden;flex:0 0 auto;">
+              ${logoMarkup}
+            </div>
+            <div style="min-width:0;">
+              <div style="font-size:11px;letter-spacing:0.18em;text-transform:uppercase;color:rgba(255,255,255,0.78);font-weight:700;">${escapeHtml(companyName)}</div>
+              <div style="font-size:24px;line-height:1.15;font-weight:800;margin-top:4px;">Expiration Notification</div>
+              <div style="margin-top:6px;font-size:13px;color:rgba(255,255,255,0.88);">${escapeHtml(itemSummary)}</div>
+            </div>
+          </div>
+        </div>
+
+        <div style="padding:24px;">
+          <div style="display:inline-block;border-radius:999px;background:#fef3c7;color:#92400e;padding:6px 12px;font-size:12px;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;">${escapeHtml(heading)}</div>
+          <div style="margin-top:18px;font-size:15px;line-height:1.7;color:#111827;">
+            <div style="margin:0 0 12px 0;">Dear Sir/Ma'am${recipientName ? ` ${escapeHtml(recipientName)}` : ''},</div>
+            <div style="margin:0 0 12px 0;color:#374151;">This is a formal reminder that the records below are approaching expiration within ${escapeHtml(String(daysBefore))} day${Number(daysBefore) === 1 ? '' : 's'} and should be reviewed as soon as possible.</div>
+            <div style="margin:0 0 12px 0;color:#374151;">Please coordinate the appropriate renewal action before the listed date.</div>
+          </div>
+          ${safeBody ? `<div style="margin-top:18px;padding:16px 18px;border:1px solid #e5e7eb;border-radius:16px;background:#f9fafb;color:#111827;line-height:1.7;">${safeBody}</div>` : ''}
+          ${!safeBody && msg ? `<div style="margin-top:18px;padding:16px 18px;border:1px solid #e5e7eb;border-radius:16px;background:#f9fafb;color:#111827;line-height:1.7;">${escapeHtml(msg)}</div>` : ''}
+          <div style="margin-top:20px;border:1px solid #e5e7eb;border-radius:16px;overflow:hidden;">
+            <table style="width:100%;border-collapse:collapse;">
+              <thead>
+                <tr style="background:#f8fafc;color:#334155;">
+                  <th align="left" style="padding:12px 10px;border-bottom:1px solid #e5e7eb;font-size:12px;letter-spacing:0.04em;text-transform:uppercase;">Account / Record</th>
+                  <th align="left" style="padding:12px 10px;border-bottom:1px solid #e5e7eb;font-size:12px;letter-spacing:0.04em;text-transform:uppercase;">Type</th>
+                  <th align="left" style="padding:12px 10px;border-bottom:1px solid #e5e7eb;font-size:12px;letter-spacing:0.04em;text-transform:uppercase;">Expires On</th>
+                  <th align="left" style="padding:12px 10px;border-bottom:1px solid #e5e7eb;font-size:12px;letter-spacing:0.04em;text-transform:uppercase;">Status</th>
+                </tr>
+              </thead>
+              <tbody>${rows || `<tr><td colspan="4" style="padding:16px 10px;color:#6b7280;">No records to display.</td></tr>`}</tbody>
+            </table>
+          </div>
+          <div style="margin-top:18px;padding:14px 16px;border-left:4px solid #8B1C1C;background:#fef2f2;border-radius:14px;color:#7f1d1d;font-size:13px;line-height:1.6;">
+            Please coordinate the renewal before the expiration date to avoid service disruptions.
+          </div>
+          <div style="margin-top:18px;color:#64748b;font-size:12px;line-height:1.6;">This is an automated message from ${escapeHtml(companyName)}. Replies may not be monitored.</div>
+        </div>
       </div>
     </div>
   </div>`;
@@ -1492,6 +1586,7 @@ async function runNotificationSend(admin) {
     if (!queuedItems.length) continue;
 
     const tpl = parseEmailTemplateNotes(email?.notes);
+      const emailBranding = buildEmailBrandingAssets();
     const mailRows = queuedItems.map((q) => toMailRowFromQueuedItem(q));
     const subject = computeEmailSubject(tpl.subject, mailRows.length);
     const html = renderEmailHtml({
@@ -1501,6 +1596,7 @@ async function runNotificationSend(admin) {
       daysBefore: preferences.days_before_expiry,
       bodyHtml: tpl.bodyHtml,
       legacyMessage: tpl.legacyMessage,
+        brandLogoCid: emailBranding.logoCid,
     });
 
     try {
@@ -1509,6 +1605,7 @@ async function runNotificationSend(admin) {
         to,
         subject,
         html,
+          attachments: emailBranding.attachments,
       });
 
       for (const queued of queuedItems) {
@@ -2042,6 +2139,7 @@ ipcMain.handle('notifications:resendLicensureNotice', async (_event, payload) =>
 
   const recipientName = displayNameFromRow(item);
   const tpl = parseEmailTemplateNotes(email?.notes);
+  const emailBranding = buildEmailBrandingAssets();
   const subject = computeEmailSubject(tpl.subject, 1);
   const html = renderEmailHtml({
     subject,
@@ -2050,10 +2148,11 @@ ipcMain.handle('notifications:resendLicensureNotice', async (_event, payload) =>
     daysBefore: preferences.days_before_expiry,
     bodyHtml: tpl.bodyHtml,
     legacyMessage: tpl.legacyMessage,
+    brandLogoCid: emailBranding.logoCid,
   });
 
   try {
-    await transporter.sendMail({ from, to, subject, html });
+    await transporter.sendMail({ from, to, subject, html, attachments: emailBranding.attachments });
     await admin.from('licensure_notification_log').insert({
       applicant_id: applicantId,
       license_type: licenseType,
@@ -2267,6 +2366,7 @@ ipcMain.handle('notifications:sendTestEmail', async (_event, payload) => {
   if (!to) throw new Error('Missing test recipient email.');
 
   const tpl = parseEmailTemplateNotes(email?.notes);
+  const emailBranding = buildEmailBrandingAssets();
   const subject = safeText(payload?.subject) || computeEmailSubject(tpl.subject, 1) || 'Test: Expiring Licensure Notifications';
   const html = renderEmailHtml({
     subject,
@@ -2282,9 +2382,10 @@ ipcMain.handle('notifications:sendTestEmail', async (_event, payload) => {
     daysBefore: preferences?.days_before_expiry ?? 30,
     bodyHtml: tpl.bodyHtml,
     legacyMessage: tpl.legacyMessage,
+    brandLogoCid: emailBranding.logoCid,
   });
 
-  await transporter.sendMail({ from, to, subject, html });
+  await transporter.sendMail({ from, to, subject, html, attachments: emailBranding.attachments });
   return { success: true };
 });
 
@@ -2396,6 +2497,7 @@ ipcMain.handle('notifications:resendAllExpiring', async (_event, payload) => {
     if (!queuedItems.length) continue;
 
     const tpl = parseEmailTemplateNotes(email?.notes);
+    const emailBranding = buildEmailBrandingAssets();
     const mailRows = queuedItems.map((q) => toMailRowFromQueuedItem(q));
     const subject = computeEmailSubject(tpl.subject, mailRows.length);
     const html = renderEmailHtml({
@@ -2405,10 +2507,11 @@ ipcMain.handle('notifications:resendAllExpiring', async (_event, payload) => {
       daysBefore: preferences?.days_before_expiry ?? 30,
       bodyHtml: tpl.bodyHtml,
       legacyMessage: tpl.legacyMessage,
+      brandLogoCid: emailBranding.logoCid,
     });
 
     try {
-      await transporter.sendMail({ from, to, subject, html });
+      await transporter.sendMail({ from, to, subject, html, attachments: emailBranding.attachments });
       for (const queued of queuedItems) {
         if (queued.kind === 'other') {
           await insertOtherExpirationNotificationLog(admin, {
@@ -2492,28 +2595,7 @@ const devUrl = `http://localhost:${devPort}`;
 let mainWindow = null;
 
 function resolveWindowIconPath() {
-  const isWin = process.platform === 'win32';
-  const candidates = [
-    path.join(__dirname, '..', 'public', 'Logo.png'),
-    path.join(__dirname, '..', 'out', 'Logo.png'),
-    path.join(process.resourcesPath || '', 'app.asar', 'out', 'Logo.png'),
-    ...(isWin
-      ? [
-          path.join(__dirname, '..', 'public', 'Logo.ico'),
-          path.join(__dirname, '..', 'out', 'Logo.ico'),
-          path.join(process.resourcesPath || '', 'app.asar', 'out', 'Logo.ico'),
-        ]
-      : []),
-  ];
-
-  for (const candidate of candidates) {
-    try {
-      if (candidate && fs.existsSync(candidate)) return candidate;
-    } catch {
-      // ignore
-    }
-  }
-  return undefined;
+  return resolveBrandLogoPath() ?? undefined;
 }
 
 function createWindow(url) {

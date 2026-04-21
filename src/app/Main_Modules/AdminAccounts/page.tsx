@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { supabase } from "../../Client/SupabaseClients";
 import { useAuthRole } from "../../Client/useRbac";
 import { AccessTabs } from "../Components/AccessTabs";
+import { UserPlus, X } from "lucide-react";
 
 type RoleRow = { role_id: string; role_name: string };
 
@@ -63,6 +64,7 @@ export default function AdminAccountsPage() {
 	const [accountPassword, setAccountPassword] = useState("");
 	const [accountRole, setAccountRole] = useState("admin");
 	const [creatingAccount, setCreatingAccount] = useState(false);
+	const [createAccountOpen, setCreateAccountOpen] = useState(false);
 	const [togglingActiveId, setTogglingActiveId] = useState<string | null>(null);
 
 	const currentAdminId = useMemo(() => {
@@ -77,6 +79,18 @@ export default function AdminAccountsPage() {
 	}, []);
 
 	const canManage = role === "superadmin";
+	const canUsePortal = typeof document !== "undefined";
+
+	useEffect(() => {
+		if (!createAccountOpen || !canUsePortal) return;
+
+		const previousOverflow = document.body.style.overflow;
+		document.body.style.overflow = "hidden";
+
+		return () => {
+			document.body.style.overflow = previousOverflow;
+		};
+	}, [createAccountOpen, canUsePortal]);
 
 	async function logAudit(action: string, details?: unknown) {
 		if (!api?.audit?.logEvent) return;
@@ -182,6 +196,7 @@ export default function AdminAccountsPage() {
 			setAccountPassword("");
 			setAccountFullName("");
 			setAccountRole(roleName);
+			setCreateAccountOpen(false);
 			logAudit("ADMIN_CREATE_ACCOUNT", { username, role: roleName });
 			loadAccounts();
 			loadRoles();
@@ -293,6 +308,22 @@ export default function AdminAccountsPage() {
 				</div>
 				<div className="flex items-center gap-2">
 					<button
+						onClick={() => {
+							setError("");
+							setSuccess("");
+							setCreateAccountOpen(true);
+						}}
+						disabled={!canManage}
+						className={`animated-btn inline-flex items-center gap-2 px-4 py-2 rounded-xl font-semibold border ${
+							canManage
+								? "bg-[#FFDA03] text-black hover:bg-[#EFCB00]"
+								: "bg-[#FFDA03] text-black opacity-60 cursor-not-allowed"
+						}`}
+					>
+						<UserPlus className="h-4 w-4" />
+						Create Account
+					</button>
+					<button
 						onClick={() => router.push("/Main_Modules/Requests/Queue/")}
 						className="animated-btn px-4 py-2 rounded-xl bg-white border hover:bg-white"
 					>
@@ -314,70 +345,106 @@ export default function AdminAccountsPage() {
 			{error ? <div className="mb-3 text-red-600 text-sm">{error}</div> : null}
 			{success ? <div className="mb-3 text-emerald-700 text-sm">{success}</div> : null}
 
-			<div className="glass-panel animate-scale-in rounded-2xl border-none p-4">
-				<div className="text-sm font-semibold text-black">Create Account</div>
-				<div className="mt-1 text-xs text-black">Create login accounts for your team. Internal IDs are hidden.</div>
-				<div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-2">
-					<div>
-						<div className="mb-1 text-xs font-semibold uppercase tracking-wide text-black">Username</div>
-						<input
-							value={accountUsername}
-							onChange={(e) => setAccountUsername(e.target.value)}
-							placeholder="username"
-							className="w-full border rounded-xl px-3 py-2 text-black"
-							disabled={!canManage || creatingAccount}
-						/>
-					</div>
-					<div>
-						<div className="mb-1 text-xs font-semibold uppercase tracking-wide text-black">Password</div>
-						<input
-							type="password"
-							value={accountPassword}
-							onChange={(e) => setAccountPassword(e.target.value)}
-							placeholder="password"
-							className="w-full border rounded-xl px-3 py-2 text-black"
-							disabled={!canManage || creatingAccount}
-						/>
-					</div>
-					<div>
-						<div className="mb-1 text-xs font-semibold uppercase tracking-wide text-black">Full Name</div>
-						<input
-							value={accountFullName}
-							onChange={(e) => setAccountFullName(e.target.value)}
-							placeholder="full name (optional)"
-							className="w-full border rounded-xl px-3 py-2 text-black"
-							disabled={!canManage || creatingAccount}
-						/>
-					</div>
-					<div>
-						<div className="mb-1 text-xs font-semibold uppercase tracking-wide text-black">Role</div>
-						<select
-							value={accountRole}
-							onChange={(e) => setAccountRole(e.target.value)}
-							className="w-full border rounded-xl px-3 py-2 text-black bg-white"
-							disabled={!canManage || creatingAccount}
-						>
-							{roleNames.length === 0 ? <option value="admin">admin</option> : null}
-							{roleNames.map((r) => (
-								<option key={r} value={r}>
-									{r}
-								</option>
-							))}
-						</select>
-					</div>
-				</div>
-				<div className="mt-3 flex justify-end">
-					<button
-						onClick={createAccount}
-						className={`px-4 py-2 rounded-xl font-semibold ${
-							canManage ? "animated-btn bg-[#FFDA03] text-black hover:bg-[#EFCB00]" : "animated-btn bg-[#FFDA03] text-black opacity-60"
-						}`}
-						disabled={!canManage || creatingAccount}
-					>
-						{creatingAccount ? "Creating..." : "Create Account"}
-					</button>
-				</div>
-			</div>
+			{createAccountOpen && canUsePortal ? (
+						<div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm" onClick={() => setCreateAccountOpen(false)}>
+							<div
+								className="w-full max-w-2xl overflow-hidden rounded-[28px] border border-white/70 bg-white shadow-2xl"
+								onClick={(e) => e.stopPropagation()}
+							>
+								<div className="bg-gradient-to-r from-[#111827] via-[#8B1C1C] to-[#611313] px-6 py-5 text-white">
+									<div className="flex items-start justify-between gap-4">
+										<div>
+											<div className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.25em] text-white/75">
+												<UserPlus className="h-3.5 w-3.5 text-[#FFDA03]" />
+												New account
+											</div>
+											<div className="mt-3 text-2xl font-semibold">Create Admin Account</div>
+											<div className="mt-1 text-sm text-white/75">Add a login account and assign the initial role without leaving the page.</div>
+										</div>
+										<button
+											type="button"
+											onClick={() => setCreateAccountOpen(false)}
+											className="animated-btn inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/15 bg-white/10 text-white hover:bg-white/15"
+										>
+											<X className="h-4 w-4" />
+										</button>
+									</div>
+								</div>
+
+								<div className="p-6">
+									<div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+										<div>
+											<div className="mb-1 text-xs font-semibold uppercase tracking-wide text-black">Username</div>
+											<input
+												value={accountUsername}
+												onChange={(e) => setAccountUsername(e.target.value)}
+												placeholder="username"
+												className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-black outline-none focus:border-[#8B1C1C] focus:ring-4 focus:ring-[#8B1C1C]/10"
+												disabled={!canManage || creatingAccount}
+											/>
+										</div>
+										<div>
+											<div className="mb-1 text-xs font-semibold uppercase tracking-wide text-black">Password</div>
+											<input
+												type="password"
+												value={accountPassword}
+												onChange={(e) => setAccountPassword(e.target.value)}
+												placeholder="password"
+												className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-black outline-none focus:border-[#8B1C1C] focus:ring-4 focus:ring-[#8B1C1C]/10"
+												disabled={!canManage || creatingAccount}
+											/>
+										</div>
+										<div>
+											<div className="mb-1 text-xs font-semibold uppercase tracking-wide text-black">Full Name</div>
+											<input
+												value={accountFullName}
+												onChange={(e) => setAccountFullName(e.target.value)}
+												placeholder="full name (optional)"
+												className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-black outline-none focus:border-[#8B1C1C] focus:ring-4 focus:ring-[#8B1C1C]/10"
+												disabled={!canManage || creatingAccount}
+											/>
+										</div>
+										<div>
+											<div className="mb-1 text-xs font-semibold uppercase tracking-wide text-black">Role</div>
+											<select
+												value={accountRole}
+												onChange={(e) => setAccountRole(e.target.value)}
+												className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-black outline-none focus:border-[#8B1C1C] focus:ring-4 focus:ring-[#8B1C1C]/10"
+												disabled={!canManage || creatingAccount}
+											>
+												{roleNames.length === 0 ? <option value="admin">admin</option> : null}
+												{roleNames.map((r) => (
+													<option key={r} value={r}>
+														{r}
+													</option>
+												))}
+											</select>
+										</div>
+									</div>
+
+									<div className="mt-6 flex items-center justify-end gap-2">
+										<button
+											type="button"
+											onClick={() => setCreateAccountOpen(false)}
+											className="animated-btn rounded-xl border bg-white px-4 py-2.5 text-black hover:bg-white"
+											disabled={creatingAccount}
+										>
+											Cancel
+										</button>
+										<button
+											onClick={createAccount}
+											className={`animated-btn inline-flex items-center gap-2 rounded-xl px-4 py-2.5 font-semibold ${
+												canManage ? "bg-[#FFDA03] text-black hover:bg-[#EFCB00]" : "bg-[#FFDA03] text-black opacity-60"
+											}`}
+											disabled={!canManage || creatingAccount}
+										>
+											{creatingAccount ? "Creating..." : "Create Account"}
+										</button>
+									</div>
+								</div>
+							</div>
+						</div>
+						) : null}
 
 			<div className="mt-5 glass-panel animate-scale-in rounded-2xl border-none p-4">
 				<div>
