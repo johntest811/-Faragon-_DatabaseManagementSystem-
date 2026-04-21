@@ -338,6 +338,7 @@ export default function EmployeesPage() {
 	const [serviceExportOpen, setServiceExportOpen] = useState(false);
 	const [serviceExportMonth, setServiceExportMonth] = useState("ALL");
 	const [serviceExportTitle, setServiceExportTitle] = useState("Employees 1+ Year Export");
+	const [serviceExportShowBirthday, setServiceExportShowBirthday] = useState(false);
 
 	const [archiveOpen, setArchiveOpen] = useState(false);
 	const [archiveEmployee, setArchiveEmployee] = useState<Applicant | null>(null);
@@ -667,13 +668,16 @@ if (hiredMonthFilter !== "ALL") {
 				const years = serviceYearsExact(e.date_hired_fsai, now);
 				if (years == null || years < 1) return null;
 				const hiredDate = e.date_hired_fsai ? new Date(e.date_hired_fsai) : null;
+				const birthdayDate = e.birth_date ? new Date(e.birth_date) : null;
 				const hasHiredDate = Boolean(hiredDate && !Number.isNaN(hiredDate.getTime()));
+				const hasBirthdayDate = Boolean(birthdayDate && !Number.isNaN(birthdayDate.getTime()));
 				return {
 					applicant_id: e.applicant_id,
 					name: showNameColumn ? getFullName(e) : "Employee",
 					job: showPositionColumn ? e.client_position ?? "—" : "—",
 					detachment: showDetachmentColumn ? e.detachment ?? "—" : "—",
 					hired_on: hasHiredDate && hiredDate ? hiredDate.toLocaleDateString() : "—",
+					birthday: hasBirthdayDate && birthdayDate ? birthdayDate.toLocaleDateString() : "—",
 					hired_month: hasHiredDate && hiredDate ? String(hiredDate.getMonth() + 1).padStart(2, "0") : null,
 					service: formatServiceLengthShort(e.date_hired_fsai, now),
 					years,
@@ -686,6 +690,7 @@ if (hiredMonthFilter !== "ALL") {
 					job: string;
 					detachment: string;
 					hired_on: string;
+					birthday: string;
 					hired_month: string | null;
 					service: string;
 					years: number;
@@ -890,6 +895,7 @@ if (hiredMonthFilter !== "ALL") {
 
 	function serviceExportFileBase() {
 		const parts = ["employees_service", serviceExportMonth === "ALL" ? "all-months" : `m${serviceExportMonth}`];
+		if (serviceExportShowBirthday) parts.push("birthday");
 		parts.push(new Date().toISOString().slice(0, 10));
 		return parts.join("_");
 	}
@@ -905,13 +911,21 @@ if (hiredMonthFilter !== "ALL") {
 		const monthLabel =
 			HIRE_MONTH_OPTIONS.find((opt) => opt.value === serviceExportMonth)?.label ?? "All Months";
 		const title = serviceExportTitle.trim() || "Employees 1+ Year Export";
+		const headers = serviceExportShowBirthday
+			? ["Name", "Job Title", "Detachment", "Hired Date", "Birthday", "Years w/ Company"]
+			: ["Name", "Job Title", "Detachment", "Hired Date", "Years w/ Company"];
+		const body = rows.map((row) =>
+			serviceExportShowBirthday
+				? [row.name, row.job, row.detachment, row.hired_on, row.birthday, row.service]
+				: [row.name, row.job, row.detachment, row.hired_on, row.service]
+		);
 		const ws = XLSX.utils.aoa_to_sheet([
 			[title],
 			[`Generated: ${new Date().toLocaleString()}`],
 			[`Month Filter: ${monthLabel}`],
 			[],
-			["Name", "Job Title", "Detachment", "Hired Date", "Years w/ Company"],
-			...rows.map((row) => [row.name, row.job, row.detachment, row.hired_on, row.service]),
+			headers,
+			...body,
 		]);
 		const wb = XLSX.utils.book_new();
 		XLSX.utils.book_append_sheet(wb, ws, "1+ Year In Company");
@@ -935,13 +949,21 @@ if (hiredMonthFilter !== "ALL") {
 			HIRE_MONTH_OPTIONS.find((opt) => opt.value === serviceExportMonth)?.label ?? "All Months";
 		const title = serviceExportTitle.trim() || "Employees 1+ Year Export";
 		const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
+		const head = serviceExportShowBirthday
+			? [["Name", "Job Title", "Detachment", "Hired Date", "Birthday", "Years w/ Company"]]
+			: [["Name", "Job Title", "Detachment", "Hired Date", "Years w/ Company"]];
+		const body = rows.map((r) =>
+			serviceExportShowBirthday
+				? [r.name, r.job, r.detachment, r.hired_on, r.birthday, r.service]
+				: [r.name, r.job, r.detachment, r.hired_on, r.service]
+		);
 
 		doc.setFontSize(14);
 		doc.text(`${title} - ${monthLabel}`, 40, 40);
 		autoTable(doc, {
 			startY: 60,
-			head: [["Name", "Job Title", "Detachment", "Hired Date", "Years w/ Company"]],
-			body: rows.map((r) => [r.name, r.job, r.detachment, r.hired_on, r.service]),
+			head,
+			body,
 			styles: { fontSize: 8, cellPadding: 3 },
 			headStyles: { fillColor: [255, 218, 3], textColor: [0, 0, 0] },
 		});
@@ -1423,7 +1445,7 @@ if (hiredMonthFilter !== "ALL") {
 						</div>
 
 						<div className="p-6 space-y-4">
-							<div className="grid grid-cols-1 md:grid-cols-[1fr_220px_auto] gap-4">
+							<div className="grid grid-cols-1 md:grid-cols-[1fr_220px_220px_auto] gap-4">
 								<label className="text-sm text-black">
 									<div className="text-gray-600 mb-1">Title</div>
 									<input
@@ -1447,6 +1469,19 @@ if (hiredMonthFilter !== "ALL") {
 											</option>
 										))}
 									</select>
+								</label>
+
+								<label className="flex items-center gap-3 rounded-xl border bg-white px-3 py-2 text-sm text-black">
+									<input
+										type="checkbox"
+										checked={serviceExportShowBirthday}
+										onChange={(e) => setServiceExportShowBirthday(e.target.checked)}
+										className="h-4 w-4 accent-[#FFDA03]"
+									/>
+									<div>
+										<div className="font-medium">Display birthday</div>
+										<div className="text-xs text-gray-500">Adds a birthday column for 1+ year employees.</div>
+									</div>
 								</label>
 
 								<div className="flex items-end justify-end gap-2">
@@ -1484,6 +1519,7 @@ if (hiredMonthFilter !== "ALL") {
 													<th className="px-3 py-2 text-left">Job</th>
 													<th className="px-3 py-2 text-left">Detachment</th>
 													<th className="px-3 py-2 text-left">Hired Date</th>
+													{serviceExportShowBirthday ? <th className="px-3 py-2 text-left">Birthday</th> : null}
 													<th className="px-3 py-2 text-left">Years w/ Company</th>
 												</tr>
 											</thead>
@@ -1494,6 +1530,7 @@ if (hiredMonthFilter !== "ALL") {
 														<td className="px-3 py-2">{row.job}</td>
 														<td className="px-3 py-2">{row.detachment}</td>
 														<td className="px-3 py-2">{row.hired_on}</td>
+														{serviceExportShowBirthday ? <td className="px-3 py-2">{row.birthday}</td> : null}
 														<td className="px-3 py-2">{row.service}</td>
 													</tr>
 												))}

@@ -388,6 +388,7 @@ function EmployeeDetailsInner() {
   const [viewerItems, setViewerItems] = useState<ViewerItem[]>([]);
   const [viewerIndex, setViewerIndex] = useState(0);
   const [viewerZoom, setViewerZoom] = useState(1);
+  const [detailsRefreshNonce, setDetailsRefreshNonce] = useState(0);
 
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
@@ -534,6 +535,7 @@ function EmployeeDetailsInner() {
     };
   }, [
     id,
+    detailsRefreshNonce,
     loadingEmployeeColumns,
     loadingApplicantColumns,
     loadingApplicantRows,
@@ -988,7 +990,7 @@ function EmployeeDetailsInner() {
         subtitle={name}
         onClose={() => setEditorOpen(false)}
         onSaved={() => {
-          // After save, the realtime channel will refresh; close is already handled.
+          setDetailsRefreshNonce((value) => value + 1);
         }}
       />
     </div>

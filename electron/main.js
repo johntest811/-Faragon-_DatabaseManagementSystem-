@@ -1066,53 +1066,115 @@ function renderEmailHtml({ subject, recipientName, items, daysBefore, bodyHtml, 
     })
     .join('');
 
-  return `
-  <div style="margin:0;padding:0;background:#f4f6f8;">
-    <div style="max-width:760px;margin:0 auto;padding:24px 16px 32px;">
-      <div style="overflow:hidden;border:1px solid #e5e7eb;border-radius:20px;background:#ffffff;box-shadow:0 18px 40px rgba(15,23,42,0.08);">
-        <div style="padding:22px 24px;background:linear-gradient(135deg,#111827 0%,#7f1d1d 58%,#8B1C1C 100%);color:#ffffff;">
-          <div style="display:flex;align-items:center;gap:16px;">
-            <div style="width:64px;height:64px;padding:8px;border-radius:18px;background:#ffffff;box-sizing:border-box;overflow:hidden;flex:0 0 auto;">
-              ${logoMarkup}
-            </div>
+  const mobileCards = items
+    .map((it) => {
+      const recordName = safeText(it.record_name || it.item_name || displayNameFromRow(it)) || 'Record';
+      const typeName = safeText(it.license_type || it.expiration_type) || 'EXPIRATION';
+      const daysValue = Number(it.days_until_expiry);
+      const statusLabel = fmtDays(daysValue);
+      const statusStyle =
+        Number.isFinite(daysValue) && daysValue < 0
+          ? 'background:#fee2e2;color:#991b1b;'
+          : Number.isFinite(daysValue) && daysValue <= 7
+            ? 'background:#fef3c7;color:#92400e;'
+            : 'background:#dcfce7;color:#166534;';
+      return `
+        <div style="margin-top:12px;border:1px solid #e5e7eb;border-radius:16px;background:#ffffff;padding:14px 14px 12px;box-shadow:0 10px 24px rgba(15,23,42,0.05);">
+          <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;">
             <div style="min-width:0;">
-              <div style="font-size:11px;letter-spacing:0.18em;text-transform:uppercase;color:rgba(255,255,255,0.78);font-weight:700;">${escapeHtml(companyName)}</div>
-              <div style="font-size:24px;line-height:1.15;font-weight:800;margin-top:4px;">Expiration Notification</div>
-              <div style="margin-top:6px;font-size:13px;color:rgba(255,255,255,0.88);">${escapeHtml(itemSummary)}</div>
+              <div style="font-size:14px;font-weight:800;color:#111827;line-height:1.35;">${escapeHtml(recordName)}</div>
+              <div style="margin-top:3px;font-size:11px;letter-spacing:0.12em;text-transform:uppercase;color:#64748b;font-weight:700;">${escapeHtml(typeName)}</div>
+            </div>
+            <span style="display:inline-flex;align-items:center;justify-content:center;min-width:96px;padding:6px 10px;border-radius:999px;font-size:11px;font-weight:700;${statusStyle}">${escapeHtml(statusLabel)}</span>
+          </div>
+          <div style="margin-top:12px;display:flex;flex-wrap:wrap;gap:10px;">
+            <div style="flex:1 1 120px;min-width:120px;">
+              <div style="font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:#64748b;font-weight:700;">Expires On</div>
+              <div style="margin-top:3px;font-size:13px;color:#111827;line-height:1.45;">${escapeHtml(it.expires_on)}</div>
+            </div>
+            <div style="flex:1 1 120px;min-width:120px;">
+              <div style="font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:#64748b;font-weight:700;">Status</div>
+              <div style="margin-top:3px;font-size:13px;color:#111827;line-height:1.45;">${escapeHtml(statusLabel)}</div>
             </div>
           </div>
-        </div>
+        </div>`;
+    })
+    .join('');
 
-        <div style="padding:24px;">
-          <div style="display:inline-block;border-radius:999px;background:#fef3c7;color:#92400e;padding:6px 12px;font-size:12px;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;">${escapeHtml(heading)}</div>
-          <div style="margin-top:18px;font-size:15px;line-height:1.7;color:#111827;">
-            <div style="margin:0 0 12px 0;">Dear Sir/Ma'am${recipientName ? ` ${escapeHtml(recipientName)}` : ''},</div>
-            <div style="margin:0 0 12px 0;color:#374151;">This is a formal reminder that the records below are approaching expiration within ${escapeHtml(String(daysBefore))} day${Number(daysBefore) === 1 ? '' : 's'} and should be reviewed as soon as possible.</div>
-            <div style="margin:0 0 12px 0;color:#374151;">Please coordinate the appropriate renewal action before the listed date.</div>
+  return `
+  <!doctype html>
+  <html>
+    <head>
+      <meta charset="utf-8" />
+      <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+      <style>
+        @media only screen and (max-width: 640px) {
+          .email-shell { padding: 12px !important; }
+          .email-card { border-radius: 18px !important; }
+          .email-hero { padding: 18px !important; }
+          .email-hero-row { display: block !important; }
+          .email-logo { width: 56px !important; height: 56px !important; margin-bottom: 12px !important; }
+          .email-body { padding: 18px !important; }
+          .email-heading { font-size: 20px !important; }
+          .email-intro { font-size: 14px !important; }
+          .email-desktop-table { display: none !important; }
+          .email-mobile-list { display: block !important; }
+        }
+      </style>
+    </head>
+    <body style="margin:0;padding:0;background:#f4f6f8;font-family:Arial,Helvetica,sans-serif;">
+      <div class="email-shell" style="margin:0 auto;padding:24px 16px 32px;max-width:760px;">
+        <div class="email-card" style="overflow:hidden;border:1px solid #e5e7eb;border-radius:20px;background:#ffffff;box-shadow:0 18px 40px rgba(15,23,42,0.08);">
+          <div class="email-hero" style="padding:22px 24px;background:linear-gradient(135deg,#111827 0%,#7f1d1d 58%,#8B1C1C 100%);color:#ffffff;">
+            <div class="email-hero-row" style="display:flex;align-items:center;gap:16px;">
+              <div class="email-logo" style="width:64px;height:64px;padding:8px;border-radius:18px;background:#ffffff;box-sizing:border-box;overflow:hidden;flex:0 0 auto;">
+                ${logoMarkup}
+              </div>
+              <div style="min-width:0;">
+                <div style="font-size:11px;letter-spacing:0.18em;text-transform:uppercase;color:rgba(255,255,255,0.78);font-weight:700;">${escapeHtml(companyName)}</div>
+                <div class="email-heading" style="font-size:24px;line-height:1.15;font-weight:800;margin-top:4px;">Expiration Notification</div>
+                <div class="email-intro" style="margin-top:6px;font-size:13px;color:rgba(255,255,255,0.88);">${escapeHtml(itemSummary)}</div>
+              </div>
+            </div>
           </div>
-          ${safeBody ? `<div style="margin-top:18px;padding:16px 18px;border:1px solid #e5e7eb;border-radius:16px;background:#f9fafb;color:#111827;line-height:1.7;">${safeBody}</div>` : ''}
-          ${!safeBody && msg ? `<div style="margin-top:18px;padding:16px 18px;border:1px solid #e5e7eb;border-radius:16px;background:#f9fafb;color:#111827;line-height:1.7;">${escapeHtml(msg)}</div>` : ''}
-          <div style="margin-top:20px;border:1px solid #e5e7eb;border-radius:16px;overflow:hidden;">
-            <table style="width:100%;border-collapse:collapse;">
-              <thead>
-                <tr style="background:#f8fafc;color:#334155;">
-                  <th align="left" style="padding:12px 10px;border-bottom:1px solid #e5e7eb;font-size:12px;letter-spacing:0.04em;text-transform:uppercase;">Account / Record</th>
-                  <th align="left" style="padding:12px 10px;border-bottom:1px solid #e5e7eb;font-size:12px;letter-spacing:0.04em;text-transform:uppercase;">Type</th>
-                  <th align="left" style="padding:12px 10px;border-bottom:1px solid #e5e7eb;font-size:12px;letter-spacing:0.04em;text-transform:uppercase;">Expires On</th>
-                  <th align="left" style="padding:12px 10px;border-bottom:1px solid #e5e7eb;font-size:12px;letter-spacing:0.04em;text-transform:uppercase;">Status</th>
-                </tr>
-              </thead>
-              <tbody>${rows || `<tr><td colspan="4" style="padding:16px 10px;color:#6b7280;">No records to display.</td></tr>`}</tbody>
-            </table>
+
+          <div class="email-body" style="padding:24px;">
+            <div style="display:inline-block;border-radius:999px;background:#fef3c7;color:#92400e;padding:6px 12px;font-size:12px;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;">${escapeHtml(heading)}</div>
+            <div style="margin-top:18px;font-size:15px;line-height:1.7;color:#111827;">
+              <div style="margin:0 0 12px 0;">Dear Sir/Ma'am${recipientName ? ` ${escapeHtml(recipientName)}` : ''},</div>
+              <div style="margin:0 0 12px 0;color:#374151;">This is a formal reminder that the records below are approaching expiration within ${escapeHtml(String(daysBefore))} day${Number(daysBefore) === 1 ? '' : 's'} and should be reviewed as soon as possible.</div>
+              <div style="margin:0 0 12px 0;color:#374151;">Please coordinate the appropriate renewal action before the listed date.</div>
+            </div>
+            ${safeBody ? `<div style="margin-top:18px;padding:16px 18px;border:1px solid #e5e7eb;border-radius:16px;background:#f9fafb;color:#111827;line-height:1.7;">${safeBody}</div>` : ''}
+            ${!safeBody && msg ? `<div style="margin-top:18px;padding:16px 18px;border:1px solid #e5e7eb;border-radius:16px;background:#f9fafb;color:#111827;line-height:1.7;">${escapeHtml(msg)}</div>` : ''}
+
+            <div class="email-desktop-table" style="margin-top:20px;border:1px solid #e5e7eb;border-radius:16px;overflow:hidden;">
+              <table style="width:100%;border-collapse:collapse;">
+                <thead>
+                  <tr style="background:#f8fafc;color:#334155;">
+                    <th align="left" style="padding:12px 10px;border-bottom:1px solid #e5e7eb;font-size:12px;letter-spacing:0.04em;text-transform:uppercase;">Account / Record</th>
+                    <th align="left" style="padding:12px 10px;border-bottom:1px solid #e5e7eb;font-size:12px;letter-spacing:0.04em;text-transform:uppercase;">Type</th>
+                    <th align="left" style="padding:12px 10px;border-bottom:1px solid #e5e7eb;font-size:12px;letter-spacing:0.04em;text-transform:uppercase;">Expires On</th>
+                    <th align="left" style="padding:12px 10px;border-bottom:1px solid #e5e7eb;font-size:12px;letter-spacing:0.04em;text-transform:uppercase;">Status</th>
+                  </tr>
+                </thead>
+                <tbody>${rows || `<tr><td colspan="4" style="padding:16px 10px;color:#6b7280;">No records to display.</td></tr>`}</tbody>
+              </table>
+            </div>
+
+            <div class="email-mobile-list" style="display:none;margin-top:16px;">
+              ${mobileCards || `<div style="border:1px solid #e5e7eb;border-radius:16px;background:#ffffff;padding:14px 16px;color:#6b7280;font-size:13px;line-height:1.6;">No records to display.</div>`}
+            </div>
+
+            <div class="email-note" style="margin-top:18px;padding:14px 16px;border-left:4px solid #8B1C1C;background:#fef2f2;border-radius:14px;color:#7f1d1d;font-size:13px;line-height:1.6;">
+              Please coordinate the renewal before the expiration date to avoid service disruptions.
+            </div>
+            <div style="margin-top:18px;color:#64748b;font-size:12px;line-height:1.6;">This is an automated message from ${escapeHtml(companyName)}. Replies may not be monitored.</div>
           </div>
-          <div style="margin-top:18px;padding:14px 16px;border-left:4px solid #8B1C1C;background:#fef2f2;border-radius:14px;color:#7f1d1d;font-size:13px;line-height:1.6;">
-            Please coordinate the renewal before the expiration date to avoid service disruptions.
-          </div>
-          <div style="margin-top:18px;color:#64748b;font-size:12px;line-height:1.6;">This is an automated message from ${escapeHtml(companyName)}. Replies may not be monitored.</div>
         </div>
       </div>
-    </div>
-  </div>`;
+    </body>
+  </html>`;
 }
 
 async function fetchExpiringRows(admin, preferences, localPrefs, limit) {
