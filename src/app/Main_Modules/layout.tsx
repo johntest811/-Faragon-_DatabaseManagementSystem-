@@ -7,7 +7,6 @@ import Image from "next/image";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "../Client/SupabaseClients";
 import { useAuthRole, useMyModules } from "../Client/useRbac";
-import { useRealtimeRefresh } from "../Client/useRealtimeRefresh";
 import {
   LayoutGrid,
   Users,
@@ -583,7 +582,6 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
   const [expiringEmailByApplicantId, setExpiringEmailByApplicantId] = useState<Record<string, string | null>>({});
   const { role: sessionRole } = useAuthRole();
   const { modules: myModules } = useMyModules();
-  useRealtimeRefresh(["applicants"], { debounceMs: 900 });
 
   useEffect(() => {
     let cancelled = false;

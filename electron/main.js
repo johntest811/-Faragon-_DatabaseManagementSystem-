@@ -2603,6 +2603,7 @@ function createWindow(url) {
   const win = new BrowserWindow({
     width: 1024,
     height: 768,
+    fullscreenable: true,
     show: false,
     autoHideMenuBar: true,
     ...(iconPath ? { icon: iconPath } : {}),
@@ -2627,6 +2628,7 @@ function createWindow(url) {
 
   win.once('ready-to-show', () => {
     try {
+      win.maximize();
       win.show();
       win.focus();
     } catch {

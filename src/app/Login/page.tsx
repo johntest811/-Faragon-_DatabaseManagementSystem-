@@ -149,7 +149,7 @@ export default function Login() {
                   <Image src="/Logo.png" alt="Faragon Security Agency logo" width={96} height={96} className="h-full w-full object-contain" priority />
                 </div>
                 <div className="max-w-md">
-                  <h1 className="text-4xl font-semibold tracking-tight text-white sm:text-5xl">Faragon Database</h1>
+                  <h1 className="text-4xl font-semibold tracking-tight text-white sm:text-5xl">Faragon</h1>
                   <p className="mt-3 text-sm leading-6 text-white/80">
                     A focused workspace for employee records, inventory, requests, and notification workflows.
                   </p>

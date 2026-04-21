@@ -346,7 +346,7 @@ export default function AdminAccountsPage() {
 			{success ? <div className="mb-3 text-emerald-700 text-sm">{success}</div> : null}
 
 			{createAccountOpen && canUsePortal ? (
-						<div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm" onClick={() => setCreateAccountOpen(false)}>
+						<div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/45 p-4" onClick={() => setCreateAccountOpen(false)}>
 							<div
 								className="w-full max-w-2xl overflow-hidden rounded-[28px] border border-white/70 bg-white shadow-2xl"
 								onClick={(e) => e.stopPropagation()}

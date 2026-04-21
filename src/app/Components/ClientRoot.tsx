@@ -2,10 +2,33 @@
 
 import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
+import { useRealtimeRefresh } from "../Client/useRealtimeRefresh";
 import SplashScreen from "./SplashScreen";
 import ToastProvider from "./ToastProvider";
 
 type SplashReason = "startup" | "logout" | "login" | null;
+
+const APP_REFRESH_TABLES = [
+  "admins",
+  "app_roles",
+  "role_module_access",
+  "role_column_access",
+  "modules",
+  "applicants",
+  "access_requests",
+  "contracts",
+  "contract_employees",
+  "inventory_fixed_asset",
+  "paraphernalia",
+  "paraphernalia_inventory",
+  "restock",
+  "notification_preferences",
+  "notification_email_settings",
+  "notification_recipients",
+  "other_expiration_items",
+  "licensure",
+  "audit_log",
+];
 
 export default function ClientRoot({
   children,
@@ -13,6 +36,7 @@ export default function ClientRoot({
   children: React.ReactNode;
 }) {
   const pathname = usePathname() ?? "";
+  useRealtimeRefresh(APP_REFRESH_TABLES, { debounceMs: 900 });
   const [startupSplashPending, setStartupSplashPending] = useState(true);
   const [showSplash, setShowSplash] = useState(true);
   const [splashFadingOut, setSplashFadingOut] = useState(false);
