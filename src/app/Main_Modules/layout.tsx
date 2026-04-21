@@ -2,6 +2,7 @@
 
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { useCallback } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
@@ -715,7 +716,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
 
   const api = (globalThis as { electronAPI?: ElectronLayoutApi }).electronAPI;
 
-  async function refreshNotificationPrefs() {
+  const refreshNotificationPrefs = useCallback(async () => {
     try {
       if (!api?.settings?.loadNotificationConfig) {
         setSendToEmployees(true);
@@ -727,7 +728,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
     } catch {
       setSendToEmployees(true);
     }
-  }
+  }, [api]);
 
   useEffect(() => {
     // Initialize "last seen" timestamp for activity notifications.
@@ -785,7 +786,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
     return () => document.removeEventListener("mousedown", onDocDown);
   }, []);
 
-  async function refreshPreview() {
+  const refreshPreview = useCallback(async () => {
     try {
       const now = new Date();
       const threshold = new Date(now);
@@ -841,9 +842,9 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
       setPreviewRows([]);
       setPreviewCount(0);
     }
-  }
+  }, []);
 
-  async function refreshActivity() {
+  const refreshActivity = useCallback(async () => {
     if (!api?.audit?.getRecent) return;
     try {
       const key = "auditLastSeenAt";
@@ -864,9 +865,9 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
     } catch {
       // ignore
     }
-  }
+  }, [api]);
 
-  async function refreshExpiring() {
+  const refreshExpiring = useCallback(async () => {
     if (!api?.notifications?.getExpiringSummary) return;
     try {
       await refreshNotificationPrefs();
@@ -936,7 +937,56 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
     } catch {
       // ignore
     }
-  }
+  }, [api, refreshNotificationPrefs]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const scheduleRefresh = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+        return;
+      }
+
+      if (refreshTimer) {
+        clearTimeout(refreshTimer);
+      }
+
+      refreshTimer = setTimeout(() => {
+        refreshTimer = null;
+        if (cancelled) return;
+        void refreshActivity();
+        void refreshExpiring();
+        void refreshPreview();
+      }, 600);
+    };
+
+    const tables = [
+      "applicants",
+      "licensure",
+      "other_expiration_items",
+      "notification_preferences",
+      "notification_email_settings",
+      "notification_recipients",
+      "audit_log",
+    ];
+
+    const channels = tables.map((table) =>
+      supabase
+        .channel(`realtime:topnav:${table}`)
+        .on("postgres_changes", { event: "*", schema: "public", table }, scheduleRefresh)
+        .subscribe()
+    );
+
+    return () => {
+      cancelled = true;
+      if (refreshTimer) {
+        clearTimeout(refreshTimer);
+        refreshTimer = null;
+      }
+      channels.forEach((channel) => supabase.removeChannel(channel));
+    };
+  }, [refreshActivity, refreshExpiring, refreshPreview]);
 
   useEffect(() => {
     refreshActivity();
