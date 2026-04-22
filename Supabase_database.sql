@@ -385,7 +385,7 @@ CREATE TABLE public.notification_recipients (
 CREATE TABLE public.other_expiration_items (
   id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
   item_name text NOT NULL,
-  expiration_type text NOT NULL CHECK (expiration_type = ANY (ARRAY['CAR_OCR'::text, 'CAR_REGISTRATION'::text, 'DRIVERS_LICENSE'::text])),
+  expiration_type text NOT NULL CHECK (NULLIF(btrim(expiration_type), ''::text) IS NOT NULL),
   expires_on date NOT NULL,
   recipient_email text,
   notes text,
@@ -406,7 +406,7 @@ CREATE TABLE public.other_expiration_notification_log (
   status text NOT NULL DEFAULT 'QUEUED'::text CHECK (status = ANY (ARRAY['QUEUED'::text, 'SENT'::text, 'FAILED'::text, 'SKIPPED'::text])),
   error_message text,
   CONSTRAINT other_expiration_notification_log_pkey PRIMARY KEY (id),
-  CONSTRAINT other_expiration_notification_log_other_item_fkey FOREIGN KEY (other_expiration_item_id) REFERENCES public.other_expiration_items(id) ON DELETE CASCADE
+  CONSTRAINT other_expiration_notification_log_other_item_fkey FOREIGN KEY (other_expiration_item_id) REFERENCES public.other_expiration_items(id)
 );
 CREATE TABLE public.paraphernalia (
   id_paraphernalia uuid NOT NULL,
@@ -443,8 +443,8 @@ CREATE TABLE public.restock (
   contract_id uuid,
   CONSTRAINT restock_pkey PRIMARY KEY (id_restock),
   CONSTRAINT restock_paraphernalia_fkey FOREIGN KEY (id_paraphernalia) REFERENCES public.paraphernalia(id_paraphernalia),
-  CONSTRAINT restock_inventory_fkey FOREIGN KEY (id_paraphernalia_inventory) REFERENCES public.paraphernalia_inventory(id_paraphernalia_inventory),
-  CONSTRAINT restock_contract_fkey FOREIGN KEY (contract_id) REFERENCES public.contracts(contract_id)
+  CONSTRAINT restock_contract_fkey FOREIGN KEY (contract_id) REFERENCES public.contracts(contract_id),
+  CONSTRAINT restock_inventory_fkey FOREIGN KEY (id_paraphernalia_inventory) REFERENCES public.paraphernalia_inventory(id_paraphernalia_inventory)
 );
 CREATE TABLE public.role_column_access (
   role_id uuid NOT NULL,

@@ -376,6 +376,29 @@ export default function ArchivePage() {
     setItems((prev) => prev.filter((x) => x.applicant_id !== employee.applicant_id));
   }
 
+  async function deleteEmployee(employee: Applicant) {
+    setError("");
+    const ok = window.confirm(`Delete ${getFullName(employee)}? This will move the employee to trash.`);
+    if (!ok) return;
+
+    const { error: deleteError } = await supabase
+      .from("applicants")
+      .update({
+        is_trashed: true,
+        trashed_at: new Date().toISOString(),
+        trashed_by: null,
+      })
+      .eq("applicant_id", employee.applicant_id);
+
+    if (deleteError) {
+      console.error(deleteError);
+      setError(deleteError.message || "Failed to delete employee");
+      return;
+    }
+
+    setItems((prev) => prev.filter((x) => x.applicant_id !== employee.applicant_id));
+  }
+
   return (
     <div className="space-y-5">
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
@@ -527,17 +550,30 @@ export default function ArchivePage() {
                   </span>
                 </td>
                 <td className="px-4 py-3 text-center rounded-r-xl">
-                  <button
-                    onClick={(ev) => {
-                      ev.stopPropagation();
-                      restore(e);
-                    }}
-                    className="px-4 py-2 text-xs rounded-xl bg-black text-white hover:bg-gray-800 inline-flex items-center gap-2"
-                    title="Restore"
-                    type="button"
-                  >
-                    <RotateCcw className="w-4 h-4" /> Restore
-                  </button>
+                  <div className="inline-flex items-center gap-2">
+                    <button
+                      onClick={(ev) => {
+                        ev.stopPropagation();
+                        restore(e);
+                      }}
+                      className="px-4 py-2 text-xs rounded-xl bg-black text-white hover:bg-gray-800 inline-flex items-center gap-2"
+                      title="Restore"
+                      type="button"
+                    >
+                      <RotateCcw className="w-4 h-4" /> Restore
+                    </button>
+                    <button
+                      onClick={(ev) => {
+                        ev.stopPropagation();
+                        void deleteEmployee(e);
+                      }}
+                      className="px-4 py-2 text-xs rounded-xl border border-red-200 bg-white text-red-600 font-semibold hover:bg-red-50"
+                      title="Delete"
+                      type="button"
+                    >
+                      Delete
+                    </button>
+                  </div>
                 </td>
               </tr>
             );
@@ -595,6 +631,17 @@ export default function ArchivePage() {
                     >
                       <RotateCcw className="w-4 h-4" /> Restore
                     </button>
+                      <button
+                        onClick={(ev) => {
+                          ev.stopPropagation();
+                          void deleteEmployee(e);
+                        }}
+                        className="h-9 px-3 rounded-xl border border-red-200 bg-white text-red-600 text-xs font-semibold"
+                        title="Delete"
+                        type="button"
+                      >
+                        Delete
+                      </button>
                   </div>
                 </div>
               </div>

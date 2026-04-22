@@ -757,6 +757,46 @@ if (hiredMonthFilter !== "ALL") {
 		setArchiveOpen(true);
 	}
 
+	async function updateEmployeeStatus(employee: Applicant, nextStatus: string) {
+		setError("");
+		const normalizedStatus = normalizeStatus(nextStatus);
+		const { error: updateError } = await supabase
+			.from("applicants")
+			.update({ status: normalizedStatus })
+			.eq("applicant_id", employee.applicant_id);
+
+		if (updateError) {
+			console.error(updateError);
+			setError(updateError.message || "Failed to update employee status");
+			return;
+		}
+
+		await fetchEmployees();
+	}
+
+	async function deleteEmployee(employee: Applicant) {
+		setError("");
+		const ok = window.confirm(`Delete ${getFullName(employee)}? This will move the employee to trash.`);
+		if (!ok) return;
+
+		const { error: deleteError } = await supabase
+			.from("applicants")
+			.update({
+				is_trashed: true,
+				trashed_at: new Date().toISOString(),
+				trashed_by: null,
+			})
+			.eq("applicant_id", employee.applicant_id);
+
+		if (deleteError) {
+			console.error(deleteError);
+			setError(deleteError.message || "Failed to delete employee");
+			return;
+		}
+
+		await fetchEmployees();
+	}
+
 	async function confirmArchive() {
 		if (!archiveEmployee) return;
 		setError("");
@@ -1171,6 +1211,20 @@ if (hiredMonthFilter !== "ALL") {
 										<button
 											onClick={(ev) => {
 												ev.stopPropagation();
+												void updateEmployeeStatus(e, "REASSIGN");
+											}}
+											className="animated-btn h-9 px-3 rounded-xl border bg-white text-black text-xs font-semibold"
+											title="Set status to REASSIGN"
+											type="button"
+										>
+											Reassign
+										</button>
+									)}
+
+									{sessionRole !== "employee" && (
+										<button
+											onClick={(ev) => {
+												ev.stopPropagation();
 											openEdit(e);
 										}}
 										className="animated-btn h-9 w-9 rounded-xl border bg-white flex items-center justify-center text-black"
@@ -1188,9 +1242,24 @@ if (hiredMonthFilter !== "ALL") {
 										}}
 										className="animated-btn h-9 px-3 rounded-xl bg-[#FFDA03] text-black text-xs font-semibold"
 										title="Archive"
+											type="button"
 									>
 										Archive
 									</button>
+									)}
+
+									{sessionRole !== "employee" && (
+										<button
+											onClick={(ev) => {
+												ev.stopPropagation();
+												void deleteEmployee(e);
+											}}
+											className="animated-btn h-9 px-3 rounded-xl border border-red-200 bg-white text-red-600 text-xs font-semibold"
+											title="Delete"
+											type="button"
+										>
+											Delete
+										</button>
 									)}
 
 									{/* Trash page removed */}
@@ -1297,6 +1366,17 @@ if (hiredMonthFilter !== "ALL") {
 										<button
 											onClick={(ev) => {
 												ev.stopPropagation();
+												void updateEmployeeStatus(e, "REASSIGN");
+											}}
+											className="px-3 py-1.5 text-xs rounded-lg border bg-white text-black font-semibold hover:bg-gray-50"
+											title="Set status to REASSIGN"
+											type="button"
+										>
+											Reassign
+										</button>
+										<button
+											onClick={(ev) => {
+												ev.stopPropagation();
 												openEdit(e);
 											}}
 											className="p-2 rounded-lg hover:bg-gray-100"
@@ -1311,8 +1391,20 @@ if (hiredMonthFilter !== "ALL") {
 											}}
 											className="px-3 py-1.5 text-xs rounded-lg bg-[#FFDA03] text-black font-semibold hover:brightness-95"
 											title="Archive"
+											type="button"
 										>
 											Archive
+										</button>
+										<button
+											onClick={(ev) => {
+												ev.stopPropagation();
+												void deleteEmployee(e);
+											}}
+											className="px-3 py-1.5 text-xs rounded-lg border border-red-200 bg-white text-red-600 font-semibold hover:bg-red-50"
+											title="Delete"
+											type="button"
+										>
+											Delete
 										</button>
 										{/* Trash page removed */}
 									</div>
@@ -1558,6 +1650,7 @@ if (hiredMonthFilter !== "ALL") {
 				applicantId={editorApplicantId}
 				onClose={() => setEditorOpen(false)}
 				onSaved={onSaved}
+				onDeleted={fetchEmployees}
 			/>
 
 			<EmployeeExcelImportModal

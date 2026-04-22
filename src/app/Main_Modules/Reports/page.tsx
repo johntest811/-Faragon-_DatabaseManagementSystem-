@@ -243,7 +243,7 @@ export default function LogisticsReportsPage() {
       total: contracts.length,
       active,
       rows,
-      totalDeployed: rows.reduce((s, r) => s + r.deployed, 0),
+      totalDeployed: rows.filter((r) => r.status === "ACTIVE").reduce((s, r) => s + r.deployed, 0),
       totalManpower: rows.reduce((s, r) => s + r.manpower, 0),
     };
   }, [contracts]);

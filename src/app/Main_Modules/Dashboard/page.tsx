@@ -29,6 +29,7 @@ export default function DashboardPage() {
   const router = useRouter();
 
   const topPositions = useMemo(() => positionCounts.slice(0, 10), [positionCounts]);
+  const employeeScopeFilter = "status.is.null,status.eq.ACTIVE,status.eq.INACTIVE";
 
   async function fetchAdmins() {
     setLoading(true);
@@ -62,7 +63,8 @@ export default function DashboardPage() {
         .from('applicants')
         .select('applicant_id', { count: 'exact', head: true })
         .eq('is_archived', false)
-        .eq('is_trashed', false);
+        .eq('is_trashed', false)
+        .or(employeeScopeFilter);
       if (!countRes.error) {
         setEmployeeTotal(Number(countRes.count ?? 0));
       }
@@ -78,6 +80,7 @@ export default function DashboardPage() {
           .select('client_position')
           .eq('is_archived', false)
           .eq('is_trashed', false)
+          .or(employeeScopeFilter)
           .range(offset, offset + pageSize - 1);
 
         if (res.error) break;
@@ -190,7 +193,7 @@ export default function DashboardPage() {
               <div>
                 <div className="text-xs uppercase tracking-[0.18em] text-gray-500">Total Employees</div>
                 <div className="mt-1 text-3xl font-semibold text-black">{employeesLoading ? '…' : employeeTotal}</div>
-                <div className="mt-2 text-xs text-gray-500">From public.applicants (not archived/trashed)</div>
+                <div className="mt-2 text-xs text-gray-500">From public.applicants (active/inactive only, not archived/trashed)</div>
               </div>
               <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#8B1C1C]/10 text-[#8B1C1C]">
                 <Users className="h-5 w-5" />

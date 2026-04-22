@@ -14,6 +14,7 @@ export type EmployeeEditorModalProps = {
   subtitle?: string;
   onClose: () => void;
   onSaved?: (applicantId: string, status: string) => void;
+  onDeleted?: (applicantId: string) => void;
 };
 
 type ApplicantDraft = {
@@ -350,10 +351,12 @@ export default function EmployeeEditorModal({
   subtitle,
   onClose,
   onSaved,
+  onDeleted,
 }: EmployeeEditorModalProps) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string>("");
 
   const STEPS = useMemo(
@@ -1041,6 +1044,42 @@ export default function EmployeeEditorModal({
       setError(message);
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function deleteEmployee() {
+    if (mode !== "edit" || !effectiveId) return;
+
+    const displayName = [app.first_name, app.last_name].filter(Boolean).join(" ").trim() || "this employee";
+    const ok = window.confirm(`Delete ${displayName}? This will move the record to trash.`);
+    if (!ok) return;
+
+    setError("");
+    setDeleting(true);
+    try {
+      const del = await supabase
+        .from("applicants")
+        .update({
+          is_trashed: true,
+          trashed_at: new Date().toISOString(),
+          trashed_by: null,
+        })
+        .eq("applicant_id", effectiveId);
+
+      if (del.error) throw del.error;
+
+      onDeleted?.(effectiveId);
+      onClose();
+    } catch (e: unknown) {
+      const message =
+        e instanceof Error
+          ? e.message
+          : typeof e === "object" && e && "message" in e
+            ? String((e as { message?: unknown }).message ?? "Delete failed")
+            : "Delete failed";
+      setError(message);
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -1734,22 +1773,34 @@ export default function EmployeeEditorModal({
           </div>
 
           <div className="flex items-center justify-end gap-2">
-          <button onClick={onClose} className="px-4 py-2 rounded-xl border bg-white text-black">
-            Cancel
-          </button>
-          <button
-            disabled={saving}
-            onClick={() => {
-              if (mode === "create" && !isLastStep) {
-                goNext();
-                return;
-              }
-              save();
-            }}
-            className={`px-4 py-2 rounded-xl bg-[#FFDA03] text-black font-semibold ${saving ? "opacity-70" : ""}`}
-          >
-            {saving ? "Saving…" : mode === "create" && !isLastStep ? "Next" : "Save"}
-          </button>
+            {mode === "edit" && effectiveId ? (
+              <button
+                type="button"
+                disabled={saving || deleting}
+                onClick={() => void deleteEmployee()}
+                className={`px-4 py-2 rounded-xl border border-red-200 bg-white text-red-600 font-semibold ${
+                  saving || deleting ? "opacity-60" : ""
+                }`}
+              >
+                {deleting ? "Deleting…" : "Delete"}
+              </button>
+            ) : null}
+            <button onClick={onClose} disabled={saving || deleting} className="px-4 py-2 rounded-xl border bg-white text-black">
+              Cancel
+            </button>
+            <button
+              disabled={saving || deleting}
+              onClick={() => {
+                if (mode === "create" && !isLastStep) {
+                  goNext();
+                  return;
+                }
+                save();
+              }}
+              className={`px-4 py-2 rounded-xl bg-[#FFDA03] text-black font-semibold ${saving || deleting ? "opacity-70" : ""}`}
+            >
+              {saving ? "Saving…" : mode === "create" && !isLastStep ? "Next" : "Save"}
+            </button>
           </div>
         </div>
       </div>

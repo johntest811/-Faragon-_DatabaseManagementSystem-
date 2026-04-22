@@ -175,7 +175,7 @@ export default function Login() {
                     </div>
                     <div>
                       <div className="text-sm font-semibold text-white">Live notifications</div>
-                      <div className="text-xs text-white/70">Automatic Gmail sends stay branded</div>
+                      <div className="text-xs text-white/70">Automatic Gmail sends</div>
                     </div>
                   </div>
                 </div>
