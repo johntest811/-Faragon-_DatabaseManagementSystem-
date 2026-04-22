@@ -1256,7 +1256,7 @@ function RequestsPageContent() {
             <div className="mt-4 text-sm text-black">No pending requests.</div>
           ) : (
             <div className="mt-4 overflow-x-auto">
-              <table className="w-full table-auto">
+              <table className="min-w-[1200px] w-full table-auto">
                 <thead>
                   <tr className="text-left text-sm text-black">
                     <th className="px-3 py-2">When</th>

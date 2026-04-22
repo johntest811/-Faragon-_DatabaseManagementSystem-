@@ -1247,7 +1247,7 @@ if (hiredMonthFilter !== "ALL") {
 				</div>
 ) : (
 	<div className="relative overflow-x-auto rounded-2xl glass-panel animate-slide-up">
-		<table className="w-full text-sm text-black border-separate border-spacing-y-2">
+		<table className="min-w-[1200px] w-full text-sm text-black border-separate border-spacing-y-2">
 			<thead className="sticky top-0 z-10">
 				<tr className="bg-[#FFDA03]">
 					{showPhotoColumn ? <th className="px-4 py-3 text-left font-semibold text-black first:rounded-l-xl">Photo</th> : null}

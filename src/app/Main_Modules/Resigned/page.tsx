@@ -486,7 +486,7 @@ export default function ResignedPage() {
         <div className="glass-panel animate-slide-up rounded-2xl p-8 text-center text-gray-500">No employees in Resigned.</div>
       ) : viewMode === "table" ? (
         <div className="relative overflow-x-auto rounded-2xl glass-panel animate-slide-up">
-          <table className="w-full text-sm text-black border-separate border-spacing-y-2">
+          <table className="min-w-[1200px] w-full text-sm text-black border-separate border-spacing-y-2">
             <thead className="sticky top-0 z-10">
               <tr className="bg-[#FFDA03]">
                 <th className="px-4 py-3 text-left font-semibold text-black first:rounded-l-xl">Photo</th>
