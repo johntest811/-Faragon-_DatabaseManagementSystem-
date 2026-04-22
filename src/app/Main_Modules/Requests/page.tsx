@@ -395,23 +395,25 @@ function RequestsPageContent() {
         return;
       }
 
-      for (const identity of identities) {
-        try {
-          const purge = await supabase
-            .from("access_requests")
-            .delete()
-            .eq(identity.column, identity.value)
-            .or("status.eq.CANCELLED,status.eq.cancelled");
-          if (purge.error) {
-            const missingColumn = extractMissingColumn(String(purge.error.message ?? ""));
-            if (!missingColumn || missingColumn !== identity.column) {
-              // Ignore purge failures to avoid blocking requests UI.
+      await Promise.allSettled(
+        identities.map(async (identity) => {
+          try {
+            const purge = await supabase
+              .from("access_requests")
+              .delete()
+              .eq(identity.column, identity.value)
+              .or("status.eq.CANCELLED,status.eq.cancelled");
+            if (purge.error) {
+              const missingColumn = extractMissingColumn(String(purge.error.message ?? ""));
+              if (!missingColumn || missingColumn !== identity.column) {
+                // Ignore purge failures to avoid blocking requests UI.
+              }
             }
+          } catch {
+            // ignore
           }
-        } catch {
-          // ignore
-        }
-      }
+        })
+      );
 
       const identitySnapshot: RequestIdentitySnapshot = {
         userId: normalizeIdentityValue(userId),
@@ -422,35 +424,39 @@ function RequestsPageContent() {
 
       const rowsById = new Map<string, AccessRequestRow>();
 
-      for (const identity of identities) {
-        try {
-          const data = await runAccessRequestSelectWithFallback([...MY_REQUEST_COLUMNS], async (selectClause) => {
-            const result = await supabase
-              .from("access_requests")
-              .select(selectClause)
-              .eq(identity.column, identity.value)
-              .order("created_at", { ascending: false })
-              .limit(100);
-            return { data: (result.data as unknown[] | null) ?? null, error: result.error };
-          });
-
-          for (const row of (data as AccessRequestRow[]) || []) {
-            const rowId = String(row.id ?? "").trim();
-            if (!rowId) continue;
-
-            const existing = rowsById.get(rowId);
-            if (!existing || toEpochMs(row.created_at) >= toEpochMs(existing.created_at)) {
-              rowsById.set(rowId, row);
+      const requestResults = await Promise.allSettled(
+        identities.map(async (identity) => {
+          try {
+            return await runAccessRequestSelectWithFallback([...MY_REQUEST_COLUMNS], async (selectClause) => {
+              const result = await supabase
+                .from("access_requests")
+                .select(selectClause)
+                .eq(identity.column, identity.value)
+                .order("created_at", { ascending: false })
+                .limit(100);
+              return { data: (result.data as unknown[] | null) ?? null, error: result.error };
+            });
+          } catch (e: unknown) {
+            const message = e instanceof Error ? e.message : "";
+            const missingColumn = extractMissingColumn(message);
+            if (missingColumn && missingColumn === identity.column) {
+              return [] as AccessRequestRow[];
             }
+            throw e;
           }
-        } catch (e: unknown) {
-          const message = e instanceof Error ? e.message : "";
-          const missingColumn = extractMissingColumn(message);
-          if (missingColumn && missingColumn === identity.column) {
-            // Older deployments can miss newer identity columns.
-            continue;
+        })
+      );
+
+      for (const result of requestResults) {
+        if (result.status !== "fulfilled") continue;
+        for (const row of (result.value as AccessRequestRow[]) || []) {
+          const rowId = String(row.id ?? "").trim();
+          if (!rowId) continue;
+
+          const existing = rowsById.get(rowId);
+          if (!existing || toEpochMs(row.created_at) >= toEpochMs(existing.created_at)) {
+            rowsById.set(rowId, row);
           }
-          throw e;
         }
       }
 

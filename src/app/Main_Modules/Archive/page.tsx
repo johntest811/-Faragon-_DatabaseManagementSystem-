@@ -1,10 +1,13 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../Client/SupabaseClients";
 import { RotateCcw, LayoutGrid, Table, SlidersHorizontal, Search } from "lucide-react";
+import { useAuthRole } from "../../Client/useRbac";
 import LoadingCircle from "../../Components/LoadingCircle";
+import EmployeeStatusMenu from "../Components/EmployeeStatusMenu";
+import { buildEmployeeStatusUpdatePatch, loadLicensureMap } from "../employeeListData";
 
 type Applicant = {
   applicant_id: string;
@@ -127,6 +130,7 @@ function nextLicenseExpiryFromLicensureRow(r: LicensureRow | null) {
 
 export default function ArchivePage() {
   const router = useRouter();
+  const { role: sessionRole } = useAuthRole();
   const [viewMode, setViewMode] = useState<"grid" | "table">(() => {
     if (typeof window !== "undefined") {
       return (localStorage.getItem("archive:viewMode") as "grid" | "table") || "grid";
@@ -139,6 +143,7 @@ export default function ArchivePage() {
   const [licensureByApplicantId, setLicensureByApplicantId] = useState<
     Record<string, { nextYmd: string | null; nextDays: number | null }>
   >({});
+  const fetchRunIdRef = useRef(0);
   const [search, setSearch] = useState("");
   const [sortBy, setSortBy] = useState<"name" | "last_name" | "letter" | "created_at" | "category" | "service">("name");
 
@@ -157,6 +162,23 @@ export default function ArchivePage() {
     return "ACTIVE";
   }
 
+  async function updateEmployeeStatus(employee: Applicant, nextStatus: string) {
+    setError("");
+    const patch = buildEmployeeStatusUpdatePatch(nextStatus);
+    const { error: updateError } = await supabase
+      .from("applicants")
+      .update(patch)
+      .eq("applicant_id", employee.applicant_id);
+
+    if (updateError) {
+      console.error(updateError);
+      setError(updateError.message || "Failed to update employee status");
+      return;
+    }
+
+    setItems((prev) => prev.map((item) => (item.applicant_id === employee.applicant_id ? { ...item, status: patch.status } : item)));
+  }
+
   useEffect(() => {
     try {
       const saved = window.localStorage.getItem("archive:viewMode");
@@ -166,6 +188,7 @@ export default function ArchivePage() {
     }
 
     const run = async () => {
+      const fetchRunId = ++fetchRunIdRef.current;
       setLoading(true);
       setError("");
 
@@ -188,32 +211,22 @@ export default function ArchivePage() {
         const list = (data as Applicant[]) || [];
         setItems(list);
 
-        try {
-          const ids = list.map((x) => x.applicant_id).filter(Boolean);
-          if (!ids.length) {
-            setLicensureByApplicantId({});
-          } else {
-            const map: Record<string, { nextYmd: string | null; nextDays: number | null }> = {};
-            const chunkSize = 500;
-            for (let i = 0; i < ids.length; i += chunkSize) {
-              const chunk = ids.slice(i, i + chunkSize);
-              const licRes = await supabase
-                .from("licensure")
-                .select("applicant_id, driver_expiration, security_expiration, insurance_expiration")
-                .in("applicant_id", chunk);
-              if (licRes.error) break;
-              for (const r of (licRes.data as LicensureRow[]) || []) {
-                const next = nextLicenseExpiryFromLicensureRow(r);
-                map[String(r.applicant_id)] = { nextYmd: next.ymd, nextDays: next.days };
-              }
-            }
+        setLoading(false);
+
+        void (async () => {
+          try {
+            const ids = list.map((x) => x.applicant_id).filter(Boolean);
+            const map = await loadLicensureMap(ids);
+            if (fetchRunIdRef.current !== fetchRunId) return;
             setLicensureByApplicantId(map);
+          } catch {
+            if (fetchRunIdRef.current === fetchRunId) {
+              setLicensureByApplicantId({});
+            }
           }
-        } catch {
-          setLicensureByApplicantId({});
-        }
+        })();
       }
-      setLoading(false);
+      if (fetchRunIdRef.current === fetchRunId) setLoading(false);
     };
 
     run();
@@ -514,7 +527,7 @@ export default function ArchivePage() {
               >
                 <td className="px-4 py-3 rounded-l-xl">
                   <div className="h-10 w-10 rounded-full bg-gray-100 overflow-hidden">
-                    {profileUrl ? <img src={profileUrl} alt="" className="h-full w-full object-cover" /> : null}
+                    {profileUrl ? <img src={profileUrl} alt="" className="h-full w-full object-cover" loading="lazy" decoding="async" /> : null}
                   </div>
                 </td>
                 <td className="px-4 py-3 font-semibold">{getFullName(e)}</td>
@@ -606,7 +619,7 @@ export default function ArchivePage() {
                 <div className="flex items-center gap-4">
                   <div className="h-16 w-16 rounded-2xl bg-gray-100 overflow-hidden flex items-center justify-center">
                     {profileUrl ? (
-                      <img src={profileUrl} alt={name} className="h-full w-full object-cover" />
+                      <img src={profileUrl} alt={name} className="h-full w-full object-cover" loading="lazy" decoding="async" />
                     ) : (
                       <div className="text-xs text-gray-500">No Photo</div>
                     )}
@@ -618,9 +631,23 @@ export default function ArchivePage() {
                   </div>
                 </div>
 
-                <div className="mt-4 flex items-center justify-between">
-                  <span className="text-xs text-gray-500">Archived: {e.archived_at ? new Date(e.archived_at).toLocaleString() : "—"}</span>
+                <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div className="flex items-center gap-2">
+                    {sessionRole !== "employee" ? (
+                      <EmployeeStatusMenu value={normalizeStatus(e.status)} onChange={(nextStatus) => void updateEmployeeStatus(e, nextStatus)} />
+                    ) : (
+                      <span
+                        className={`px-3 py-1 rounded-full text-xs font-bold ${
+                          normalizeStatus(e.status) === "ACTIVE" ? "bg-emerald-500 text-white" : "bg-gray-700 text-white"
+                        }`}
+                      >
+                        {normalizeStatus(e.status)}
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap items-center justify-end gap-2">
+                    <span className="text-xs text-gray-500">Archived: {e.archived_at ? new Date(e.archived_at).toLocaleString() : "—"}</span>
+                    <div className="flex items-center gap-2">
                     <button
                       onClick={(ev) => {
                         ev.stopPropagation();
@@ -642,7 +669,8 @@ export default function ArchivePage() {
                       >
                         Delete
                       </button>
-                  </div>
+                      </div>
+                    </div>
                 </div>
               </div>
             );

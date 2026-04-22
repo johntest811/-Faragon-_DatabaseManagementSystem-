@@ -355,6 +355,12 @@ export default function RolesPage() {
 				return;
 			}
 
+			const { error: columnAccessErr } = await supabase.from("role_column_access").delete().eq("role_id", roleRow.role_id);
+			if (columnAccessErr) return setError(columnAccessErr.message);
+
+			const { error: moduleAccessErr } = await supabase.from("role_module_access").delete().eq("role_id", roleRow.role_id);
+			if (moduleAccessErr) return setError(moduleAccessErr.message);
+
 			const { error: delErr } = await supabase.from("app_roles").delete().eq("role_id", roleRow.role_id);
 			if (delErr) return setError(delErr.message);
 

@@ -64,7 +64,7 @@ export default function SplashScreen({
       </div>
 
       <h1
-        className="text-center text-sm md:text-base uppercase tracking-[0.22em] font-FaragonFont font-black px-4 drop-shadow-[0_3px_10px_rgba(0,0,0,0.35)]"
+        className="text-center text-base md:text-lg uppercase tracking-[0.22em] font-FaragonFont font-black px-4 drop-shadow-[0_3px_10px_rgba(0,0,0,0.35)]"
         style={{
           backgroundImage: bgBlack
             ? `linear-gradient(to right, #ffffff ${progress}%, rgba(255,255,255,0.25) ${progress}%)`

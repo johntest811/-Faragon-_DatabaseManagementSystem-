@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../Client/SupabaseClients";
 import { Pencil, SlidersHorizontal, Upload, LayoutGrid, Table, Search, FileDown, FileText } from "lucide-react";
@@ -12,6 +12,8 @@ import EmployeeEditorModal from "../../Components/EmployeeEditorModal";
 import EmployeeExcelImportModal from "../../Components/EmployeeExcelImportModal";
 import LoadingCircle from "../../Components/LoadingCircle";
 import ImportSummaryModal, { ImportSummaryData } from "../Components/ImportSummaryModal";
+import EmployeeStatusMenu from "../Components/EmployeeStatusMenu";
+import { buildEmployeeStatusUpdatePatch, loadLicensureMap } from "../employeeListData";
 
 type Applicant = {
 	applicant_id: string;
@@ -342,8 +344,10 @@ export default function EmployeesPage() {
 
 	const [archiveOpen, setArchiveOpen] = useState(false);
 	const [archiveEmployee, setArchiveEmployee] = useState<Applicant | null>(null);
+	const fetchRunIdRef = useRef(0);
 
 	const fetchEmployees = useCallback(async () => {
+		const fetchRunId = ++fetchRunIdRef.current;
 		if (loadingEmployeeColumns) {
 			setLoading(true);
 			return;
@@ -374,68 +378,52 @@ export default function EmployeesPage() {
 				setError(fetchError.message || "Failed to load employees");
 				setEmployees([]);
 				setLicensureByApplicantId({});
+				setExpiringSummaryByApplicantId({});
 			} else {
 				const list = ((data ?? []) as unknown as Applicant[]);
 				setEmployees(list);
 
-				// Optional: load licensure expirations for "Sort by expiring licenses".
-				try {
-					const ids = list.map((x) => x.applicant_id).filter(Boolean);
-					if (!ids.length) {
-						setLicensureByApplicantId({});
-					} else {
-						const map: Record<string, { nextYmd: string | null; nextDays: number | null }> = {};
-						const chunkSize = 500;
-						for (let i = 0; i < ids.length; i += chunkSize) {
-							const chunk = ids.slice(i, i + chunkSize);
-							const licRes = await supabase
-								.from("licensure")
-								.select("applicant_id, driver_expiration, security_expiration, insurance_expiration")
-								.in("applicant_id", chunk);
-							if (licRes.error) {
-								// Table may not exist yet; don't break Employees page.
-								break;
-							}
-							for (const r of (licRes.data as LicensureRow[]) || []) {
-								const next = nextLicenseExpiryFromLicensureRow(r);
-								map[String(r.applicant_id)] = { nextYmd: next.ymd, nextDays: next.days };
-							}
-						}
-						setLicensureByApplicantId(map);
-					}
-				} catch {
-					setLicensureByApplicantId({});
-				}
+				setLoading(false);
 
-				// Merge: prefer Electron expiring summary (same source as top-nav popup) when available.
-				try {
-					if (api?.notifications?.getExpiringSummary) {
-						const res = await api.notifications.getExpiringSummary({ limit: 200 });
-						const rows = ((res as { rows?: EmployeeExpiringSummaryRow[] } | null | undefined)?.rows ?? []);
-						const map: Record<string, { nextYmd: string | null; nextDays: number | null }> = {};
-						for (const r of rows) {
-							const id = String(r.applicant_id || "");
-							if (!id) continue;
-							const expiresYmd = ymd(r.expires_on) ?? null;
-							const days = Number.isFinite(Number(r.days_until_expiry)) ? Number(r.days_until_expiry) : null;
-							const existing = map[id];
-							const better = (cur: { nextYmd: string | null; nextDays: number | null } | undefined) => {
-								if (!cur?.nextYmd) return true;
-								if (!expiresYmd) return false;
-								return expiresYmd < cur.nextYmd;
-							};
-							if (better(existing)) map[id] = { nextYmd: expiresYmd, nextDays: days };
+				void (async () => {
+					const ids = list.map((x) => x.applicant_id).filter(Boolean);
+					try {
+						const [licMap, expiringRes] = await Promise.all([
+							loadLicensureMap(ids),
+							api?.notifications?.getExpiringSummary ? api.notifications.getExpiringSummary({ limit: 200 }) : Promise.resolve(null),
+						]);
+
+						if (fetchRunIdRef.current !== fetchRunId) return;
+						setLicensureByApplicantId(licMap);
+
+						if (api?.notifications?.getExpiringSummary) {
+							const rows = ((expiringRes as { rows?: EmployeeExpiringSummaryRow[] } | null | undefined)?.rows ?? []);
+							const map: Record<string, { nextYmd: string | null; nextDays: number | null }> = {};
+							for (const r of rows) {
+								const id = String(r.applicant_id || "");
+								if (!id) continue;
+								const expiresYmd = ymd(r.expires_on) ?? null;
+								const days = Number.isFinite(Number(r.days_until_expiry)) ? Number(r.days_until_expiry) : null;
+								const existing = map[id];
+								const better = (cur: { nextYmd: string | null; nextDays: number | null } | undefined) => {
+									if (!cur?.nextYmd) return true;
+									if (!expiresYmd) return false;
+									return expiresYmd < cur.nextYmd;
+								};
+								if (better(existing)) map[id] = { nextYmd: expiresYmd, nextDays: days };
+							}
+							setExpiringSummaryByApplicantId(map);
 						}
-						setExpiringSummaryByApplicantId(map);
-					} else {
-						setExpiringSummaryByApplicantId({});
+					} catch {
+						if (fetchRunIdRef.current === fetchRunId) {
+							setLicensureByApplicantId({});
+							setExpiringSummaryByApplicantId({});
+						}
 					}
-				} catch {
-					setExpiringSummaryByApplicantId({});
-				}
+				})();
 			}
 		} finally {
-			setLoading(false);
+			if (fetchRunIdRef.current === fetchRunId) setLoading(false);
 		}
 	}, [
 		loadingEmployeeColumns,
@@ -759,10 +747,9 @@ if (hiredMonthFilter !== "ALL") {
 
 	async function updateEmployeeStatus(employee: Applicant, nextStatus: string) {
 		setError("");
-		const normalizedStatus = normalizeStatus(nextStatus);
 		const { error: updateError } = await supabase
 			.from("applicants")
-			.update({ status: normalizedStatus })
+			.update(buildEmployeeStatusUpdatePatch(nextStatus))
 			.eq("applicant_id", employee.applicant_id);
 
 		if (updateError) {
@@ -1134,8 +1121,7 @@ if (hiredMonthFilter !== "ALL") {
 					{filtered.map((e) => {
 						const name = getFullName(e);
 						const profileUrl = getProfileUrl(e.profile_image_path);
-						const status = (e.status ?? "").trim().toUpperCase();
-						const isActive = status === "ACTIVE";
+						const status = normalizeStatus(e.status);
 						const canClick = sessionRole !== "employee";
       const detailsHref = `/Main_Modules/Employees/details/?id=${encodeURIComponent(
         e.applicant_id
@@ -1165,7 +1151,7 @@ if (hiredMonthFilter !== "ALL") {
 									{showPhotoColumn ? (
 										<div className="h-16 w-16 rounded-2xl bg-gray-100 overflow-hidden flex items-center justify-center">
 											{profileUrl ? (
-												<img src={profileUrl} alt={name} className="h-full w-full object-cover" />
+												<img src={profileUrl} alt={name} className="h-full w-full object-cover" loading="lazy" decoding="async" />
 											) : (
 												<div className="text-xs text-gray-500">No Photo</div>
 											)}
@@ -1195,72 +1181,62 @@ if (hiredMonthFilter !== "ALL") {
 									</div>
 								</div>
 
-								<div className="mt-4 flex items-center justify-between gap-3">
-									{showStatusColumn ? (
-										<span
-											className={`px-3 py-1 rounded-full text-xs font-bold ${
-												isActive ? "bg-emerald-500 text-white" : "bg-red-500 text-white"
-											}`}
-										>
-											{status || "—"}
-										</span>
-									) : <span />}
-
+								<div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 									<div className="flex items-center gap-2">
-									{sessionRole !== "employee" && (
-										<button
-											onClick={(ev) => {
-												ev.stopPropagation();
-												void updateEmployeeStatus(e, "REASSIGN");
-											}}
-											className="animated-btn h-9 px-3 rounded-xl border bg-white text-black text-xs font-semibold"
-											title="Set status to REASSIGN"
-											type="button"
-										>
-											Reassign
-										</button>
-									)}
+										{sessionRole !== "employee" ? (
+											<EmployeeStatusMenu value={status} onChange={(nextStatus) => void updateEmployeeStatus(e, nextStatus)} />
+										) : (
+											<span
+												className={`px-3 py-1 rounded-full text-xs font-bold ${
+													status === "ACTIVE" ? "bg-emerald-500 text-white" : "bg-red-500 text-white"
+												}`}
+											>
+												{status || "—"}
+											</span>
+										)}
+									</div>
 
-									{sessionRole !== "employee" && (
-										<button
-											onClick={(ev) => {
-												ev.stopPropagation();
-											openEdit(e);
-										}}
-										className="animated-btn h-9 w-9 rounded-xl border bg-white flex items-center justify-center text-black"
-										title="Edit"
-									>
-										<Pencil className="w-4 h-4" />
-									</button>
-									)}
+									<div className="flex flex-wrap items-center justify-end gap-2">
+										{sessionRole !== "employee" && (
+											<button
+												onClick={(ev) => {
+													ev.stopPropagation();
+													void deleteEmployee(e);
+												}}
+												className="animated-btn h-9 px-3 rounded-xl border border-red-200 bg-white text-red-600 text-xs font-semibold"
+												title="Delete"
+												type="button"
+											>
+												Delete
+											</button>
+										)}
 
-									{sessionRole !== "employee" && (
-										<button
-											onClick={(ev) => {
-												ev.stopPropagation();
-											openArchive(e);
-										}}
-										className="animated-btn h-9 px-3 rounded-xl bg-[#FFDA03] text-black text-xs font-semibold"
-										title="Archive"
-											type="button"
-									>
-										Archive
-									</button>
-									)}
+										{sessionRole !== "employee" && (
+											<button
+												onClick={(ev) => {
+													ev.stopPropagation();
+													openArchive(e);
+												}}
+												className="animated-btn h-9 px-3 rounded-xl bg-[#FFDA03] text-black text-xs font-semibold"
+												title="Archive"
+												type="button"
+											>
+												Archive
+											</button>
+										)}
 
-									{sessionRole !== "employee" && (
-										<button
-											onClick={(ev) => {
-												ev.stopPropagation();
-												void deleteEmployee(e);
-											}}
-											className="animated-btn h-9 px-3 rounded-xl border border-red-200 bg-white text-red-600 text-xs font-semibold"
-											title="Delete"
-											type="button"
-										>
-											Delete
-										</button>
-									)}
+										{sessionRole !== "employee" && (
+											<button
+												onClick={(ev) => {
+													ev.stopPropagation();
+													openEdit(e);
+												}}
+												className="animated-btn h-9 w-9 rounded-xl border bg-white flex items-center justify-center text-black"
+												title="Edit"
+											>
+												<Pencil className="w-4 h-4" />
+											</button>
+										)}
 
 									{/* Trash page removed */}
 								</div>
@@ -1321,7 +1297,7 @@ if (hiredMonthFilter !== "ALL") {
 								<td className="px-4 py-3 rounded-l-xl">
 									<div className="h-10 w-10 rounded-full bg-gray-100 overflow-hidden">
 										{profileUrl && (
-											<img src={profileUrl} alt="" className="h-full w-full object-cover" />
+											<img src={profileUrl} alt="" className="h-full w-full object-cover" loading="lazy" decoding="async" />
 										)}
 									</div>
 								</td>
@@ -1366,23 +1342,13 @@ if (hiredMonthFilter !== "ALL") {
 										<button
 											onClick={(ev) => {
 												ev.stopPropagation();
-												void updateEmployeeStatus(e, "REASSIGN");
+												void deleteEmployee(e);
 											}}
-											className="px-3 py-1.5 text-xs rounded-lg border bg-white text-black font-semibold hover:bg-gray-50"
-											title="Set status to REASSIGN"
+											className="px-3 py-1.5 text-xs rounded-lg border border-red-200 bg-white text-red-600 font-semibold hover:bg-red-50"
+											title="Delete"
 											type="button"
 										>
-											Reassign
-										</button>
-										<button
-											onClick={(ev) => {
-												ev.stopPropagation();
-												openEdit(e);
-											}}
-											className="p-2 rounded-lg hover:bg-gray-100"
-											title="Edit"
-										>
-											<Pencil className="w-5 h-5 text-gray-700" />
+											Delete
 										</button>
 										<button
 											onClick={(ev) => {
@@ -1398,13 +1364,12 @@ if (hiredMonthFilter !== "ALL") {
 										<button
 											onClick={(ev) => {
 												ev.stopPropagation();
-												void deleteEmployee(e);
+												openEdit(e);
 											}}
-											className="px-3 py-1.5 text-xs rounded-lg border border-red-200 bg-white text-red-600 font-semibold hover:bg-red-50"
-											title="Delete"
-											type="button"
+											className="p-2 rounded-lg hover:bg-gray-100"
+											title="Edit"
 										>
-											Delete
+											<Pencil className="w-5 h-5 text-gray-700" />
 										</button>
 										{/* Trash page removed */}
 									</div>
