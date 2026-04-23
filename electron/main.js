@@ -2,6 +2,12 @@ const { app, BrowserWindow, protocol, dialog, ipcMain, safeStorage, Menu } = req
 const path = require('path');
 const fs = require('fs');
 
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+
+if (!gotSingleInstanceLock) {
+  app.quit();
+}
+
 const MAIN_ENV_BASENAMES = ['.env.local', '.env'];
 let mainEnvBootstrapped = false;
 let mainEnvLoadedPaths = [];
@@ -2656,6 +2662,24 @@ const devUrl = `http://localhost:${devPort}`;
 
 let mainWindow = null;
 
+function focusMainWindow() {
+  if (!mainWindow) return;
+
+  try {
+    if (mainWindow.isMinimized()) {
+      mainWindow.restore();
+    }
+
+    if (!mainWindow.isVisible()) {
+      mainWindow.show();
+    }
+
+    mainWindow.focus();
+  } catch {
+    // ignore
+  }
+}
+
 function resolveWindowIconPath() {
   return resolveBrandLogoPath() ?? undefined;
 }
@@ -2889,22 +2913,28 @@ async function maybeAutoSendNotifications() {
   }
 }
 
-app.whenReady().then(startApp);
+if (gotSingleInstanceLock) {
+  app.on('second-instance', () => {
+    focusMainWindow();
+  });
 
-app.whenReady().then(() => {
-  // Scheduler: checks once per minute while app is open.
-  if (notificationTimer) clearInterval(notificationTimer);
-  notificationTimer = setInterval(() => {
+  app.whenReady().then(startApp);
+
+  app.whenReady().then(() => {
+    // Scheduler: checks once per minute while app is open.
+    if (notificationTimer) clearInterval(notificationTimer);
+    notificationTimer = setInterval(() => {
+      void maybeAutoSendNotifications();
+    }, 60 * 1000);
     void maybeAutoSendNotifications();
-  }, 60 * 1000);
-  void maybeAutoSendNotifications();
-});
+  });
 
-app.on('window-all-closed', () => {
-  try {
-    adminSupabaseDispatcher?.close?.();
-  } catch {
-    // ignore
-  }
-  app.quit();
-});
+  app.on('window-all-closed', () => {
+    try {
+      adminSupabaseDispatcher?.close?.();
+    } catch {
+      // ignore
+    }
+    app.quit();
+  });
+}
