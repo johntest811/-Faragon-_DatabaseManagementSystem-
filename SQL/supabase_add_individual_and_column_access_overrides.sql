@@ -7,6 +7,9 @@ create extension if not exists pgcrypto;
 alter table if exists public.access_requests
   add column if not exists requested_column_key text;
 
+alter table if exists public.access_requests
+  add column if not exists requested_can_write boolean not null default false;
+
 create index if not exists access_requests_requested_column_idx
   on public.access_requests (requested_column_key);
 
@@ -15,6 +18,7 @@ create table if not exists public.admin_module_access_overrides (
   admin_id uuid not null,
   module_key text not null,
   can_read boolean not null default true,
+  can_write boolean not null default false,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   created_by uuid,
@@ -49,6 +53,7 @@ create table if not exists public.user_module_access_overrides (
   user_id uuid not null,
   module_key text not null,
   can_read boolean not null default true,
+  can_write boolean not null default false,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   created_by uuid,

@@ -28,6 +28,8 @@ CREATE TABLE public.access_requests (
   approver_full_name text,
   requested_applicant_id uuid,
   requested_row_identifier_value text,
+  requested_can_edit boolean NOT NULL DEFAULT false,
+  requested_can_write boolean NOT NULL DEFAULT false,
   CONSTRAINT access_requests_pkey PRIMARY KEY (id),
   CONSTRAINT access_requests_module_fkey FOREIGN KEY (requested_module_key) REFERENCES public.modules(module_key),
   CONSTRAINT access_requests_requester_admin_fkey FOREIGN KEY (requester_admin_id) REFERENCES public.admins(id),
@@ -70,6 +72,8 @@ CREATE TABLE public.admin_module_access_overrides (
   admin_id uuid NOT NULL,
   module_key text NOT NULL,
   can_read boolean NOT NULL DEFAULT true,
+  can_edit boolean NOT NULL DEFAULT false,
+  can_write boolean NOT NULL DEFAULT false,
   created_at timestamp with time zone NOT NULL DEFAULT now(),
   updated_at timestamp with time zone NOT NULL DEFAULT now(),
   created_by uuid,
@@ -174,7 +178,15 @@ CREATE TABLE public.audit_log (
   page text,
   entity text,
   details jsonb,
+  actor_name text,
   CONSTRAINT audit_log_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.audit_log_retention_settings (
+  id text NOT NULL DEFAULT 'default'::text,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  retention_days integer NOT NULL DEFAULT 30 CHECK (retention_days = ANY (ARRAY[7, 30, 365])),
+  CONSTRAINT audit_log_retention_settings_pkey PRIMARY KEY (id)
 );
 CREATE TABLE public.biodata (
   applicant_id uuid NOT NULL,
@@ -455,8 +467,8 @@ CREATE TABLE public.role_column_access (
   updated_at timestamp with time zone NOT NULL DEFAULT now(),
   created_by uuid,
   CONSTRAINT role_column_access_pkey PRIMARY KEY (role_id, module_key, column_key),
-  CONSTRAINT role_column_access_role_id_fkey FOREIGN KEY (role_id) REFERENCES public.app_roles(role_id),
   CONSTRAINT role_column_access_module_key_fkey FOREIGN KEY (module_key) REFERENCES public.modules(module_key),
+  CONSTRAINT role_column_access_role_id_fkey FOREIGN KEY (role_id) REFERENCES public.app_roles(role_id),
   CONSTRAINT role_column_access_role_module_fkey FOREIGN KEY (role_id) REFERENCES public.role_module_access(role_id),
   CONSTRAINT role_column_access_role_module_fkey FOREIGN KEY (module_key) REFERENCES public.role_module_access(role_id),
   CONSTRAINT role_column_access_role_module_fkey FOREIGN KEY (role_id) REFERENCES public.role_module_access(module_key),
@@ -466,10 +478,11 @@ CREATE TABLE public.role_module_access (
   role_id uuid NOT NULL,
   module_key text NOT NULL,
   can_read boolean NOT NULL DEFAULT true,
+  can_edit boolean NOT NULL DEFAULT false,
   can_write boolean NOT NULL DEFAULT false,
   CONSTRAINT role_module_access_pkey PRIMARY KEY (role_id, module_key),
-  CONSTRAINT role_module_access_role_id_fkey FOREIGN KEY (role_id) REFERENCES public.app_roles(role_id),
-  CONSTRAINT role_module_access_module_key_fkey FOREIGN KEY (module_key) REFERENCES public.modules(module_key)
+  CONSTRAINT role_module_access_module_key_fkey FOREIGN KEY (module_key) REFERENCES public.modules(module_key),
+  CONSTRAINT role_module_access_role_id_fkey FOREIGN KEY (role_id) REFERENCES public.app_roles(role_id)
 );
 CREATE TABLE public.user_applicant_access_overrides (
   user_id uuid NOT NULL,
@@ -507,6 +520,8 @@ CREATE TABLE public.user_module_access_overrides (
   user_id uuid NOT NULL,
   module_key text NOT NULL,
   can_read boolean NOT NULL DEFAULT true,
+  can_edit boolean NOT NULL DEFAULT false,
+  can_write boolean NOT NULL DEFAULT false,
   created_at timestamp with time zone NOT NULL DEFAULT now(),
   updated_at timestamp with time zone NOT NULL DEFAULT now(),
   created_by uuid,

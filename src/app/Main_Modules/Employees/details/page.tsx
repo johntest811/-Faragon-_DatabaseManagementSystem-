@@ -19,7 +19,7 @@ import {
   ZoomOut,
 } from "lucide-react";
 import { supabase } from "../../../Client/SupabaseClients";
-import { useAuthRole, useMyApplicantColumnAccess, useMyApplicantRowAccess, useMyColumnAccess } from "../../../Client/useRbac";
+import { useAuthRole, useMyApplicantColumnAccess, useMyApplicantRowAccess, useMyColumnAccess, useMyModuleAccess, useMyModuleEditAccess } from "../../../Client/useRbac";
 import EmployeeEditorModal from "../../../Components/EmployeeEditorModal";
 import LoadingCircle from "../../../Components/LoadingCircle";
 
@@ -337,6 +337,8 @@ function EmployeeDetailsInner() {
   const backHref = safeBackHref(from);
 
   const { role: sessionRole } = useAuthRole();
+  const { canAccess: canAccessEmployees } = useMyModuleAccess("employees");
+  const { canEdit: canEditEmployees } = useMyModuleEditAccess("employees");
   const {
     allowedColumns: allowedEmployeeColumns,
     restricted: employeeColumnsRestricted,
@@ -352,7 +354,7 @@ function EmployeeDetailsInner() {
     restricted: applicantRowsRestricted,
     loading: loadingApplicantRows,
   } = useMyApplicantRowAccess("employees", id);
-  const canEdit = sessionRole !== "employee";
+  const canEdit = canEditEmployees;
 
   const canViewEmployeeColumn = (columnKey: string) => {
     const hasModuleAccess = !employeeColumnsRestricted || allowedEmployeeColumns.has(columnKey);

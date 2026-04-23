@@ -4,7 +4,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../Client/SupabaseClients";
 import { Pencil, LayoutGrid, Table, SlidersHorizontal, Search } from "lucide-react";
-import { useAuthRole } from "../../Client/useRbac";
+import { useAuthRole, useMyModuleDeleteAccess } from "../../Client/useRbac";
 import EmployeeEditorModal from "../../Components/EmployeeEditorModal";
 import LoadingCircle from "../../Components/LoadingCircle";
 import EmployeeStatusMenu from "../Components/EmployeeStatusMenu";
@@ -145,6 +145,7 @@ function nextLicenseExpiryFromLicensureRow(r: LicensureRow | null) {
 export default function RetiredPage() {
   const router = useRouter();
   const { role: sessionRole } = useAuthRole();
+  const { canDelete: canDeleteRetired } = useMyModuleDeleteAccess("retired");
 
   const [viewMode, setViewMode] = useState<"grid" | "table">(() => {
     if (typeof window !== "undefined") {
@@ -403,6 +404,10 @@ export default function RetiredPage() {
 
   async function deleteEmployee(employee: Applicant) {
     setError("");
+    if (!canDeleteRetired) {
+      setError("Delete access is restricted.");
+      return;
+    }
     const ok = window.confirm(`Delete ${getFullName(employee)}? This will move the employee to trash.`);
     if (!ok) return;
 
@@ -679,7 +684,7 @@ export default function RetiredPage() {
                   </div>
 
                   <div className="flex flex-wrap items-center justify-end gap-2">
-                    {sessionRole !== "employee" ? (
+                    {sessionRole !== "employee" && canDeleteRetired ? (
                       <button
                         onClick={(ev) => {
                           ev.stopPropagation();

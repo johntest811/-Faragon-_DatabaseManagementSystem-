@@ -163,6 +163,24 @@ export type ColumnAccessResult = {
   error: string;
 };
 
+export type ModuleDeleteAccessResult = {
+  canDelete: boolean;
+  loading: boolean;
+  error: string;
+};
+
+export type ModuleEditAccessResult = {
+  canEdit: boolean;
+  loading: boolean;
+  error: string;
+};
+
+export type ModuleAccessResult = {
+  canAccess: boolean;
+  loading: boolean;
+  error: string;
+};
+
 export type ApplicantRowAccessResult = {
   hasAccess: boolean;
   restricted: boolean;
@@ -176,6 +194,24 @@ function normalizeModuleKey(value: unknown) {
 
 function normalizeColumnKey(value: unknown) {
   return String(value ?? "").trim();
+}
+
+function buildWriteAccessSet(rows: Array<{ module_key: string; can_write: boolean | null }>) {
+  return new Set(
+    rows
+      .filter((row) => row && row.can_write !== false)
+      .map((row) => normalizeModuleKey(row.module_key))
+      .filter(Boolean)
+  );
+}
+
+function buildEditAccessSet(rows: Array<{ module_key: string; can_edit: boolean | null }>) {
+  return new Set(
+    rows
+      .filter((row) => row && row.can_edit !== false)
+      .map((row) => normalizeModuleKey(row.module_key))
+      .filter(Boolean)
+  );
 }
 
 export function useMyModules() {
@@ -355,6 +391,339 @@ export function useMyModules() {
   }, []);
 
   return { modules, loading, error };
+}
+
+export function useMyModuleAccess(moduleKey: string): ModuleAccessResult {
+  const { modules, loading, error } = useMyModules();
+  const key = normalizeModuleKey(moduleKey);
+
+  return {
+    canAccess: Boolean(key) && modules.some((module) => normalizeModuleKey(module.module_key) === key),
+    loading,
+    error,
+  };
+}
+
+export function useMyModuleDeleteAccess(moduleKey: string): ModuleDeleteAccessResult {
+  const [canDelete, setCanDelete] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    const key = normalizeModuleKey(moduleKey);
+
+    async function run() {
+      setLoading(true);
+      setError("");
+
+      if (!key) {
+        if (!cancelled) {
+          setCanDelete(false);
+          setLoading(false);
+        }
+        return;
+      }
+
+      try {
+        const legacySession = readAdminSession();
+        if (legacySession) {
+          const roleName = normalizeRoleName(legacySession.role);
+          if (roleName === "superadmin") {
+            if (!cancelled) {
+              setCanDelete(true);
+              setLoading(false);
+            }
+            return;
+          }
+
+          const { data: roleRow, error: roleErr } = await supabase
+            .from("app_roles")
+            .select("role_id")
+            .eq("role_name", roleName ?? "")
+            .single();
+
+          if (roleErr || !roleRow?.role_id) {
+            if (!cancelled) {
+              setCanDelete(false);
+              setLoading(false);
+            }
+            return;
+          }
+
+          const [roleModulesRes, adminModulesRes] = await Promise.all([
+            supabase.from("role_module_access").select("module_key, can_write").eq("role_id", roleRow.role_id),
+            supabase
+              .from("admin_module_access_overrides")
+              .select("module_key, can_write")
+              .eq("admin_id", legacySession.id),
+          ]);
+          if (roleModulesRes.error) throw roleModulesRes.error;
+          if (adminModulesRes.error) throw adminModulesRes.error;
+
+          const roleDeleteSet = buildWriteAccessSet((roleModulesRes.data as Array<{ module_key: string; can_write: boolean | null }> | null) ?? []);
+          const adminDeleteSet = buildWriteAccessSet((adminModulesRes.data as Array<{ module_key: string; can_write: boolean | null }> | null) ?? []);
+
+          if (!cancelled) {
+            setCanDelete(roleDeleteSet.has(key) || adminDeleteSet.has(key));
+            setLoading(false);
+          }
+          return;
+        }
+
+        const { data: sessionData, error: sessErr } = await supabase.auth.getSession();
+        if (sessErr) throw sessErr;
+
+        const session = sessionData.session;
+        if (!session) {
+          if (!cancelled) {
+            setCanDelete(false);
+            setLoading(false);
+          }
+          return;
+        }
+
+        const { data: roleData, error: roleRpcErr } = await supabase.rpc("current_role_name");
+        if (roleRpcErr) throw roleRpcErr;
+
+        const roleName = normalizeRoleName(roleData);
+        if (roleName === "superadmin") {
+          if (!cancelled) {
+            setCanDelete(true);
+            setLoading(false);
+          }
+          return;
+        }
+
+        const { data: roleRow, error: roleErr } = await supabase
+          .from("app_roles")
+          .select("role_id")
+          .eq("role_name", roleName ?? "")
+          .single();
+
+        if (roleErr || !roleRow?.role_id) {
+          if (!cancelled) {
+            setCanDelete(false);
+            setLoading(false);
+          }
+          return;
+        }
+
+        const [roleModulesRes, userModulesRes] = await Promise.all([
+          supabase.from("role_module_access").select("module_key, can_write").eq("role_id", roleRow.role_id),
+          supabase.from("user_module_access_overrides").select("module_key, can_write").eq("user_id", session.user.id),
+        ]);
+        if (roleModulesRes.error) throw roleModulesRes.error;
+        if (userModulesRes.error) throw userModulesRes.error;
+
+        const roleDeleteSet = buildWriteAccessSet((roleModulesRes.data as Array<{ module_key: string; can_write: boolean | null }> | null) ?? []);
+        const userDeleteSet = buildWriteAccessSet((userModulesRes.data as Array<{ module_key: string; can_write: boolean | null }> | null) ?? []);
+
+        if (!cancelled) {
+          setCanDelete(roleDeleteSet.has(key) || userDeleteSet.has(key));
+          setLoading(false);
+        }
+      } catch (e: unknown) {
+        if (!cancelled) {
+          setCanDelete(false);
+          setError(e instanceof Error ? e.message : "Failed to load delete access");
+          setLoading(false);
+        }
+      }
+    }
+
+    run();
+
+    const { data: authSub } = supabase.auth.onAuthStateChange(() => {
+      run();
+    });
+
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === "adminSession") run();
+    };
+    window.addEventListener("storage", onStorage);
+
+    const onFocus = () => {
+      run();
+    };
+    window.addEventListener("focus", onFocus);
+
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") run();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+
+    return () => {
+      cancelled = true;
+      authSub.subscription.unsubscribe();
+      window.removeEventListener("storage", onStorage);
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [moduleKey]);
+
+  return { canDelete, loading, error };
+}
+
+export function useMyModuleEditAccess(moduleKey: string): ModuleEditAccessResult {
+  const [canEdit, setCanEdit] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    const key = normalizeModuleKey(moduleKey);
+
+    async function run() {
+      setLoading(true);
+      setError("");
+
+      if (!key) {
+        if (!cancelled) {
+          setCanEdit(false);
+          setLoading(false);
+        }
+        return;
+      }
+
+      try {
+        const legacySession = readAdminSession();
+        if (legacySession) {
+          const roleName = normalizeRoleName(legacySession.role);
+          if (roleName === "superadmin") {
+            if (!cancelled) {
+              setCanEdit(true);
+              setLoading(false);
+            }
+            return;
+          }
+
+          const { data: roleRow, error: roleErr } = await supabase
+            .from("app_roles")
+            .select("role_id")
+            .eq("role_name", roleName ?? "")
+            .single();
+
+          if (roleErr || !roleRow?.role_id) {
+            if (!cancelled) {
+              setCanEdit(false);
+              setLoading(false);
+            }
+            return;
+          }
+
+          const [roleModulesRes, adminModulesRes] = await Promise.all([
+            supabase.from("role_module_access").select("module_key, can_edit").eq("role_id", roleRow.role_id),
+            supabase
+              .from("admin_module_access_overrides")
+              .select("module_key, can_edit")
+              .eq("admin_id", legacySession.id),
+          ]);
+          if (roleModulesRes.error) throw roleModulesRes.error;
+          if (adminModulesRes.error) throw adminModulesRes.error;
+
+          const roleEditSet = buildEditAccessSet((roleModulesRes.data as Array<{ module_key: string; can_edit: boolean | null }> | null) ?? []);
+          const adminEditSet = buildEditAccessSet((adminModulesRes.data as Array<{ module_key: string; can_edit: boolean | null }> | null) ?? []);
+
+          if (!cancelled) {
+            setCanEdit(roleEditSet.has(key) || adminEditSet.has(key));
+            setLoading(false);
+          }
+          return;
+        }
+
+        const { data: sessionData, error: sessErr } = await supabase.auth.getSession();
+        if (sessErr) throw sessErr;
+
+        const session = sessionData.session;
+        if (!session) {
+          if (!cancelled) {
+            setCanEdit(false);
+            setLoading(false);
+          }
+          return;
+        }
+
+        const { data: roleData, error: roleRpcErr } = await supabase.rpc("current_role_name");
+        if (roleRpcErr) throw roleRpcErr;
+
+        const roleName = normalizeRoleName(roleData);
+        if (roleName === "superadmin") {
+          if (!cancelled) {
+            setCanEdit(true);
+            setLoading(false);
+          }
+          return;
+        }
+
+        const { data: roleRow, error: roleErr } = await supabase
+          .from("app_roles")
+          .select("role_id")
+          .eq("role_name", roleName ?? "")
+          .single();
+
+        if (roleErr || !roleRow?.role_id) {
+          if (!cancelled) {
+            setCanEdit(false);
+            setLoading(false);
+          }
+          return;
+        }
+
+        const [roleModulesRes, userModulesRes] = await Promise.all([
+          supabase.from("role_module_access").select("module_key, can_edit").eq("role_id", roleRow.role_id),
+          supabase.from("user_module_access_overrides").select("module_key, can_edit").eq("user_id", session.user.id),
+        ]);
+        if (roleModulesRes.error) throw roleModulesRes.error;
+        if (userModulesRes.error) throw userModulesRes.error;
+
+        const roleEditSet = buildEditAccessSet((roleModulesRes.data as Array<{ module_key: string; can_edit: boolean | null }> | null) ?? []);
+        const userEditSet = buildEditAccessSet((userModulesRes.data as Array<{ module_key: string; can_edit: boolean | null }> | null) ?? []);
+
+        if (!cancelled) {
+          setCanEdit(roleEditSet.has(key) || userEditSet.has(key));
+          setLoading(false);
+        }
+      } catch (e: unknown) {
+        if (!cancelled) {
+          setCanEdit(false);
+          setError(e instanceof Error ? e.message : "Failed to load edit access");
+          setLoading(false);
+        }
+      }
+    }
+
+    run();
+
+    const { data: authSub } = supabase.auth.onAuthStateChange(() => {
+      run();
+    });
+
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === "adminSession") run();
+    };
+    window.addEventListener("storage", onStorage);
+
+    const onFocus = () => {
+      run();
+    };
+    window.addEventListener("focus", onFocus);
+
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") run();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+
+    return () => {
+      cancelled = true;
+      authSub.subscription.unsubscribe();
+      window.removeEventListener("storage", onStorage);
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [moduleKey]);
+
+  return { canEdit, loading, error };
 }
 
 export function useMyColumnAccess(moduleKey: string): ColumnAccessResult {

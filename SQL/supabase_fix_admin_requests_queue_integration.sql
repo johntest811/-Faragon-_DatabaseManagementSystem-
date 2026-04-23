@@ -143,6 +143,7 @@ create table if not exists public.admin_module_access_overrides (
   admin_id uuid not null,
   module_key text not null,
   can_read boolean not null default true,
+  can_write boolean not null default false,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   created_by uuid,
@@ -172,6 +173,7 @@ create table if not exists public.user_module_access_overrides (
   user_id uuid not null,
   module_key text not null,
   can_read boolean not null default true,
+  can_write boolean not null default false,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   created_by uuid,
@@ -325,6 +327,7 @@ create table if not exists public.access_requests (
   resolved_by uuid,
   resolution_note text,
   requested_column_key text,
+  requested_can_write boolean not null default false,
   requested_column_keys text[],
   requested_applicant_id uuid,
   requested_applicant_ids text[],
@@ -341,6 +344,7 @@ create table if not exists public.access_requests (
 );
 
 alter table public.access_requests add column if not exists requested_column_key text;
+alter table public.access_requests add column if not exists requested_can_write boolean not null default false;
 alter table public.access_requests add column if not exists requested_column_keys text[];
 alter table public.access_requests add column if not exists requested_applicant_id uuid;
 alter table public.access_requests add column if not exists requested_applicant_ids text[];

@@ -4,7 +4,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../Client/SupabaseClients";
 import { Pencil, LayoutGrid, Table, SlidersHorizontal, Search, FileDown, FileText } from "lucide-react";
-import { useAuthRole } from "../../Client/useRbac";
+import { useAuthRole, useMyModuleDeleteAccess } from "../../Client/useRbac";
 import EmployeeEditorModal from "../../Components/EmployeeEditorModal";
 import LoadingCircle from "../../Components/LoadingCircle";
 import EmployeeStatusMenu from "../Components/EmployeeStatusMenu";
@@ -172,6 +172,7 @@ function weekOfMonth(date: Date) {
 export default function ReassignPage() {
   const router = useRouter();
   const { role: sessionRole } = useAuthRole();
+  const { canDelete: canDeleteReassign } = useMyModuleDeleteAccess("reassign");
 
   const [viewMode, setViewMode] = useState<"grid" | "table">(() => {
     if (typeof window !== "undefined") {
@@ -202,6 +203,10 @@ export default function ReassignPage() {
 
   async function deleteEmployee(employee: Applicant) {
     setError("");
+    if (!canDeleteReassign) {
+      setError("Delete access is restricted.");
+      return;
+    }
     const ok = window.confirm(`Delete ${getFullName(employee)}? This will move the employee to trash.`);
     if (!ok) return;
 
@@ -840,7 +845,7 @@ export default function ReassignPage() {
                   </div>
 
                   <div className="flex flex-wrap items-center justify-end gap-2">
-                    {sessionRole !== "employee" ? (
+                    {sessionRole !== "employee" && canDeleteReassign ? (
                       <button
                         onClick={(ev) => {
                           ev.stopPropagation();

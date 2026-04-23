@@ -4,7 +4,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../Client/SupabaseClients";
 import { Pencil, LayoutGrid, Table, SlidersHorizontal, Search } from "lucide-react";
-import { useAuthRole } from "../../Client/useRbac";
+import { useAuthRole, useMyModuleDeleteAccess } from "../../Client/useRbac";
 import EmployeeEditorModal from "../../Components/EmployeeEditorModal";
 import LoadingCircle from "../../Components/LoadingCircle";
 import EmployeeStatusMenu from "../Components/EmployeeStatusMenu";
@@ -154,6 +154,7 @@ function nextLicenseExpiryFromLicensureRow(r: LicensureRow | null) {
 export default function ResignedPage() {
   const router = useRouter();
   const { role: sessionRole } = useAuthRole();
+  const { canDelete: canDeleteResigned } = useMyModuleDeleteAccess("resigned");
 
   const [viewMode, setViewMode] = useState<"grid" | "table">(() => {
     if (typeof window !== "undefined") {
@@ -386,6 +387,10 @@ export default function ResignedPage() {
 
   async function deleteEmployee(employee: Applicant) {
     setError("");
+    if (!canDeleteResigned) {
+      setError("Delete access is restricted.");
+      return;
+    }
     const ok = window.confirm(`Delete ${getFullName(employee)}? This will move the employee to trash.`);
     if (!ok) return;
 
@@ -654,7 +659,7 @@ export default function ResignedPage() {
 
                 <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div className="flex items-center gap-2">
-                    {sessionRole !== "employee" ? (
+                    {sessionRole !== "employee" && canDeleteResigned ? (
                       <EmployeeStatusMenu value={normalizeStatus(e.status)} onChange={(nextStatus) => void updateEmployeeStatus(e, nextStatus)} />
                     ) : (
                       <span className="px-3 py-1 rounded-full text-xs font-bold bg-gray-700 text-white">RESIGNED</span>

@@ -57,6 +57,7 @@ create table if not exists public.access_requests (
   resolved_at timestamptz,
   resolved_by uuid,
   resolution_note text,
+  requested_can_write boolean not null default false,
 
   constraint access_requests_module_fkey
     foreign key (requested_module_key) references public.modules(module_key),

@@ -87,6 +87,7 @@ create table if not exists public.access_requests (
   resolved_by uuid,
   resolution_note text,
   requested_column_key text,
+  requested_can_write boolean not null default false,
   constraint access_requests_module_fkey
     foreign key (requested_module_key) references public.modules(module_key)
 );
@@ -132,6 +133,9 @@ alter table public.access_requests
 
 alter table public.access_requests
   add column if not exists requested_column_key text;
+
+alter table public.access_requests
+  add column if not exists requested_can_write boolean not null default false;
 
 create index if not exists role_module_access_role_idx
   on public.role_module_access (role_id);
@@ -479,6 +483,7 @@ create table if not exists public.admin_module_access_overrides (
   admin_id uuid not null,
   module_key text not null,
   can_read boolean not null default true,
+  can_write boolean not null default false,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   created_by uuid,
@@ -508,6 +513,7 @@ create table if not exists public.user_module_access_overrides (
   user_id uuid not null,
   module_key text not null,
   can_read boolean not null default true,
+  can_write boolean not null default false,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   created_by uuid,

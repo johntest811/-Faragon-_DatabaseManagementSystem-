@@ -438,6 +438,12 @@ async function insertAuditEvent(admin, payload) {
   try {
     const actorUserId = payload?.actor_user_id ? String(payload.actor_user_id) : null;
     const actorEmail = safeText(payload?.actor_email) || null;
+    const actorName =
+      safeText(payload?.actor_name) ||
+      safeText(payload?.actor?.name) ||
+      safeText(payload?.actor?.full_name) ||
+      safeText(payload?.actor?.username) ||
+      null;
     const action = safeText(payload?.action);
     if (!action) return;
 
@@ -445,14 +451,26 @@ async function insertAuditEvent(admin, payload) {
     const entity = safeText(payload?.entity) || null;
     const details = payload?.details && typeof payload.details === 'object' ? payload.details : null;
 
-    const ins = await admin.from('audit_log').insert({
+    let ins = await admin.from('audit_log').insert({
       actor_user_id: actorUserId,
       actor_email: actorEmail,
+      actor_name: actorName,
       action,
       page,
       entity,
       details,
     });
+
+    if (ins.error && isMissingColumnMessage(extractErrorMessageText(ins.error), 'actor_name')) {
+      ins = await admin.from('audit_log').insert({
+        actor_user_id: actorUserId,
+        actor_email: actorEmail,
+        action,
+        page,
+        entity,
+        details,
+      });
+    }
 
     if (ins.error) {
       const msg = String(ins.error?.message || ins.error);
@@ -473,6 +491,37 @@ async function insertAuditEvent(admin, payload) {
     }
     console.warn('[audit] insert exception:', e?.message ?? e);
   }
+}
+
+async function fetchAuditLogRows(admin, { limit = 10, page = null, pageSize = null, sinceIso = '' } = {}) {
+  const selectWithActorName = 'id, created_at, actor_email, actor_user_id, actor_name, action, page, entity, details';
+  const selectWithoutActorName = 'id, created_at, actor_email, actor_user_id, action, page, entity, details';
+
+  const buildQuery = (selectClause) => {
+    let q = admin
+      .from('audit_log')
+      .select(selectClause, { count: 'exact' })
+      .order('created_at', { ascending: false });
+
+    if (sinceIso) q = q.gte('created_at', sinceIso);
+
+    if (page != null && pageSize != null) {
+      const safePage = Math.max(1, Number(page));
+      const safePageSize = Math.max(1, Number(pageSize));
+      const from = (safePage - 1) * safePageSize;
+      const to = from + safePageSize - 1;
+      return q.range(from, to);
+    }
+
+    return q.limit(Math.max(1, Number(limit)));
+  };
+
+  let res = await buildQuery(selectWithActorName);
+  if (res.error && isMissingColumnMessage(extractErrorMessageText(res.error), 'actor_name')) {
+    res = await buildQuery(selectWithoutActorName);
+  }
+
+  return res;
 }
 
 function readEncryptedJson(filePath) {
@@ -1417,6 +1466,103 @@ async function purgeOldLicensureNotificationLogs(admin, { force = false } = {}) 
   }
 }
 
+const AUDIT_LOG_RETENTION_MIN_INTERVAL_MS = 6 * 60 * 60 * 1000;
+let lastAuditLogRetentionRunAtMs = 0;
+
+function normalizeAuditRetentionDays(value) {
+  const days = clampInt(value, { min: 7, max: 365, fallback: 30 });
+  if (days <= 7) return 7;
+  if (days <= 30) return 30;
+  return 365;
+}
+
+function formatAuditRetentionLabel(days) {
+  const normalized = normalizeAuditRetentionDays(days);
+  if (normalized === 7) return '1 week';
+  if (normalized === 30) return '1 month';
+  return '1 year';
+}
+
+async function loadAuditRetentionConfig(admin) {
+  try {
+    const res = await admin
+      .from('audit_log_retention_settings')
+      .select('id, retention_days')
+      .eq('id', 'default')
+      .maybeSingle();
+
+    if (res.error) throw res.error;
+
+    const retentionDays = normalizeAuditRetentionDays(res.data?.retention_days ?? 30);
+    return { retentionDays, retentionLabel: formatAuditRetentionLabel(retentionDays), missingTable: false };
+  } catch (e) {
+    const msg = extractErrorMessageText(e);
+    if (isMissingTableMessage(msg, 'audit_log_retention_settings')) {
+      return { retentionDays: 30, retentionLabel: '1 month', missingTable: true };
+    }
+
+    if (isTransientNetworkError(e)) {
+      return {
+        retentionDays: 30,
+        retentionLabel: '1 month',
+        missingTable: false,
+        unavailable: true,
+        error: extractErrorMessageText(e) || 'Supabase is temporarily unreachable.',
+      };
+    }
+
+    throw e;
+  }
+}
+
+async function purgeOldAuditLogs(admin, { force = false } = {}) {
+  const nowMs = Date.now();
+  if (!force && nowMs - lastAuditLogRetentionRunAtMs < AUDIT_LOG_RETENTION_MIN_INTERVAL_MS) {
+    return { deleted: 0, skipped: true };
+  }
+
+  try {
+    const config = await loadAuditRetentionConfig(admin);
+    if (config.unavailable) {
+      return { deleted: 0, skipped: true, unavailable: true };
+    }
+
+    if (config.missingTable) {
+      lastAuditLogRetentionRunAtMs = nowMs;
+      return { deleted: 0, skipped: true, missingTable: true };
+    }
+
+    const cutoffIso = new Date(nowMs - normalizeAuditRetentionDays(config.retentionDays) * 24 * 60 * 60 * 1000).toISOString();
+    const result = await admin
+      .from('audit_log')
+      .delete({ count: 'exact' })
+      .lt('created_at', cutoffIso);
+
+    if (result.error) throw result.error;
+
+    lastAuditLogRetentionRunAtMs = nowMs;
+    return { deleted: Number(result.count ?? 0), skipped: false, retentionDays: config.retentionDays };
+  } catch (e) {
+    const msg = safeText(e?.message || e);
+    if (isMissingTableMessage(msg, 'audit_log')) {
+      lastAuditLogRetentionRunAtMs = nowMs;
+      return { deleted: 0, skipped: true, missingTable: true };
+    }
+
+    console.warn('[audit] log retention cleanup failed:', e?.message ?? e);
+    return { deleted: 0, skipped: true, error: true };
+  }
+}
+
+async function maybeAutoPurgeAuditLogs() {
+  try {
+    const admin = getAdminSupabase();
+    await purgeOldAuditLogs(admin);
+  } catch (e) {
+    warnThrottled('audit.retention', e, 180000);
+  }
+}
+
 async function hasSentLicensureNotice(admin, item, recipientEmail = null) {
   try {
     let q = admin
@@ -2249,20 +2395,65 @@ ipcMain.handle('audit:logEvent', async (_event, payload) => {
   return { success: true };
 });
 
+ipcMain.handle('audit:loadRetentionConfig', async () => {
+  const admin = getAdminSupabase();
+  try {
+    return await loadAuditRetentionConfig(admin);
+  } catch (e) {
+    if (isTransientNetworkError(e)) {
+      warnThrottled('audit.loadRetentionConfig', e, 180000);
+      return {
+        retentionDays: 30,
+        retentionLabel: '1 month',
+        missingTable: false,
+        unavailable: true,
+        error: extractErrorMessageText(e) || 'Supabase is temporarily unreachable.',
+      };
+    }
+    throw e;
+  }
+});
+
+ipcMain.handle('audit:saveRetentionConfig', async (_event, payload) => {
+  const admin = getAdminSupabase();
+  const retentionDays = normalizeAuditRetentionDays(payload?.retentionDays);
+
+  const upsert = await admin
+    .from('audit_log_retention_settings')
+    .upsert({ id: 'default', retention_days: retentionDays }, { onConflict: 'id' })
+    .select('id, retention_days')
+    .maybeSingle();
+
+  if (upsert.error) {
+    const msg = extractErrorMessageText(upsert.error);
+    if (isMissingTableMessage(msg, 'audit_log_retention_settings')) {
+      return {
+        success: false,
+        missingTable: true,
+        retentionDays,
+        retentionLabel: formatAuditRetentionLabel(retentionDays),
+      };
+    }
+    throw upsert.error;
+  }
+
+  await purgeOldAuditLogs(admin, { force: true });
+  return {
+    success: true,
+    retentionDays,
+    retentionLabel: formatAuditRetentionLabel(retentionDays),
+  };
+});
+
 ipcMain.handle('audit:getRecent', async (_event, payload) => {
   const admin = getAdminSupabase();
   const limit = Math.max(1, Math.min(50, Number(payload?.limit ?? 10)));
   const sinceIso = safeText(payload?.sinceIso);
 
   try {
-    let q = admin
-      .from('audit_log')
-      .select('id, created_at, actor_email, actor_user_id, action, page, entity, details', { count: 'exact' })
-      .order('created_at', { ascending: false })
-      .limit(limit);
-    if (sinceIso) q = q.gte('created_at', sinceIso);
+    await purgeOldAuditLogs(admin);
 
-    const res = await q;
+    const res = await fetchAuditLogRows(admin, { limit, sinceIso });
     if (res.error) throw res.error;
     return { rows: res.data ?? [], count: res.count ?? 0, missingTable: false };
   } catch (e) {
@@ -2294,11 +2485,9 @@ ipcMain.handle('audit:getPage', async (_event, payload) => {
   const to = from + pageSize - 1;
 
   try {
-    const res = await admin
-      .from('audit_log')
-      .select('id, created_at, actor_email, actor_user_id, action, page, entity, details', { count: 'exact' })
-      .order('created_at', { ascending: false })
-      .range(from, to);
+    await purgeOldAuditLogs(admin);
+
+    const res = await fetchAuditLogRows(admin, { page, pageSize });
     if (res.error) throw res.error;
     return { rows: res.data ?? [], count: res.count ?? 0, missingTable: false };
   } catch (e) {
@@ -2925,8 +3114,10 @@ if (gotSingleInstanceLock) {
     if (notificationTimer) clearInterval(notificationTimer);
     notificationTimer = setInterval(() => {
       void maybeAutoSendNotifications();
+      void maybeAutoPurgeAuditLogs();
     }, 60 * 1000);
     void maybeAutoSendNotifications();
+    void maybeAutoPurgeAuditLogs();
   });
 
   app.on('window-all-closed', () => {

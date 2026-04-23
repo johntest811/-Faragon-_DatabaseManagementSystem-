@@ -18,7 +18,7 @@ import {
 
 type RoleRow = { role_id: string; role_name: string };
 type ModuleRow = { module_key: string; display_name: string };
-type AccessRow = { role_id: string; module_key: string };
+type AccessRow = { role_id: string; module_key: string; can_read?: boolean | null; can_write?: boolean | null; can_edit?: boolean | null };
 type RoleColumnAccessRow = {
 	role_id: string;
 	module_key: string;
@@ -58,6 +58,7 @@ export default function RolesPage() {
 	type ElectronAuditEvent = {
 		actor_user_id: string | null;
 		actor_email: string | null;
+		actor_name?: string | null;
 		action: string;
 		page: string;
 		details: Record<string, unknown> | null;
@@ -75,6 +76,19 @@ export default function RolesPage() {
 		return maybe as ElectronApi;
 	}
 
+	function getLegacyAdminDisplayName() {
+		try {
+			const raw = localStorage.getItem("adminSession");
+			if (!raw) return null;
+			const parsed = JSON.parse(raw) as { full_name?: unknown; username?: unknown };
+			const fullName = String(parsed?.full_name ?? "").trim();
+			const username = String(parsed?.username ?? "").trim();
+			return fullName || username || null;
+		} catch {
+			return null;
+		}
+	}
+
 	const api = getElectronApi();
 
 	const [error, setError] = useState<string>("");
@@ -83,6 +97,8 @@ export default function RolesPage() {
 	const [roles, setRoles] = useState<RoleRow[]>([]);
 	const [modules, setModules] = useState<ModuleRow[]>([]);
 	const [access, setAccess] = useState<Record<string, Set<string>>>({});
+	const [deleteAccess, setDeleteAccess] = useState<Record<string, Set<string>>>({});
+	const [editAccess, setEditAccess] = useState<Record<string, Set<string>>>({});
 	const [roleColumnAccess, setRoleColumnAccess] = useState<Record<string, Record<string, Set<string>>>>({});
 	const [roleColumnRestrictedModules, setRoleColumnRestrictedModules] = useState<Record<string, Set<string>>>({});
 	const [selectedRoleId, setSelectedRoleId] = useState<string>("");
@@ -108,6 +124,7 @@ export default function RolesPage() {
 			await api.audit.logEvent({
 				actor_user_id: session.data.session?.user?.id ?? null,
 				actor_email: session.data.session?.user?.email ?? null,
+				actor_name: getLegacyAdminDisplayName(),
 				action,
 				page: "/Main_Modules/Roles/",
 				details: details && typeof details === "object" ? (details as Record<string, unknown>) : null,
@@ -124,7 +141,7 @@ export default function RolesPage() {
 			const [rRes, mRes, aRes, cRes] = await Promise.all([
 				supabase.from("app_roles").select("role_id, role_name").order("role_name"),
 				supabase.from("modules").select("module_key, display_name").order("module_key"),
-				supabase.from("role_module_access").select("role_id, module_key"),
+				supabase.from("role_module_access").select("role_id, module_key, can_read, can_write, can_edit"),
 				supabase.from("role_column_access").select("role_id, module_key, column_key, can_read"),
 			]);
 
@@ -146,9 +163,20 @@ export default function RolesPage() {
 			setModules(loadedModules);
 
 			const map: Record<string, Set<string>> = {};
+			const deleteMap: Record<string, Set<string>> = {};
+			const editMap: Record<string, Set<string>> = {};
 			for (const row of ((aRes.data as AccessRow[]) ?? []) || []) {
 				if (!map[row.role_id]) map[row.role_id] = new Set();
-				map[row.role_id].add(normalizeModuleKey(row.module_key));
+				const key = normalizeModuleKey(row.module_key);
+				if (row.can_read !== false) map[row.role_id].add(key);
+				if (row.can_write !== false) {
+					if (!deleteMap[row.role_id]) deleteMap[row.role_id] = new Set();
+					deleteMap[row.role_id].add(key);
+				}
+				if (row.can_edit !== false) {
+					if (!editMap[row.role_id]) editMap[row.role_id] = new Set();
+					editMap[row.role_id].add(key);
+				}
 			}
 
 			const colMap: Record<string, Record<string, Set<string>>> = {};
@@ -168,12 +196,14 @@ export default function RolesPage() {
 			const superadminRoleId = loadedRoles.find((r) => r.role_name === "superadmin")?.role_id ?? null;
 			if (superadminRoleId) {
 				if (!map[superadminRoleId]) map[superadminRoleId] = new Set<string>();
+				if (!editMap[superadminRoleId]) editMap[superadminRoleId] = new Set<string>();
 				if (!colMap[superadminRoleId]) colMap[superadminRoleId] = {};
 
 				for (const moduleRow of loadedModules) {
 					const key = normalizeModuleKey(moduleRow.module_key);
 					if (!key) continue;
 					map[superadminRoleId].add(key);
+					editMap[superadminRoleId].add(key);
 
 					const cols = columnsForModule(key);
 					if (!cols.length) continue;
@@ -183,6 +213,8 @@ export default function RolesPage() {
 			}
 
 			setAccess(map);
+			setDeleteAccess(deleteMap);
+			setEditAccess(editMap);
 			setRoleColumnAccess(colMap);
 			setRoleColumnRestrictedModules(colRestrictedMap);
 
@@ -459,12 +491,89 @@ export default function RolesPage() {
 			} else {
 				const { error: insErr } = await supabase
 					.from("role_module_access")
-					.insert({ role_id: roleId, module_key: key });
+					.upsert(
+						{
+							role_id: roleId,
+							module_key: key,
+							can_read: true,
+							can_write: deleteAccess[roleId]?.has(key) ?? false,
+							can_edit: editAccess[roleId]?.has(key) ?? false,
+						},
+						{ onConflict: "role_id,module_key" }
+					);
 				if (insErr) throw insErr;
 			}
 
 			setSuccess("Access updated.");
 			logAudit("RBAC_TOGGLE_ACCESS", { role_id: roleId, module_key: key, enabled: !current });
+			load();
+		} catch (e: unknown) {
+			setError(getErrorMessage(e));
+		} finally {
+			setSavingKey("");
+		}
+	}
+
+	async function toggleDeleteAccess(roleId: string, moduleKey: string) {
+		setError("");
+		setSuccess("");
+		if (!canManage) return setError("Only Superadmin can change module access.");
+		const key = normalizeModuleKey(moduleKey);
+		const opKey = `role-delete:${roleId}:${key}`;
+		setSavingKey(opKey);
+
+		try {
+			const current = deleteAccess[roleId]?.has(key) ?? false;
+			const { error: upsertErr } = await supabase
+				.from("role_module_access")
+				.upsert(
+					{
+						role_id: roleId,
+						module_key: key,
+						can_read: access[roleId]?.has(key) ?? true,
+						can_write: !current,
+						can_edit: editAccess[roleId]?.has(key) ?? false,
+					},
+					{ onConflict: "role_id,module_key" }
+				);
+			if (upsertErr) throw upsertErr;
+
+			setSuccess("Delete access updated.");
+			logAudit("RBAC_TOGGLE_DELETE_ACCESS", { role_id: roleId, module_key: key, enabled: !current });
+			load();
+		} catch (e: unknown) {
+			setError(getErrorMessage(e));
+		} finally {
+			setSavingKey("");
+		}
+	}
+
+	async function toggleEditAccess(roleId: string, moduleKey: string) {
+		setError("");
+		setSuccess("");
+		if (!canManage) return setError("Only Superadmin can change module access.");
+		const key = normalizeModuleKey(moduleKey);
+		const opKey = `role-edit:${roleId}:${key}`;
+		setSavingKey(opKey);
+
+		try {
+			const current = editAccess[roleId]?.has(key) ?? false;
+			const { error: upsertErr } = await supabase
+				.from("role_module_access")
+				.upsert(
+					{
+						role_id: roleId,
+						module_key: key,
+						can_read: access[roleId]?.has(key) ?? true,
+						can_write: deleteAccess[roleId]?.has(key) ?? false,
+						can_edit: !current,
+					},
+					{ onConflict: "role_id,module_key" }
+				);
+			if (upsertErr) throw upsertErr;
+
+			setSuccess("Edit access updated.");
+			logAudit("RBAC_TOGGLE_EDIT_ACCESS", { role_id: roleId, module_key: key, enabled: !current });
 			load();
 		} catch (e: unknown) {
 			setError(getErrorMessage(e));
@@ -497,7 +606,16 @@ export default function RolesPage() {
 			if (!moduleEnabled) {
 				const { error: insModuleErr } = await supabase
 					.from("role_module_access")
-					.insert({ role_id: roleId, module_key: key });
+						.upsert(
+							{
+								role_id: roleId,
+								module_key: key,
+								can_read: true,
+								can_write: deleteAccess[roleId]?.has(key) ?? false,
+								can_edit: editAccess[roleId]?.has(key) ?? false,
+							},
+							{ onConflict: "role_id,module_key" }
+						);
 				if (insModuleErr) throw insModuleErr;
 
 				const { error: insErr } = await supabase
@@ -829,8 +947,14 @@ export default function RolesPage() {
 								<div className="mt-3 space-y-2">
 									{group.rows.map((m) => {
 										const checked = selectedAccess.has(m.module_key);
+										const deleteChecked = deleteAccess[selectedRole.role_id]?.has(m.module_key) ?? false;
+										const editChecked = editAccess[selectedRole.role_id]?.has(m.module_key) ?? false;
 										const opKey = `role-module:${selectedRole.role_id}:${m.module_key}`;
+										const deleteOpKey = `role-delete:${selectedRole.role_id}:${m.module_key}`;
+										const editOpKey = `role-edit:${selectedRole.role_id}:${m.module_key}`;
 										const busy = savingKey === opKey;
+										const deleteBusy = savingKey === deleteOpKey;
+										const editBusy = savingKey === editOpKey;
 										const selectedCols = selectedColumnAccess[m.module_key] ?? new Set<string>();
 										const restricted = selectedColumnRestrictedModules.has(m.module_key);
 										const selectedVisibleCols = Array.from(selectedCols)
@@ -946,10 +1070,12 @@ export default function RolesPage() {
 														<div className="text-xs text-gray-500 font-mono">{m.module_key}</div>
 														<div className="mt-1 text-xs text-gray-600">
 															Effective: <span className="font-semibold">{checked ? "Yes" : "No"}</span>
+															· Edit: <span className="font-semibold">{editChecked ? "Yes" : "No"}</span>
+															· Delete: <span className="font-semibold">{deleteChecked ? "Yes" : "No"}</span>
 														</div>
 														<div className="mt-1 text-xs text-gray-600">Effective columns: {effectiveCols}</div>
 													</div>
-													<div className="flex items-center gap-2">
+													<div className="flex flex-col items-end gap-2">
 														<label className="text-xs text-gray-700 flex items-center gap-2">
 															<span className="text-gray-500">Permission</span>
 															<input
@@ -957,6 +1083,24 @@ export default function RolesPage() {
 																checked={checked}
 																onChange={() => toggleAccess(selectedRole.role_id, m.module_key)}
 																disabled={!canManage || busy || selectedRoleIsSuperadmin}
+															/>
+														</label>
+														<label className="text-xs text-gray-700 flex items-center gap-2">
+															<span className="text-gray-500">Edit</span>
+															<input
+																type="checkbox"
+																checked={editChecked}
+																onChange={() => toggleEditAccess(selectedRole.role_id, m.module_key)}
+																disabled={!canManage || editBusy || selectedRoleIsSuperadmin}
+															/>
+														</label>
+														<label className="text-xs text-gray-700 flex items-center gap-2">
+															<span className="text-gray-500">Delete</span>
+															<input
+																type="checkbox"
+																checked={deleteChecked}
+																onChange={() => toggleDeleteAccess(selectedRole.role_id, m.module_key)}
+																disabled={!canManage || deleteBusy || selectedRoleIsSuperadmin}
 															/>
 														</label>
 													</div>

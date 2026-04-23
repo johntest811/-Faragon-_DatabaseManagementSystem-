@@ -53,7 +53,9 @@ type AdminProfileRow = {
 type RecentActivityRow = {
   id: string;
   created_at: string;
+  actor_user_id: string | null;
   actor_email: string | null;
+  actor_name?: string | null;
   action: string;
   page: string | null;
 };
@@ -113,6 +115,7 @@ type ElectronLayoutApi = {
     logEvent?: (payload: {
       actor_user_id: string | null;
       actor_email: string | null;
+      actor_name?: string | null;
       action: string;
       page: string;
     }) => Promise<unknown>;
@@ -753,6 +756,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
         await api.audit.logEvent({
           actor_user_id: session.data.session?.user?.id ?? null,
           actor_email: session.data.session?.user?.email ?? null,
+          actor_name: adminDisplayName,
           action: "NAVIGATE",
           page: pathname,
         });
@@ -1674,7 +1678,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
 
                       {activityMissingTable ? (
                         <div className="px-4 py-3 text-sm text-yellow-800 bg-white">
-                          Install the audit table (Supabase_audit_log.sql).
+                          Install the audit table (Supabase_database.sql).
                         </div>
                       ) : null}
 
@@ -1685,7 +1689,9 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
                               <div className="text-xs text-gray-500">{new Date(r.created_at).toLocaleString()}</div>
                               <div className="text-sm text-black font-medium">{r.action}</div>
                               <div className="text-xs text-gray-600">{r.page || "—"}</div>
-                              <div className="text-[11px] text-gray-500">{r.actor_email || "—"}</div>
+                              <div className="text-[11px] text-gray-500">
+                                Actor: {r.actor_name || r.actor_email || r.actor_user_id || "—"}
+                              </div>
                             </div>
                           ))
                         ) : (

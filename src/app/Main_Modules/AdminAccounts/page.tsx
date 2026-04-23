@@ -31,6 +31,7 @@ function getErrorMessage(e: unknown) {
 type ElectronAuditEvent = {
 	actor_user_id: string | null;
 	actor_email: string | null;
+	actor_name?: string | null;
 	action: string;
 	page: string;
 	details: Record<string, unknown> | null;
@@ -46,6 +47,19 @@ function getElectronApi(): ElectronApi | null {
 	const maybe = (globalThis as unknown as { electronAPI?: unknown }).electronAPI;
 	if (!maybe || typeof maybe !== "object") return null;
 	return maybe as ElectronApi;
+}
+
+function getLegacyAdminDisplayName() {
+	try {
+		const raw = localStorage.getItem("adminSession");
+		if (!raw) return null;
+		const parsed = JSON.parse(raw) as { full_name?: unknown; username?: unknown };
+		const fullName = String(parsed?.full_name ?? "").trim();
+		const username = String(parsed?.username ?? "").trim();
+		return fullName || username || null;
+	} catch {
+		return null;
+	}
 }
 
 export default function AdminAccountsPage() {
@@ -99,6 +113,7 @@ export default function AdminAccountsPage() {
 			await api.audit.logEvent({
 				actor_user_id: session.data.session?.user?.id ?? null,
 				actor_email: session.data.session?.user?.email ?? null,
+				actor_name: getLegacyAdminDisplayName(),
 				action,
 				page: "/Main_Modules/AdminAccounts/",
 				details: details && typeof details === "object" ? (details as Record<string, unknown>) : null,

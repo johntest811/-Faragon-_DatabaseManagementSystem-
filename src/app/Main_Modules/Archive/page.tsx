@@ -4,7 +4,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../Client/SupabaseClients";
 import { RotateCcw, LayoutGrid, Table, SlidersHorizontal, Search } from "lucide-react";
-import { useAuthRole } from "../../Client/useRbac";
+import { useAuthRole, useMyModuleDeleteAccess } from "../../Client/useRbac";
 import LoadingCircle from "../../Components/LoadingCircle";
 import EmployeeStatusMenu from "../Components/EmployeeStatusMenu";
 import { buildEmployeeStatusUpdatePatch, loadLicensureMap } from "../employeeListData";
@@ -131,6 +131,7 @@ function nextLicenseExpiryFromLicensureRow(r: LicensureRow | null) {
 export default function ArchivePage() {
   const router = useRouter();
   const { role: sessionRole } = useAuthRole();
+  const { canDelete: canDeleteArchive } = useMyModuleDeleteAccess("archive");
   const [viewMode, setViewMode] = useState<"grid" | "table">(() => {
     if (typeof window !== "undefined") {
       return (localStorage.getItem("archive:viewMode") as "grid" | "table") || "grid";
@@ -391,6 +392,10 @@ export default function ArchivePage() {
 
   async function deleteEmployee(employee: Applicant) {
     setError("");
+    if (!canDeleteArchive) {
+      setError("Delete access is restricted.");
+      return;
+    }
     const ok = window.confirm(`Delete ${getFullName(employee)}? This will move the employee to trash.`);
     if (!ok) return;
 
@@ -575,17 +580,19 @@ export default function ArchivePage() {
                     >
                       <RotateCcw className="w-4 h-4" /> Restore
                     </button>
-                    <button
-                      onClick={(ev) => {
-                        ev.stopPropagation();
-                        void deleteEmployee(e);
-                      }}
-                      className="px-4 py-2 text-xs rounded-xl border border-red-200 bg-white text-red-600 font-semibold hover:bg-red-50"
-                      title="Delete"
-                      type="button"
-                    >
-                      Delete
-                    </button>
+                    {sessionRole !== "employee" && canDeleteArchive ? (
+                      <button
+                        onClick={(ev) => {
+                          ev.stopPropagation();
+                          void deleteEmployee(e);
+                        }}
+                        className="px-4 py-2 text-xs rounded-xl border border-red-200 bg-white text-red-600 font-semibold hover:bg-red-50"
+                        title="Delete"
+                        type="button"
+                      >
+                        Delete
+                      </button>
+                    ) : null}
                   </div>
                 </td>
               </tr>
@@ -658,17 +665,19 @@ export default function ArchivePage() {
                     >
                       <RotateCcw className="w-4 h-4" /> Restore
                     </button>
-                      <button
-                        onClick={(ev) => {
-                          ev.stopPropagation();
-                          void deleteEmployee(e);
-                        }}
-                        className="h-9 px-3 rounded-xl border border-red-200 bg-white text-red-600 text-xs font-semibold"
-                        title="Delete"
-                        type="button"
-                      >
-                        Delete
-                      </button>
+                      {sessionRole !== "employee" && canDeleteArchive ? (
+                        <button
+                          onClick={(ev) => {
+                            ev.stopPropagation();
+                            void deleteEmployee(e);
+                          }}
+                          className="h-9 px-3 rounded-xl border border-red-200 bg-white text-red-600 text-xs font-semibold"
+                          title="Delete"
+                          type="button"
+                        >
+                          Delete
+                        </button>
+                      ) : null}
                       </div>
                     </div>
                 </div>

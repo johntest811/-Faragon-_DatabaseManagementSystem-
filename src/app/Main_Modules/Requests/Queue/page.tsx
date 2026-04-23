@@ -30,6 +30,8 @@ type AccessRequestRow = {
   requested_row_identifier_key?: string | null;
   requested_row_identifier_values?: string[] | null;
   requested_row_identifier_value?: string | null;
+  requested_can_edit?: boolean | null;
+  requested_can_write?: boolean | null;
   requested_path: string | null;
   reason: string | null;
   requester_user_id?: string | null;
@@ -132,6 +134,9 @@ const PENDING_REQUEST_COLUMNS = [
   "requested_row_identifier_key",
   "requested_row_identifier_values",
   "requested_row_identifier_value",
+  "requested_can_edit",
+  "requested_can_edit",
+  "requested_can_write",
   "requested_path",
   "reason",
   "requester_user_id",
@@ -327,6 +332,8 @@ export default function RequestsQueuePage() {
     );
     const isPersonnelColumnRequest =
       requestedKey === "employees" && requestedApplicantIds.length > 0 && requestedColumns.length > 0;
+    const wantsEditAccess = Boolean(req.requested_can_edit);
+    const wantsDeleteAccess = Boolean(req.requested_can_write);
 
     if (requestedApplicantIds.length > 0 && requestedKey !== "employees") {
       setError("Invalid request: personnel-level access is only valid for Employees.");
@@ -359,6 +366,8 @@ export default function RequestsQueuePage() {
             admin_id: req.requester_admin_id,
             module_key: k,
             can_read: true,
+            ...(wantsEditAccess ? { can_edit: true } : {}),
+            ...(wantsDeleteAccess ? { can_write: true } : {}),
           }));
 
           const { error: adminGrantErr } = await supabase
@@ -432,6 +441,8 @@ export default function RequestsQueuePage() {
             user_id: req.requester_user_id,
             module_key: k,
             can_read: true,
+            ...(wantsEditAccess ? { can_edit: true } : {}),
+            ...(wantsDeleteAccess ? { can_write: true } : {}),
           }));
 
           const { error: userGrantErr } = await supabase
@@ -519,7 +530,8 @@ export default function RequestsQueuePage() {
             role_id: roleRow.role_id,
             module_key: k,
             can_read: true,
-            can_write: false,
+            ...(wantsEditAccess ? { can_edit: true } : {}),
+            ...(wantsDeleteAccess ? { can_write: true } : {}),
           }));
 
           const { error: grantErr } = await supabase
@@ -572,7 +584,7 @@ export default function RequestsQueuePage() {
         <div>
           <div className="text-lg font-semibold text-black">Pending Requests (Reviewer Queue)</div>
           <div className="text-sm text-black">
-            Approve grants access based on selected scope (page, columns, and optional employee row scope).
+            Approve grants access based on selected scope (page, edit, delete, columns, and optional employee row scope).
           </div>
           <div className="mt-3">
             <AccessTabs />
@@ -631,6 +643,8 @@ export default function RequestsQueuePage() {
                   !r.request_scope_row && !r.request_scope_column ? "PAGE" : null,
                   r.request_scope_row ? "ROW" : null,
                   r.request_scope_column ? "COLUMN" : null,
+                      r.requested_can_edit ? "EDIT" : null,
+                      r.requested_can_write ? "DELETE" : null,
                 ]
                   .filter(Boolean)
                   .join(" + ") || "—";

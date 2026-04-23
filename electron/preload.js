@@ -36,5 +36,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     logEvent: (payload) => ipcRenderer.invoke('audit:logEvent', payload),
     getRecent: (payload) => ipcRenderer.invoke('audit:getRecent', payload),
     getPage: (payload) => ipcRenderer.invoke('audit:getPage', payload),
+    loadRetentionConfig: () => ipcRenderer.invoke('audit:loadRetentionConfig'),
+    saveRetentionConfig: (payload) => ipcRenderer.invoke('audit:saveRetentionConfig', payload),
   },
 });

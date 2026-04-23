@@ -149,6 +149,13 @@ function readLegacyAdminSession(): LegacyAdminSession | null {
 	}
 }
 
+function getLegacyAdminDisplayName() {
+	const legacy = readLegacyAdminSession();
+	const fullName = String(legacy?.full_name ?? "").trim();
+	const username = String(legacy?.username ?? "").trim();
+	return fullName || username || null;
+}
+
 function writeLegacyAdminSessionPatch(patch: Partial<LegacyAdminSession>) {
 	try {
 		const raw = localStorage.getItem("adminSession");
@@ -1480,6 +1487,7 @@ export default function SettingsPage() {
 				const actor = {
 					user_id: session.data.session?.user?.id ?? null,
 					email: session.data.session?.user?.email ?? null,
+					name: getLegacyAdminDisplayName(),
 				};
 				await electronAPI.settings.saveNotificationConfig({
 					email: {

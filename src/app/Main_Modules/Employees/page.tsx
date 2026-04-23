@@ -7,7 +7,7 @@ import { Pencil, SlidersHorizontal, Upload, LayoutGrid, Table, Search, FileDown,
 import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
-import { useAuthRole, useMyColumnAccess } from "../../Client/useRbac";
+import { useAuthRole, useMyColumnAccess, useMyModuleAccess, useMyModuleDeleteAccess, useMyModuleEditAccess } from "../../Client/useRbac";
 import EmployeeEditorModal from "../../Components/EmployeeEditorModal";
 import EmployeeExcelImportModal from "../../Components/EmployeeExcelImportModal";
 import LoadingCircle from "../../Components/LoadingCircle";
@@ -221,12 +221,15 @@ const HIRE_MONTH_OPTIONS = [
 export default function EmployeesPage() {
 	const router = useRouter();
 	const { role: sessionRole } = useAuthRole();
+	const { canAccess: canAccessEmployees } = useMyModuleAccess("employees");
+	const { canEdit: canEditEmployees } = useMyModuleEditAccess("employees");
 	const {
 		allowedColumns: allowedEmployeeColumns,
 		restricted: employeeColumnsRestricted,
 		loading: loadingEmployeeColumns,
 		error: employeeColumnsError,
 	} = useMyColumnAccess("employees");
+	const { canDelete: canDeleteEmployees } = useMyModuleDeleteAccess("employees");
 	const api = (globalThis as unknown as { electronAPI?: EmployeesElectronApi }).electronAPI;
 
 	const canViewEmployeeColumn = (columnKey: string) =>
@@ -735,18 +738,30 @@ if (hiredMonthFilter !== "ALL") {
 	}
 
 	function openEdit(employee: Applicant) {
+		if (!canEditEmployees) {
+			setError("Edit access is restricted.");
+			return;
+		}
 		setEditorMode("edit");
 		setEditorApplicantId(employee.applicant_id);
 		setEditorOpen(true);
 	}
 
 	function openArchive(employee: Applicant) {
+		if (!canEditEmployees) {
+			setError("Edit access is restricted.");
+			return;
+		}
 		setArchiveEmployee(employee);
 		setArchiveOpen(true);
 	}
 
 	async function updateEmployeeStatus(employee: Applicant, nextStatus: string) {
 		setError("");
+		if (!canEditEmployees) {
+			setError("Edit access is restricted.");
+			return;
+		}
 		const { error: updateError } = await supabase
 			.from("applicants")
 			.update(buildEmployeeStatusUpdatePatch(nextStatus))
@@ -763,6 +778,14 @@ if (hiredMonthFilter !== "ALL") {
 
 	async function deleteEmployee(employee: Applicant) {
 		setError("");
+		if (!canAccessEmployees) {
+			setError("Access to Employees is restricted.");
+			return;
+		}
+		if (!canDeleteEmployees) {
+			setError("Delete access is restricted.");
+			return;
+		}
 		const ok = window.confirm(`Delete ${getFullName(employee)}? This will move the employee to trash.`);
 		if (!ok) return;
 
@@ -1062,7 +1085,7 @@ if (hiredMonthFilter !== "ALL") {
 						</button>
 					</div>
 
-					{sessionRole !== "employee" ? (
+						{canAccessEmployees ? (
 						<div className="flex items-center gap-2">
 							{canExportEmployees ? (
 								<>
@@ -1122,7 +1145,7 @@ if (hiredMonthFilter !== "ALL") {
 						const name = getFullName(e);
 						const profileUrl = getProfileUrl(e.profile_image_path);
 						const status = normalizeStatus(e.status);
-						const canClick = sessionRole !== "employee";
+						const canClick = canAccessEmployees;
       const detailsHref = `/Main_Modules/Employees/details/?id=${encodeURIComponent(
         e.applicant_id
       )}&from=${encodeURIComponent("/Main_Modules/Employees/")}`;
@@ -1183,7 +1206,7 @@ if (hiredMonthFilter !== "ALL") {
 
 								<div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 									<div className="flex items-center gap-2">
-										{sessionRole !== "employee" ? (
+										{canEditEmployees ? (
 											<EmployeeStatusMenu value={status} onChange={(nextStatus) => void updateEmployeeStatus(e, nextStatus)} />
 										) : (
 											<span
@@ -1197,7 +1220,7 @@ if (hiredMonthFilter !== "ALL") {
 									</div>
 
 									<div className="flex flex-wrap items-center justify-end gap-2">
-										{sessionRole !== "employee" && (
+										{canAccessEmployees && canDeleteEmployees ? (
 											<button
 												onClick={(ev) => {
 													ev.stopPropagation();
@@ -1209,9 +1232,9 @@ if (hiredMonthFilter !== "ALL") {
 											>
 												Delete
 											</button>
-										)}
+											) : null}
 
-										{sessionRole !== "employee" && (
+										{canEditEmployees ? (
 											<button
 												onClick={(ev) => {
 													ev.stopPropagation();
@@ -1223,9 +1246,9 @@ if (hiredMonthFilter !== "ALL") {
 											>
 												Archive
 											</button>
-										)}
+											) : null}
 
-										{sessionRole !== "employee" && (
+										{canEditEmployees ? (
 											<button
 												onClick={(ev) => {
 													ev.stopPropagation();
@@ -1236,7 +1259,7 @@ if (hiredMonthFilter !== "ALL") {
 											>
 												<Pencil className="w-4 h-4" />
 											</button>
-										)}
+											) : null}
 
 									{/* Trash page removed */}
 								</div>
@@ -1261,7 +1284,7 @@ if (hiredMonthFilter !== "ALL") {
 					{showDetachmentColumn ? <th className="px-4 py-3 text-left font-semibold text-black">Detachment</th> : null}
 					<th className="px-4 py-3 text-left font-semibold text-black">Next License Expiry</th>
 					{showStatusColumn ? <th className="px-4 py-3 text-left font-semibold text-black">Status</th> : null}
-					{sessionRole !== "employee" ? (
+					{canAccessEmployees ? (
 						<th className="px-4 py-3 text-center font-semibold text-black last:rounded-r-xl">Actions</th>
 					) : null}
 				</tr>
@@ -1270,7 +1293,7 @@ if (hiredMonthFilter !== "ALL") {
 				{filtered.map((e) => {
 					const profileUrl = getProfileUrl(e.profile_image_path);
 					const next = licensureByApplicantId[e.applicant_id] || { nextYmd: null, nextDays: null };
-					const canClick = sessionRole !== "employee";
+					const canClick = canAccessEmployees;
 					const detailsHref = `/Main_Modules/Employees/details/?id=${encodeURIComponent(
 						e.applicant_id
 					)}&from=${encodeURIComponent("/Main_Modules/Employees/")}`;
@@ -1336,7 +1359,7 @@ if (hiredMonthFilter !== "ALL") {
 									</span>
 								</td>
 							) : null}
-							{sessionRole !== "employee" ? (
+							{canAccessEmployees && canDeleteEmployees ? (
 								<td className="px-4 py-3 text-center rounded-r-xl">
 									<div className="inline-flex items-center gap-2">
 										<button

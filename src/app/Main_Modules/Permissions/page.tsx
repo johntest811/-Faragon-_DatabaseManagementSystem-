@@ -30,6 +30,8 @@ type RoleIdRow = { role_id: string };
 type RoleModuleAccessRow = {
 	module_key: string;
 	can_read: boolean | null;
+	can_write: boolean | null;
+	can_edit: boolean | null;
 };
 
 type RoleColumnAccessRow = {
@@ -41,6 +43,8 @@ type RoleColumnAccessRow = {
 type AdminModuleOverrideRow = {
 	module_key: string;
 	can_read: boolean | null;
+	can_write: boolean | null;
+	can_edit: boolean | null;
 };
 
 type AdminColumnOverrideRow = {
@@ -56,6 +60,7 @@ function getErrorMessage(e: unknown) {
 type ElectronAuditEvent = {
 	actor_user_id: string | null;
 	actor_email: string | null;
+	actor_name?: string | null;
 	action: string;
 	page: string;
 	details: Record<string, unknown> | null;
@@ -71,6 +76,19 @@ function getElectronApi(): ElectronApi | null {
 	const maybe = (globalThis as unknown as { electronAPI?: unknown }).electronAPI;
 	if (!maybe || typeof maybe !== "object") return null;
 	return maybe as ElectronApi;
+}
+
+function getLegacyAdminDisplayName() {
+	try {
+		const raw = localStorage.getItem("adminSession");
+		if (!raw) return null;
+		const parsed = JSON.parse(raw) as { full_name?: unknown; username?: unknown };
+		const fullName = String(parsed?.full_name ?? "").trim();
+		const username = String(parsed?.username ?? "").trim();
+		return fullName || username || null;
+	} catch {
+		return null;
+	}
 }
 
 function PermissionsPageContent() {
@@ -93,8 +111,12 @@ function PermissionsPageContent() {
 	const [loadingAccess, setLoadingAccess] = useState(false);
 
 	const [roleModuleAccess, setRoleModuleAccess] = useState<Set<string>>(new Set());
+	const [roleModuleEditAccess, setRoleModuleEditAccess] = useState<Set<string>>(new Set());
+	const [roleModuleDeleteAccess, setRoleModuleDeleteAccess] = useState<Set<string>>(new Set());
 	const [roleColumnAccess, setRoleColumnAccess] = useState<Record<string, Set<string>>>({});
 	const [adminModuleAccess, setAdminModuleAccess] = useState<Set<string>>(new Set());
+	const [adminModuleEditAccess, setAdminModuleEditAccess] = useState<Set<string>>(new Set());
+	const [adminModuleDeleteAccess, setAdminModuleDeleteAccess] = useState<Set<string>>(new Set());
 	const [adminColumnAccess, setAdminColumnAccess] = useState<Record<string, Set<string>>>({});
 	const [savingIndividualKey, setSavingIndividualKey] = useState("");
 
@@ -107,6 +129,7 @@ function PermissionsPageContent() {
 			await api.audit.logEvent({
 				actor_user_id: session.data.session?.user?.id ?? null,
 				actor_email: session.data.session?.user?.email ?? null,
+				actor_name: getLegacyAdminDisplayName(),
 				action,
 				page: "/Main_Modules/Permissions/",
 				details: details && typeof details === "object" ? (details as Record<string, unknown>) : null,
@@ -186,11 +209,13 @@ function PermissionsPageContent() {
 			}
 
 			const roleModuleSet = new Set<string>();
+			const roleEditSet = new Set<string>();
+			const roleDeleteSet = new Set<string>();
 			const roleColMap: Record<string, Set<string>> = {};
 
 			if (roleId) {
 				const [roleModulesRes, roleColsRes] = await Promise.all([
-					supabase.from("role_module_access").select("module_key, can_read").eq("role_id", roleId),
+					supabase.from("role_module_access").select("module_key, can_read, can_write, can_edit").eq("role_id", roleId),
 					supabase.from("role_column_access").select("module_key, column_key, can_read").eq("role_id", roleId),
 				]);
 				if (roleModulesRes.error) throw roleModulesRes.error;
@@ -202,6 +227,16 @@ function PermissionsPageContent() {
 						.map((r) => normalizeModuleKey(r.module_key))
 				);
 				for (const key of dbRoleModuleSet) roleModuleSet.add(key);
+				for (const row of ((roleModulesRes.data as RoleModuleAccessRow[]) ?? []) || []) {
+					if (row.can_write === false) continue;
+					const key = normalizeModuleKey(row.module_key);
+					if (key) roleDeleteSet.add(key);
+				}
+				for (const row of ((roleModulesRes.data as RoleModuleAccessRow[]) ?? []) || []) {
+					if (row.can_edit === false) continue;
+					const key = normalizeModuleKey(row.module_key);
+					if (key) roleEditSet.add(key);
+				}
 
 				for (const row of ((roleColsRes.data as RoleColumnAccessRow[]) ?? []) || []) {
 					if (row.can_read === false) continue;
@@ -218,6 +253,8 @@ function PermissionsPageContent() {
 					const moduleKey = normalizeModuleKey(moduleRow.module_key);
 					if (!moduleKey) continue;
 					roleModuleSet.add(moduleKey);
+					roleEditSet.add(moduleKey);
+					roleDeleteSet.add(moduleKey);
 					const cols = columnsForModule(moduleKey);
 					if (!cols.length) continue;
 					if (!roleColMap[moduleKey]) roleColMap[moduleKey] = new Set<string>();
@@ -226,10 +263,12 @@ function PermissionsPageContent() {
 			}
 
 			setRoleModuleAccess(roleModuleSet);
+			setRoleModuleEditAccess(roleEditSet);
+			setRoleModuleDeleteAccess(roleDeleteSet);
 			setRoleColumnAccess(roleColMap);
 
 			const [adminModulesRes, adminColsRes] = await Promise.all([
-				supabase.from("admin_module_access_overrides").select("module_key, can_read").eq("admin_id", admin.id),
+					supabase.from("admin_module_access_overrides").select("module_key, can_read, can_write, can_edit").eq("admin_id", admin.id),
 				supabase.from("admin_column_access_overrides").select("module_key, column_key, can_read").eq("admin_id", admin.id),
 			]);
 			if (adminModulesRes.error) throw adminModulesRes.error;
@@ -241,6 +280,18 @@ function PermissionsPageContent() {
 					.map((r) => normalizeModuleKey(r.module_key))
 			);
 			setAdminModuleAccess(moduleSet);
+			const editSet = new Set(
+				(((adminModulesRes.data as AdminModuleOverrideRow[]) ?? []) || [])
+					.filter((r) => r.can_edit !== false)
+					.map((r) => normalizeModuleKey(r.module_key))
+			);
+			setAdminModuleEditAccess(editSet);
+			const deleteSet = new Set(
+				(((adminModulesRes.data as AdminModuleOverrideRow[]) ?? []) || [])
+					.filter((r) => r.can_write !== false)
+					.map((r) => normalizeModuleKey(r.module_key))
+			);
+			setAdminModuleDeleteAccess(deleteSet);
 
 			const colMap: Record<string, Set<string>> = {};
 			for (const row of ((adminColsRes.data as AdminColumnOverrideRow[]) ?? []) || []) {
@@ -320,7 +371,13 @@ function PermissionsPageContent() {
 				const { error: insErr } = await supabase
 					.from("admin_module_access_overrides")
 					.upsert(
-						{ admin_id: selectedAdminId, module_key: key, can_read: true },
+						{
+							admin_id: selectedAdminId,
+							module_key: key,
+							can_read: true,
+							can_write: adminModuleDeleteAccess.has(key),
+							can_edit: adminModuleEditAccess.has(key),
+						},
 						{ onConflict: "admin_id,module_key" }
 					);
 				if (insErr) throw insErr;
@@ -328,6 +385,104 @@ function PermissionsPageContent() {
 
 			setSuccess("Individual page access updated.");
 			logAudit("RBAC_TOGGLE_INDIVIDUAL_MODULE", {
+				admin_id: selectedAdminId,
+				module_key: key,
+				enabled: !enabled,
+			});
+			if (selectedAdmin) loadSelectedAdminAccess(selectedAdmin);
+		} catch (e: unknown) {
+			setError(getErrorMessage(e));
+		} finally {
+			setSavingIndividualKey("");
+		}
+	}
+
+	async function toggleAdminEdit(moduleKey: string) {
+		setError("");
+		setSuccess("");
+		if (!canManage) return setError("Only Superadmin can change individual access.");
+		if (!selectedAdminId) return setError("Please select an account.");
+		if (normalizeModuleKey(selectedAdmin?.role) === "superadmin") {
+			return setError("Superadmin already has full access by default.");
+		}
+
+		const key = normalizeModuleKey(moduleKey);
+		const busyKey = `admin-edit:${selectedAdminId}:${key}`;
+		setSavingIndividualKey(busyKey);
+
+		try {
+			const enabled = adminModuleEditAccess.has(key);
+			if (enabled) {
+				const { error: updateErr } = await supabase
+					.from("admin_module_access_overrides")
+					.update({ can_edit: false })
+					.eq("admin_id", selectedAdminId)
+					.eq("module_key", key);
+				if (updateErr) throw updateErr;
+			} else {
+				const { error: upsertErr } = await supabase
+					.from("admin_module_access_overrides")
+					.upsert(
+						{
+							admin_id: selectedAdminId,
+							module_key: key,
+							can_read: true,
+							can_write: adminModuleDeleteAccess.has(key),
+							can_edit: true,
+						},
+						{ onConflict: "admin_id,module_key" }
+					);
+				if (upsertErr) throw upsertErr;
+			}
+
+			setSuccess("Edit access updated.");
+			logAudit("RBAC_TOGGLE_INDIVIDUAL_EDIT", {
+				admin_id: selectedAdminId,
+				module_key: key,
+				enabled: !enabled,
+			});
+			if (selectedAdmin) loadSelectedAdminAccess(selectedAdmin);
+		} catch (e: unknown) {
+			setError(getErrorMessage(e));
+		} finally {
+			setSavingIndividualKey("");
+		}
+	}
+
+	async function toggleAdminDelete(moduleKey: string) {
+		setError("");
+		setSuccess("");
+		if (!canManage) return setError("Only Superadmin can change individual access.");
+		if (!selectedAdminId) return setError("Please select an account.");
+		if (normalizeModuleKey(selectedAdmin?.role) === "superadmin") {
+			return setError("Superadmin already has full access by default.");
+		}
+
+		const key = normalizeModuleKey(moduleKey);
+		const busyKey = `admin-delete:${selectedAdminId}:${key}`;
+		setSavingIndividualKey(busyKey);
+
+		try {
+			const enabled = adminModuleDeleteAccess.has(key);
+			if (enabled) {
+				const { error: updateErr } = await supabase
+					.from("admin_module_access_overrides")
+					.update({ can_write: false, can_edit: adminModuleEditAccess.has(key) })
+					.eq("admin_id", selectedAdminId)
+					.eq("module_key", key);
+				if (updateErr) throw updateErr;
+			} else {
+				const { error: upsertErr } = await supabase
+					.from("admin_module_access_overrides")
+					.upsert(
+						{ admin_id: selectedAdminId, module_key: key, can_read: true, can_write: true },
+						{ onConflict: "admin_id,module_key" }
+					);
+				if (upsertErr) throw upsertErr;
+			}
+
+			setSuccess("Delete access updated.");
+			logAudit("RBAC_TOGGLE_INDIVIDUAL_DELETE", {
 				admin_id: selectedAdminId,
 				module_key: key,
 				enabled: !enabled,
@@ -370,7 +525,13 @@ function PermissionsPageContent() {
 				const { error: moduleUpsertErr } = await supabase
 					.from("admin_module_access_overrides")
 					.upsert(
-						{ admin_id: selectedAdminId, module_key: moduleKeyNormalized, can_read: true },
+								{
+									admin_id: selectedAdminId,
+									module_key: moduleKeyNormalized,
+									can_read: true,
+									can_write: adminModuleDeleteAccess.has(moduleKeyNormalized),
+									can_edit: adminModuleEditAccess.has(moduleKeyNormalized),
+								},
 						{ onConflict: "admin_id,module_key" }
 					);
 				if (moduleUpsertErr) throw moduleUpsertErr;
@@ -553,11 +714,19 @@ function PermissionsPageContent() {
 								<div className="mt-3 space-y-2">
 									{group.rows.map((m) => {
 										const roleModuleOn = roleModuleAccess.has(m.module_key);
+										const roleDeleteOn = roleModuleDeleteAccess.has(m.module_key);
 										const overrideModuleOn = adminModuleAccess.has(m.module_key);
+										const overrideDeleteOn = adminModuleDeleteAccess.has(m.module_key);
 										const effectiveModuleOn = roleModuleOn || overrideModuleOn;
+										const effectiveDeleteOn = roleDeleteOn || overrideDeleteOn;
 										const moduleLockedByRole = roleModuleOn && !overrideModuleOn;
+										const deleteLockedByRole = roleDeleteOn && !overrideDeleteOn;
 										const moduleBusy =
 											savingIndividualKey === `admin-module:${selectedAdminId}:${m.module_key}`;
+										const editBusy =
+											savingIndividualKey === `admin-edit:${selectedAdminId}:${m.module_key}`;
+										const deleteBusy =
+											savingIndividualKey === `admin-delete:${selectedAdminId}:${m.module_key}`;
 
 										const overrideCols = adminColumnAccess[m.module_key] ?? new Set<string>();
 										const roleCols = roleColumnAccess[m.module_key] ?? new Set<string>();
@@ -585,14 +754,23 @@ function PermissionsPageContent() {
 														<div className="text-sm font-medium text-black">{m.display_name}</div>
 														<div className="text-xs text-gray-500 font-mono">{m.module_key}</div>
 														<div className="mt-1 text-xs text-gray-600">
-															Effective: <span className="font-semibold">{effectiveModuleOn ? "Yes" : "No"}</span> · From role: {roleModuleOn ? "Yes" : "No"}
+															Effective: <span className="font-semibold">{effectiveModuleOn ? "Yes" : "No"}</span> · From role: {roleModuleOn ? "Yes" : "No"} · Delete: <span className="font-semibold">{effectiveDeleteOn ? "Yes" : "No"}</span>
+														</div>
+														<div className="mt-1 text-xs text-gray-600">
+															Edit: <span className="font-semibold">{(roleModuleEditAccess.has(m.module_key) || adminModuleEditAccess.has(m.module_key)) ? "Yes" : "No"}</span>
 														</div>
 														{moduleLockedByRole ? (
 															<div className="mt-1 text-xs text-gray-500">This page permission is inherited from the role.</div>
 														) : null}
+														{(roleModuleEditAccess.has(m.module_key) && !adminModuleEditAccess.has(m.module_key)) ? (
+															<div className="mt-1 text-xs text-gray-500">This edit access is inherited from the role.</div>
+														) : null}
+														{deleteLockedByRole ? (
+															<div className="mt-1 text-xs text-gray-500">This delete access is inherited from the role.</div>
+														) : null}
 														<div className="mt-1 text-xs text-gray-600">Effective columns: {effectiveCols || "(none)"}</div>
 													</div>
-													<div className="flex items-center gap-2">
+													<div className="flex flex-col items-end gap-2">
 														<label className="text-xs text-gray-700 flex items-center gap-2">
 															<span className="text-gray-500">Permission</span>
 															<input
@@ -606,6 +784,21 @@ function PermissionsPageContent() {
 																	void toggleAdminModule(m.module_key);
 																}}
 																disabled={!canManage || moduleBusy || moduleLockedByRole}
+															/>
+														</label>
+														<label className="text-xs text-gray-700 flex items-center gap-2">
+															<span className="text-gray-500">Delete</span>
+															<input
+																type="checkbox"
+																checked={effectiveDeleteOn}
+																onChange={() => {
+																if (deleteLockedByRole) {
+																	setError("This delete access is inherited from role. Edit it in Roles tab.");
+																	return;
+																}
+																void toggleAdminDelete(m.module_key);
+															}}
+																disabled={!canManage || deleteBusy || deleteLockedByRole}
 															/>
 														</label>
 													</div>

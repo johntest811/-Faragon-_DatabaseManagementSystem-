@@ -3,7 +3,7 @@
 import React, { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "../../Client/SupabaseClients";
-import { useAuthRole, useMyModules } from "../../Client/useRbac";
+import { useAuthRole, useMyModules, useMyModuleDeleteAccess, useMyModuleEditAccess } from "../../Client/useRbac";
 import LoadingCircle from "../../Components/LoadingCircle";
 import { useToast } from "../../Components/ToastProvider";
 import {
@@ -43,6 +43,8 @@ type AccessRequestRow = {
   requested_row_identifier_key?: string | null;
   requested_row_identifier_values?: string[] | null;
   requested_row_identifier_value?: string | null;
+  requested_can_edit?: boolean | null;
+  requested_can_write?: boolean | null;
   requested_path: string | null;
   reason: string | null;
   requester_user_id?: string | null;
@@ -125,6 +127,8 @@ const MY_REQUEST_COLUMNS = [
   "requested_row_identifier_key",
   "requested_row_identifier_values",
   "requested_row_identifier_value",
+  "requested_can_edit",
+  "requested_can_write",
   "requested_path",
   "reason",
   "requester_user_id",
@@ -151,6 +155,8 @@ const PENDING_REQUEST_COLUMNS = [
   "requested_row_identifier_key",
   "requested_row_identifier_values",
   "requested_row_identifier_value",
+  "requested_can_edit",
+  "requested_can_write",
   "requested_path",
   "reason",
   "requester_user_id",
@@ -257,6 +263,8 @@ function RequestsPageContent() {
   const initializedResolvedTrackingRef = useRef(false);
 
   const preselectModule = normalizeModuleKey(searchParams?.get("module") ?? "");
+  const preselectEditAccess = String(searchParams?.get("edit") ?? "").trim() === "1";
+  const preselectDeleteAccess = String(searchParams?.get("delete") ?? "").trim() === "1";
 
   const [modules, setModules] = useState<ModuleRow[]>([]);
   const [loadingModules, setLoadingModules] = useState(true);
@@ -281,6 +289,8 @@ function RequestsPageContent() {
   const [requestedModuleKey, setRequestedModuleKey] = useState<string>(preselectModule);
   const [scopeRow, setScopeRow] = useState(false);
   const [scopeColumn, setScopeColumn] = useState(false);
+  const [requestedEditAccess, setRequestedEditAccess] = useState(preselectEditAccess);
+  const [requestedDeleteAccess, setRequestedDeleteAccess] = useState(preselectDeleteAccess);
   const [requestedColumnKeys, setRequestedColumnKeys] = useState<string[]>([]);
   const [requestedApplicantIds, setRequestedApplicantIds] = useState<string[]>([]);
   const [personnelSearch, setPersonnelSearch] = useState<string>("");
@@ -306,10 +316,23 @@ function RequestsPageContent() {
   const reviewerAdminId = legacySession?.id ?? "";
   const canReviewRequests = role === "superadmin" || legacyRole === "superadmin";
 
+  const { canDelete: requestedModuleDeleteAccess, loading: loadingRequestedModuleDeleteAccess } =
+    useMyModuleDeleteAccess(requestedModuleKey);
+  const { canEdit: requestedModuleEditAccess, loading: loadingRequestedModuleEditAccess } =
+    useMyModuleEditAccess(requestedModuleKey);
+
   useEffect(() => {
     // Keep selection in sync with query string.
     if (preselectModule) setRequestedModuleKey(preselectModule);
   }, [preselectModule]);
+
+  useEffect(() => {
+    setRequestedEditAccess(preselectEditAccess);
+  }, [preselectEditAccess]);
+
+  useEffect(() => {
+    setRequestedDeleteAccess(preselectDeleteAccess);
+  }, [preselectDeleteAccess]);
 
   const loadModules = useCallback(async () => {
     setLoadingModules(true);
@@ -685,7 +708,13 @@ function RequestsPageContent() {
     });
   }, [applicants, personnelSearch]);
 
-  const disabled = submitting || loadingModules || loadingApprovers || loadingMyModules;
+  const disabled =
+    submitting ||
+    loadingModules ||
+    loadingApprovers ||
+    loadingMyModules ||
+    (requestedEditAccess && loadingRequestedModuleEditAccess) ||
+    (requestedDeleteAccess && loadingRequestedModuleDeleteAccess);
 
   function toggleRequestedColumn(columnKey: string) {
     const key = String(columnKey ?? "").trim();
@@ -742,14 +771,31 @@ function RequestsPageContent() {
     }
 
     const requestGrantKeys = moduleKeysForRequest(moduleKey);
-    if (
-      !scopeRow &&
-      !scopeColumn &&
-      requestGrantKeys.length > 0 &&
-      requestGrantKeys.every((k) => myModuleKeySet.has(k))
-    ) {
-      const moduleLabel = selectedModule?.display_name?.trim() || moduleKey;
-      return setError(`You already have permission for ${moduleLabel}.`);
+    const alreadyHasModuleAccess =
+      requestGrantKeys.length > 0 && requestGrantKeys.every((k) => myModuleKeySet.has(k));
+    const alreadyHasEditAccess =
+      requestedEditAccess &&
+      moduleKey !== "logistics" &&
+      requestGrantKeys.length === 1 &&
+      requestedModuleEditAccess;
+    const alreadyHasDeleteAccess =
+      requestedDeleteAccess &&
+      moduleKey !== "logistics" &&
+      requestGrantKeys.length === 1 &&
+      requestedModuleDeleteAccess;
+    if (!scopeRow && !scopeColumn) {
+      if (!requestedEditAccess && !requestedDeleteAccess && alreadyHasModuleAccess) {
+        const moduleLabel = selectedModule?.display_name?.trim() || moduleKey;
+        return setError(`You already have permission for ${moduleLabel}.`);
+      }
+      if (requestedEditAccess && alreadyHasModuleAccess && alreadyHasEditAccess) {
+        const moduleLabel = selectedModule?.display_name?.trim() || moduleKey;
+        return setError(`You already have edit access for ${moduleLabel}.`);
+      }
+      if (requestedDeleteAccess && alreadyHasModuleAccess && alreadyHasDeleteAccess) {
+        const moduleLabel = selectedModule?.display_name?.trim() || moduleKey;
+        return setError(`You already have delete access for ${moduleLabel}.`);
+      }
     }
 
     const approverId = String(approverAdminId ?? "").trim() || null;
@@ -778,6 +824,8 @@ function RequestsPageContent() {
         requested_row_identifier_key: null,
         requested_row_identifier_values: null,
         requested_row_identifier_value: null,
+        requested_can_edit: requestedEditAccess,
+        requested_can_write: requestedDeleteAccess,
         requested_path: requestedPath,
         reason: reason.trim() || null,
         requester_user_id: userId,
@@ -818,6 +866,8 @@ function RequestsPageContent() {
       setReason("");
       setScopeRow(false);
       setScopeColumn(false);
+      setRequestedEditAccess(false);
+      setRequestedDeleteAccess(false);
       setRequestedColumnKeys([]);
       setRequestedApplicantIds([]);
       setPersonnelSearch("");
@@ -1216,7 +1266,7 @@ function RequestsPageContent() {
       <div className="flex items-start justify-between gap-3 mb-3">
         <div>
           <div className="text-lg font-semibold text-black">Request Access</div>
-          <div className="text-sm text-black">Request access to pages you can’t open yet.</div>
+          <div className="text-sm text-black">Request access to pages or delete buttons you can’t use yet.</div>
         </div>
         <div className="flex items-center gap-2">
           <button onClick={() => router.push("/Main_Modules/Dashboard/")} className="animated-btn px-4 py-2 rounded-xl bg-white border hover:bg-white">
@@ -1360,6 +1410,8 @@ function RequestsPageContent() {
                   onChange={(e) => {
                     setRequestedModuleKey(e.target.value);
                     setRequestedColumnKeys([]);
+                    setRequestedEditAccess(false);
+                    setRequestedDeleteAccess(false);
                     setPersonnelSearch("");
                     if (normalizeModuleKey(e.target.value) !== "employees") {
                       setRequestedApplicantIds([]);
@@ -1416,6 +1468,33 @@ function RequestsPageContent() {
                 </div>
                 <div className="mt-2 text-xs text-black">
                   Leave unchecked to request full page access only.
+                </div>
+              </div>
+
+              <div>
+                <div className="text-xs text-black mb-1">Extra Access</div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <label className="inline-flex items-center gap-2 border rounded-xl px-3 py-2 text-sm text-black bg-white">
+                    <input
+                      type="checkbox"
+                      checked={requestedEditAccess}
+                      onChange={(e) => setRequestedEditAccess(e.target.checked)}
+                      disabled={disabled || !requestedModuleKey}
+                    />
+                    Edit access
+                  </label>
+                  <label className="inline-flex items-center gap-2 border rounded-xl px-3 py-2 text-sm text-black bg-white">
+                    <input
+                      type="checkbox"
+                      checked={requestedDeleteAccess}
+                      onChange={(e) => setRequestedDeleteAccess(e.target.checked)}
+                      disabled={disabled || !requestedModuleKey}
+                    />
+                    Delete access
+                  </label>
+                </div>
+                <div className="mt-2 text-xs text-black">
+                  Approvers will grant the page's Edit and Delete buttons when these are checked.
                 </div>
               </div>
 
@@ -1568,7 +1647,15 @@ function RequestsPageContent() {
                           <div className="text-xs text-black">{new Date(r.created_at).toLocaleString()}</div>
                         </div>
                         <div className="mt-1 text-xs text-black">
-                          Scope: {[!r.request_scope_row && !r.request_scope_column ? "PAGE" : null, r.request_scope_row ? "ROW" : null, r.request_scope_column ? "COLUMN" : null].filter(Boolean).join(" + ") || "—"}
+                          Scope: {[
+                            !r.request_scope_row && !r.request_scope_column ? "PAGE" : null,
+                            r.request_scope_row ? "ROW" : null,
+                            r.request_scope_column ? "COLUMN" : null,
+                            r.requested_can_edit ? "EDIT" : null,
+                            r.requested_can_write ? "DELETE" : null,
+                          ]
+                            .filter(Boolean)
+                            .join(" + ") || "—"}
                         </div>
                         {requestedColumns.length > 0 ? (
                           <div className="mt-1 text-xs text-black">
