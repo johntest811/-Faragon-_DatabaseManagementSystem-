@@ -34,7 +34,8 @@ values
   ('audit', 'Audit', '/Main_Modules/Audit/'),
   ('settings', 'Settings', '/Main_Modules/Settings/'),
   ('access', 'Admin Accounts', '/Main_Modules/AdminAccounts/'),
-  ('logistics', 'Logistics', '/Main_Modules/Logistics/')
+  ('logistics', 'Logistics', '/Main_Modules/Logistics/'),
+  ('car_insurance_expiration', 'Car Insurance Expiration', '/Main_Modules/Logistics/CarInsuranceExpiration/')
 on conflict (module_key) do update
 set display_name = excluded.display_name,
     path = excluded.path;
@@ -170,6 +171,7 @@ $$;
 create or replace function public.trg_sync_admin_role_to_app_roles()
 returns trigger
 language plpgsql
+set search_path = public
 as $$
 begin
   new.role := lower(btrim(coalesce(new.role, '')));
@@ -389,7 +391,8 @@ with superadmin_role as (
     ('logistics', 'client'),
     ('logistics', 'inventory'),
     ('logistics', 'paraphernalia'),
-    ('logistics', 'reports')
+    ('logistics', 'reports'),
+    ('logistics', 'car_insurance_expiration')
 )
 insert into public.role_column_access (role_id, module_key, column_key, can_read)
 select s.role_id, c.module_key, c.column_key, true
@@ -411,6 +414,7 @@ on conflict (role_id, module_key) do nothing;
 create or replace function public.trg_ensure_role_module_access_for_column_access()
 returns trigger
 language plpgsql
+set search_path = public
 as $$
 begin
   insert into public.role_module_access (role_id, module_key, can_read, can_write)

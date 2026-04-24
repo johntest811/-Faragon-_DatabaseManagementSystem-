@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "../../Client/SupabaseClients";
 import { useAuthRole, useMyModules, useMyModuleDeleteAccess, useMyModuleEditAccess } from "../../Client/useRbac";
 import LoadingCircle from "../../Components/LoadingCircle";
+import TableZoomWrapper from "@/app/Components/TableZoomWrapper";
 import { useToast } from "../../Components/ToastProvider";
 import {
   formatPermissionColumnLabel,
@@ -65,7 +66,7 @@ function moduleKeysForRequest(moduleKey: string): string[] {
   const key = normalizeModuleKey(moduleKey);
   if (!key) return [];
   if (key === "logistics") {
-    return ["client", "inventory", "paraphernalia", "reports", "logistics"];
+    return ["client", "inventory", "paraphernalia", "reports", "car_insurance_expiration", "logistics"];
   }
   return [key];
 }
@@ -1305,6 +1306,7 @@ function RequestsPageContent() {
           ) : pendingRequests.length === 0 ? (
             <div className="mt-4 text-sm text-black">No pending requests.</div>
           ) : (
+            <TableZoomWrapper storageKey="requests">
             <div className="mt-4 overflow-x-auto">
               <table className="min-w-[1200px] w-full table-auto">
                 <thead>
@@ -1363,26 +1365,26 @@ function RequestsPageContent() {
                         <td className="px-3 py-2 text-xs text-black whitespace-nowrap">{reviewerLabel}</td>
                         <td className="px-3 py-2 text-xs text-black">{r.reason ?? ""}</td>
                         <td className="px-3 py-2">
-                          <div className="flex gap-2">
-                            <button
-                              onClick={() => resolveRequest(r, "APPROVED")}
-                              disabled={busy}
-                              className={`animated-btn px-3 py-1.5 rounded-xl text-sm font-semibold ${
-                                busy ? "bg-[#FFDA03] text-black opacity-60 cursor-not-allowed" : "bg-[#FFDA03] text-black hover:bg-[#EFCB00]"
-                              }`}
-                            >
-                              {busy ? "Working…" : "Approve"}
-                            </button>
-                            <button
-                              onClick={() => resolveRequest(r, "REJECTED")}
-                              disabled={busy}
-                              className={`animated-btn px-3 py-1.5 rounded-xl text-sm font-semibold border ${
-                                busy ? "bg-[#FFDA03] text-black opacity-60 cursor-not-allowed" : "bg-white text-black hover:bg-white"
-                              }`}
-                            >
-                              Reject
-                            </button>
-                          </div>
+                          <select
+                            defaultValue=""
+                            disabled={busy}
+                            aria-label={`Resolve request for ${requesterLabel}`}
+                            onChange={(event) => {
+                              const nextStatus = event.currentTarget.value as "APPROVED" | "REJECTED" | "";
+                              if (!nextStatus) return;
+                              event.currentTarget.value = "";
+                              void resolveRequest(r, nextStatus);
+                            }}
+                            className={`min-w-[11rem] rounded-xl border bg-white px-3 py-2 text-sm font-semibold text-black shadow-sm outline-none transition focus:ring-2 focus:ring-[#FFDA03]/60 ${
+                              busy ? "opacity-60 cursor-not-allowed" : "cursor-pointer"
+                            }`}
+                          >
+                            <option value="" disabled>
+                              {busy ? "Working…" : "Change status"}
+                            </option>
+                            <option value="APPROVED">Approve</option>
+                            <option value="REJECTED">Reject</option>
+                          </select>
                         </td>
                       </tr>
                     );
@@ -1390,6 +1392,7 @@ function RequestsPageContent() {
                 </tbody>
               </table>
             </div>
+            </TableZoomWrapper>
           )}
         </div>
       ) : null}

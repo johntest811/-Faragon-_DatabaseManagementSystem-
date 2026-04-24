@@ -18,6 +18,7 @@ create index if not exists audit_log_created_at_idx on public.audit_log using bt
 create or replace function public.set_audit_log_retention_settings_updated_at()
 returns trigger
 language plpgsql
+set search_path = public
 as $$
 begin
   new.updated_at := now();

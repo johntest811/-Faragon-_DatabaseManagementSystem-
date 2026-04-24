@@ -45,6 +45,8 @@ type RecipientRow = {
 
 type OtherExpirationType = string;
 
+const HIDDEN_OTHER_EXPIRATION_TYPES = new Set(["CAR_INSURANCE"]);
+
 type OtherExpirationRow = {
 	id: number;
 	item_name: string;
@@ -812,7 +814,7 @@ export default function SettingsPage() {
 			const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
 			const path = `${adminId}/profile-${Date.now()}-${safeName}`;
 
-			const uploadRes = await supabase.storage.from(PROFILE_BUCKET).upload(path, file, { upsert: true });
+			const uploadRes = await supabase.storage.from(PROFILE_BUCKET).upload(path, file);
 			if (uploadRes.error) {
 				throw new Error(`Upload failed in bucket ${PROFILE_BUCKET}: ${uploadRes.error.message}`);
 			}
@@ -918,11 +920,11 @@ export default function SettingsPage() {
 					...row,
 					days_before_expiry: null,
 				}));
-				setOtherRows(mapped);
+				setOtherRows(mapped.filter((row) => !HIDDEN_OTHER_EXPIRATION_TYPES.has(String(row.expiration_type ?? "").trim().toUpperCase())));
 				return;
 			}
 
-			setOtherRows((res.data as OtherExpirationRow[]) ?? []);
+			setOtherRows(((res.data as OtherExpirationRow[]) ?? []).filter((row) => !HIDDEN_OTHER_EXPIRATION_TYPES.has(String(row.expiration_type ?? "").trim().toUpperCase())));
 		} catch (e: unknown) {
 			setError(errorMessage(e));
 		}

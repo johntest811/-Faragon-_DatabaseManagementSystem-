@@ -83,6 +83,7 @@ create index if not exists user_column_access_module_idx
 create or replace function public.set_updated_at_timestamp()
 returns trigger
 language plpgsql
+set search_path = public
 as $$
 begin
   new.updated_at = now();

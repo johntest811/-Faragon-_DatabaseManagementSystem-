@@ -7,6 +7,7 @@ import { useAuthRole } from "../../Client/useRbac";
 import { AccessTabs } from "../Components/AccessTabs";
 import { RoleDialog } from "./RoleDialog";
 import { PencilLine, Plus, Trash2, X } from "lucide-react";
+import TableZoomWrapper from "@/app/Components/TableZoomWrapper";
 import {
 	columnsForModule,
 	formatPermissionColumnLabel,
@@ -912,6 +913,7 @@ export default function RolesPage() {
 					}}
 			/>
 
+			<TableZoomWrapper storageKey="roles">
 			<div className="mt-5 rounded-2xl border p-4">
 				<div className="flex items-start justify-between gap-3">
 					<div>
@@ -1144,6 +1146,7 @@ export default function RolesPage() {
 					</div>
 				)}
 			</div>
+			</TableZoomWrapper>
 		</section>
 	);
 }

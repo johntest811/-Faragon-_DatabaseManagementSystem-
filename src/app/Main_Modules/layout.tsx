@@ -16,6 +16,7 @@ import {
   UserX,
   Archive,
   Shield,
+  ShieldCheck,
   Settings,
   ChevronLeft,
   ChevronDown,
@@ -128,6 +129,40 @@ type ElectronLayoutApi = {
 };
 
 const PROFILE_BUCKET = "Profile";
+const EXPIRING_DISMISSED_KEYS_STORAGE = "expiringDismissedNotificationKeys";
+
+function getExpiringSummaryRowKey(row: ExpiringSummaryRow) {
+  const applicantId = String(row?.applicant_id ?? "").trim();
+  const licenseType = String(row?.license_type ?? "").trim();
+  const expiresOn = String(row?.expires_on ?? "").trim();
+  const isOtherRow = row?.source_kind === "other" || applicantId.startsWith("other:");
+  return isOtherRow ? `${applicantId}:${expiresOn}` : `${applicantId}:${licenseType}:${expiresOn}`;
+}
+
+function readDismissedExpiringSummaryKeys() {
+  try {
+    const raw = localStorage.getItem(EXPIRING_DISMISSED_KEYS_STORAGE);
+    if (!raw) return new Set<string>();
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return new Set<string>();
+    return new Set(parsed.map((value) => String(value ?? "").trim()).filter(Boolean));
+  } catch {
+    return new Set<string>();
+  }
+}
+
+function writeDismissedExpiringSummaryKeys(keys: Set<string>) {
+  try {
+    const values = Array.from(keys).map((value) => String(value ?? "").trim()).filter(Boolean);
+    if (!values.length) {
+      localStorage.removeItem(EXPIRING_DISMISSED_KEYS_STORAGE);
+      return;
+    }
+    localStorage.setItem(EXPIRING_DISMISSED_KEYS_STORAGE, JSON.stringify(values));
+  } catch {
+    // ignore
+  }
+}
 
 function readLegacyAdminSession(): LegacyAdminSession | null {
   try {
@@ -265,6 +300,15 @@ function pageMetaForPath(pathname: string): PageMeta {
       },
     },
     {
+      test: (value) => value.startsWith("/Main_Modules/Applicants"),
+      meta: {
+        title: "Applicant",
+        description: "Review applicant records before they move into the workforce.",
+        badge: "Workforce",
+        icon: Users,
+      },
+    },
+    {
       test: (value) => value.startsWith("/Main_Modules/Employees"),
       meta: {
         title: "Employees",
@@ -316,6 +360,15 @@ function pageMetaForPath(pathname: string): PageMeta {
         description: "Summarize key operational data with a clean reporting surface.",
         badge: "Insights",
         icon: FileText,
+      },
+    },
+    {
+      test: (value) => value.startsWith("/Main_Modules/Logistics/CarInsuranceExpiration"),
+      meta: {
+        title: "Car Insurance Expiration",
+        description: "Track patrol vehicle insurance policies and expiration reminders.",
+        badge: "Logistics",
+        icon: ShieldCheck,
       },
     },
     {
@@ -375,6 +428,7 @@ function pageMetaForPath(pathname: string): PageMeta {
 
 const ALL_MENU = [
   { key: "dashboard", name: "Dashboard", href: "/Main_Modules/Dashboard/", icon: LayoutGrid },
+  { key: "applicants", name: "Applicant", href: "/Main_Modules/Applicants/", icon: Users },
   { key: "employees", name: "Employees", href: "/Main_Modules/Employees/", icon: Users },
   { key: "reassign", name: "Reassigned", href: "/Main_Modules/Reassign/", icon: Repeat2 },
   { key: "resigned", name: "Resigned", href: "/Main_Modules/Resigned/", icon: UserMinus },
@@ -389,6 +443,7 @@ const ALL_MENU = [
 
 type ModuleKey =
   | "dashboard"
+  | "applicants"
   | "employees"
   | "reassign"
   | "resigned"
@@ -402,7 +457,8 @@ type ModuleKey =
   | "audit"
   | "settings"
   | "access"
-  | "logistics";
+  | "logistics"
+  | "car_insurance_expiration";
 
 type AccessRequirement =
   | { kind: "module"; moduleKey: ModuleKey }
@@ -423,6 +479,7 @@ function accessRequirementForPath(pathname: string): AccessRequirement | null {
   }
 
   if (p.startsWith("/Main_Modules/Dashboard/")) return { kind: "module", moduleKey: "dashboard" };
+  if (p.startsWith("/Main_Modules/Applicants/")) return { kind: "module", moduleKey: "applicants" };
   if (p.startsWith("/Main_Modules/Employees/")) return { kind: "module", moduleKey: "employees" };
   if (p.startsWith("/Main_Modules/Reassign/")) return { kind: "module", moduleKey: "reassign" };
   if (p.startsWith("/Main_Modules/Resigned/")) return { kind: "module", moduleKey: "resigned" };
@@ -436,8 +493,12 @@ function accessRequirementForPath(pathname: string): AccessRequirement | null {
   if (p.startsWith("/Main_Modules/Audit/")) return { kind: "module", moduleKey: "audit" };
   if (p.startsWith("/Main_Modules/Settings/")) return { kind: "module", moduleKey: "settings" };
 
+  if (p.startsWith("/Main_Modules/Logistics/CarInsuranceExpiration")) {
+    return { kind: "module", moduleKey: "car_insurance_expiration" };
+  }
+
   // If the user lands on /Main_Modules/Logistics/ (group route), treat it as logistics.
-  if (p.startsWith("/Main_Modules/Logistics/")) return { kind: "module", moduleKey: "logistics" };
+  if (p === "/Main_Modules/Logistics/" || p === "/Main_Modules/Logistics") return { kind: "module", moduleKey: "logistics" };
 
   // Unknown route inside Main_Modules: let the existing behavior handle it.
   return null;
@@ -517,6 +578,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
   const [activityCount, setActivityCount] = useState(0);
   const [activityMissingTable, setActivityMissingTable] = useState(false);
   const [resendingKey, setResendingKey] = useState<string | null>(null);
+  const [clearingKey, setClearingKey] = useState<string | null>(null);
   const [sendToEmployees, setSendToEmployees] = useState(true);
   const [recentActivity, setRecentActivity] = useState<RecentActivityRow[]>([]);
   const [expiringCount, setExpiringCount] = useState(0);
@@ -876,7 +938,6 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
     try {
       await refreshNotificationPrefs();
       const res = await api.notifications.getExpiringSummary({ limit: 50 });
-      setExpiringCount(Number(res?.pendingCount ?? res?.count ?? 0));
       const sortedRows = [...(res?.rows ?? [])].sort((a, b) => {
         const toMs = (value: unknown) => {
           const d = new Date(String(value ?? ""));
@@ -897,7 +958,10 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
 
         return bTime - aTime;
       });
-      setExpiringRows(sortedRows);
+      const dismissedKeys = readDismissedExpiringSummaryKeys();
+      const visibleRows = sortedRows.filter((row) => !dismissedKeys.has(getExpiringSummaryRowKey(row)));
+      setExpiringRows(visibleRows);
+      setExpiringCount(visibleRows.filter((row) => Number(row.sent_count ?? 0) <= 0).length);
 
       try {
         const allRows = (res?.rows ?? []);
@@ -942,6 +1006,26 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
       // ignore
     }
   }, [api, refreshNotificationPrefs]);
+
+  const clearExpiringNotification = useCallback(
+    async (row: ExpiringSummaryRow) => {
+      const key = getExpiringSummaryRowKey(row);
+      if (!key) return;
+
+      try {
+        setClearingKey(key);
+        const dismissedKeys = readDismissedExpiringSummaryKeys();
+        dismissedKeys.add(key);
+        writeDismissedExpiringSummaryKeys(dismissedKeys);
+        await refreshExpiring();
+      } catch {
+        // ignore
+      } finally {
+        setClearingKey(null);
+      }
+    },
+    [refreshExpiring]
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -1103,6 +1187,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
     if (sessionRole === "superadmin") {
       return new Set<ModuleKey>([
         "dashboard",
+        "applicants",
         "employees",
         "reassign",
         "resigned",
@@ -1138,6 +1223,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
     if (sessionRole === "admin") {
       return new Set<ModuleKey>([
         "dashboard",
+        "applicants",
         "employees",
         "reassign",
         "resigned",
@@ -1153,7 +1239,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
         "requests",
       ]);
     }
-    return new Set<ModuleKey>(["dashboard", "employees", "archive", "requests"]);
+    return new Set<ModuleKey>(["dashboard", "applicants", "employees", "archive", "requests"]);
   }, [sessionRole, myModules]);
 
   const menu = useMemo(
@@ -1184,7 +1270,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
   }, [pathname, sessionRole, allowedKeys, router]);
 
   const WORKFORCE_KEYS = useMemo(
-    () => new Set(["employees", "reassign", "resigned", "retired", "archive"]),
+    () => new Set(["applicants", "employees", "reassign", "resigned", "retired", "archive"]),
     []
   );
 
@@ -1195,6 +1281,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
         { key: "logistics_inventory", moduleKey: "inventory" as const, name: "Inventory", href: "/Main_Modules/Inventory/", icon: Package },
         { key: "logistics_paraphernalia", moduleKey: "paraphernalia" as const, name: "Paraphernalia", href: "/Main_Modules/Paraphernalia/", icon: Package },
         { key: "logistics_reports", moduleKey: "reports" as const, name: "Reports", href: "/Main_Modules/Reports/", icon: FileText },
+        { key: "logistics_car_insurance", moduleKey: "car_insurance_expiration" as const, name: "Car Insurance Expiration", href: "/Main_Modules/Logistics/CarInsuranceExpiration/", icon: ShieldCheck },
       ] as const,
     []
   );
@@ -1352,6 +1439,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
     if (!logisticsAllowed) return false;
     return [
       "/Main_Modules/Logistics/",
+      "/Main_Modules/Logistics/CarInsuranceExpiration/",
       "/Main_Modules/Client/",
       "/Main_Modules/Inventory/",
       "/Main_Modules/Paraphernalia/",
@@ -1804,10 +1892,26 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
                                 <div className="mt-1 flex items-center justify-between gap-3">
                                   <div className="text-[11px] text-gray-500">Days: {r.days_until_expiry}</div>
                                   <div className="flex items-center gap-2">
+                                    <button
+                                      type="button"
+                                      disabled={clearingKey === getExpiringSummaryRowKey(r)}
+                                      className="text-[11px] px-2 py-0.5 rounded-full border bg-white text-gray-800 hover:bg-white disabled:opacity-50"
+                                      onClick={async (ev) => {
+                                        ev.stopPropagation();
+                                        await clearExpiringNotification(r);
+                                      }}
+                                    >
+                                      Clear
+                                    </button>
+
                                     {(() => {
                                       const badge = emailBadge(expiringEmailByApplicantId[String(r.applicant_id)] ?? null);
+                                      const isSent = Number(r.sent_count ?? 0) > 0;
+                                      const badgeClassName = isSent
+                                        ? "bg-emerald-100 text-emerald-800"
+                                        : badge.className;
                                       return (
-                                        <span className={`text-[11px] px-2 py-0.5 rounded-full border ${badge.className}`}>
+                                        <span className={`text-[11px] px-2 py-0.5 rounded-full border ${badgeClassName}`}>
                                           {badge.label}
                                         </span>
                                       );

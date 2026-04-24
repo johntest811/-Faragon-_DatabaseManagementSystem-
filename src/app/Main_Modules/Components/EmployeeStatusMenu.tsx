@@ -5,6 +5,7 @@ import { Check, ChevronDown } from "lucide-react";
 
 export const EMPLOYEE_STATUS_OPTIONS = [
 	{ value: "ACTIVE", label: "Active" },
+	{ value: "APPLICANT", label: "Applicant" },
 	{ value: "INACTIVE", label: "Inactive" },
 	{ value: "REASSIGN", label: "Reassign" },
 	{ value: "RESIGNED", label: "Resigned" },
@@ -31,6 +32,12 @@ function statusTone(status: EmployeeStatusValue) {
 				trigger: "bg-emerald-500 text-white border-emerald-400 hover:bg-emerald-600",
 				dot: "bg-white/90",
 				menuSelected: "bg-emerald-50 text-emerald-800",
+			};
+		case "APPLICANT":
+			return {
+				trigger: "bg-sky-500 text-white border-sky-400 hover:bg-sky-600",
+				dot: "bg-white/90",
+				menuSelected: "bg-sky-50 text-sky-800",
 			};
 		case "INACTIVE":
 			return {

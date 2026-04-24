@@ -9,9 +9,11 @@ import autoTable from "jspdf-autotable";
 import { supabase } from "@/app/Client/SupabaseClients";
 import { useAuthRole, useMyColumnAccess } from "@/app/Client/useRbac";
 import LoadingCircle from "@/app/Components/LoadingCircle";
+import TableZoomWrapper from "@/app/Components/TableZoomWrapper";
 import { useToast } from "@/app/Components/ToastProvider";
 import ImportSummaryModal, { ImportSummaryData } from "../Components/ImportSummaryModal";
 import SpreadsheetImportModal from "@/app/Components/SpreadsheetImportModal";
+import { addBrandedPdfHeader, buildBrandedAoa, buildBrandedWorkbookBuffer } from "../Components/exportBranding";
 
 
 
@@ -272,7 +274,7 @@ export default function ClientsPage() {
   /* --- downloadTemplate, handleImportFile, loadConnectedData, loadApplicants, submitContract etc.
      kept unchanged from your original file. I will include your existing implementations here  --- */
 
-  function downloadTemplate(format: "xlsx" | "csv") {
+  async function downloadTemplate(format: "xlsx" | "csv") {
     const sample = {
       contract_no: "CN-2026-001",
       contract_no_date: "2026-02-01",
@@ -288,16 +290,21 @@ export default function ClientsPage() {
       created_at: "2026-02-01T08:00",
       remarks: "Optional notes",
     };
-    const ws = XLSX.utils.json_to_sheet([sample]);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "ClientTemplate");
 
     if (format === "xlsx") {
-      const out = XLSX.write(wb, { type: "array", bookType: "xlsx" });
+      const out = await buildBrandedWorkbookBuffer([
+        {
+          name: "ClientTemplate",
+          title: "Client Import Template",
+          subtitle: "Sample contract data for import",
+          rows: [sample],
+        },
+      ]);
       downloadBlob("client_import_template.xlsx", new Blob([out], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
       return;
     }
 
+    const ws = XLSX.utils.aoa_to_sheet(buildBrandedAoa([sample], "Client Import Template", "Sample contract data for import"));
     const csv = XLSX.utils.sheet_to_csv(ws);
     downloadBlob("client_import_template.csv", new Blob([csv], { type: "text/csv;charset=utf-8;" }));
   }
@@ -1136,17 +1143,21 @@ export default function ClientsPage() {
     return `client_export_${new Date().toISOString().slice(0, 10)}`;
   }
 
-  function exportClientXlsx() {
+  async function exportClientXlsx() {
     const rowsForExport = clientExportRows();
     if (!rowsForExport.length) {
       setSaveState({ type: "error", message: "No rows available for export." });
       return;
     }
 
-    const ws = XLSX.utils.json_to_sheet(rowsForExport);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Client");
-    const out = XLSX.write(wb, { type: "array", bookType: "xlsx" });
+    const out = await buildBrandedWorkbookBuffer([
+      {
+        name: "Client",
+        title: "Client Export",
+        subtitle: "Contracts, clients, and project details",
+        rows: rowsForExport,
+      },
+    ]);
     downloadBlob(
       `${clientExportFileBase()}.xlsx`,
       new Blob([out], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" })
@@ -1160,12 +1171,12 @@ export default function ClientsPage() {
       return;
     }
 
-    const ws = XLSX.utils.json_to_sheet(rowsForExport);
+    const ws = XLSX.utils.aoa_to_sheet(buildBrandedAoa(rowsForExport, "Client Export", "Contracts, clients, and project details"));
     const csv = XLSX.utils.sheet_to_csv(ws);
     downloadBlob(`${clientExportFileBase()}.csv`, new Blob([csv], { type: "text/csv;charset=utf-8;" }));
   }
 
-  function exportClientPdf() {
+  async function exportClientPdf() {
     const rowsForExport = clientExportRows();
     if (!rowsForExport.length) {
       setSaveState({ type: "error", message: "No rows available for export." });
@@ -1177,10 +1188,9 @@ export default function ClientsPage() {
     const body = rowsForExport.map((row) => headers.map((h) => String(row[h as keyof typeof row] ?? "")));
 
     const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
-    doc.setFontSize(14);
-    doc.text("Client Export", 40, 40);
+    const startY = await addBrandedPdfHeader(doc, "Client Export", "Contracts, clients, and project details");
     autoTable(doc, {
-      startY: 60,
+      startY: startY + 10,
       head: [headers],
       body,
       styles: { fontSize: 7, cellPadding: 2 },
@@ -1553,6 +1563,7 @@ export default function ClientsPage() {
         </form>
       </ModalShell>
 
+      <TableZoomWrapper storageKey="client">
       <div className="relative overflow-x-auto rounded-2xl glass-panel animate-slide-up">
         <table className="w-full text-sm text-black border-separate border-spacing-y-2">
           <thead className="sticky top-0 z-10">
@@ -1620,7 +1631,7 @@ export default function ClientsPage() {
         </table>
       </div>
 
-      <div className="flex justify-between items-center text-sm">
+      <div className="mt-4 flex justify-between items-center text-sm">
         <span>Page {pageClamped} of {totalPages}</span>
         <div className="flex gap-2">
           <button
@@ -1639,6 +1650,7 @@ export default function ClientsPage() {
           </button>
         </div>
       </div>
+      </TableZoomWrapper>
 
       <ModalShell
         open={Boolean(detailsRow)}

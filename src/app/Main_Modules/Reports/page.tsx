@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/app/Client/SupabaseClients";
 import LoadingCircle from "@/app/Components/LoadingCircle";
+import TableZoomWrapper from "@/app/Components/TableZoomWrapper";
 
 type LoadState = {
   loading: boolean;
@@ -243,7 +244,7 @@ export default function LogisticsReportsPage() {
       total: contracts.length,
       active,
       rows,
-      totalDeployed: rows.filter((r) => r.status === "ACTIVE").reduce((s, r) => s + r.deployed, 0),
+      totalDeployed: rows.reduce((s, r) => s + r.deployed, 0),
       totalManpower: rows.reduce((s, r) => s + r.manpower, 0),
     };
   }, [contracts]);
@@ -321,6 +322,7 @@ export default function LogisticsReportsPage() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <TableZoomWrapper storageKey="reports-contracts">
         <div className="glass-panel rounded-2xl overflow-hidden border-none animate-slide-up">
           <div className="px-5 py-4 border-b border-gray-100 bg-white">
             <div className="text-sm font-semibold text-black">Inventory • Totals by Category</div>
@@ -347,7 +349,9 @@ export default function LogisticsReportsPage() {
             </table>
           </div>
         </div>
+        </TableZoomWrapper>
 
+        <TableZoomWrapper storageKey="reports-contract-status">
         <div className="glass-panel rounded-2xl overflow-hidden border-none animate-slide-up">
           <div className="px-5 py-4 border-b border-gray-100 bg-white">
             <div className="text-sm font-semibold text-black">Clients • Contracts by Status</div>
@@ -384,9 +388,11 @@ export default function LogisticsReportsPage() {
             </table>
           </div>
         </div>
+        </TableZoomWrapper>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <TableZoomWrapper storageKey="reports-paraphernalia">
         <div className="glass-panel rounded-2xl overflow-hidden border-none animate-slide-up">
           <div className="px-5 py-4 border-b border-gray-100 bg-white">
             <div className="text-sm font-semibold text-black">Paraphernalia • Lowest Stock</div>
@@ -422,7 +428,9 @@ export default function LogisticsReportsPage() {
             </table>
           </div>
         </div>
+        </TableZoomWrapper>
 
+        <TableZoomWrapper storageKey="reports-restock">
         <div className="glass-panel rounded-2xl overflow-hidden border-none animate-slide-up">
           <div className="px-5 py-4 border-b border-gray-100 bg-white">
             <div className="text-sm font-semibold text-black">Restock • Status Summary</div>
@@ -461,6 +469,7 @@ export default function LogisticsReportsPage() {
             </table>
           </div>
         </div>
+        </TableZoomWrapper>
       </div>
     </section>
   );

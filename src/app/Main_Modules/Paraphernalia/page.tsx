@@ -5,11 +5,13 @@ import { Download, FileDown, FileText, Pencil, Plus, Search, Trash2, Upload } fr
 import { supabase } from "@/app/Client/SupabaseClients";
 import { useAuthRole, useMyColumnAccess } from "@/app/Client/useRbac";
 import LoadingCircle from "@/app/Components/LoadingCircle";
+import TableZoomWrapper from "@/app/Components/TableZoomWrapper";
 import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import ImportSummaryModal, { ImportSummaryData } from "../Components/ImportSummaryModal";
 import SpreadsheetImportModal from "@/app/Components/SpreadsheetImportModal";
+import { addBrandedPdfHeader, buildBrandedAoa, buildBrandedWorkbookBuffer } from "../Components/exportBranding";
 
 type ParaphernaliaRow = {
   id_paraphernalia: string;
@@ -189,7 +191,7 @@ export default function ParaphernaliaPage() {
   const [showExportPopup, setShowExportPopup] = useState(false);
   const [importModalOpen, setImportModalOpen] = useState(false);
 
-  function downloadTemplate(format: "xlsx" | "csv") {
+  async function downloadTemplate(format: "xlsx" | "csv") {
     const sample = {
       names: "Sample Name",
       items: "Sample Item",
@@ -198,16 +200,20 @@ export default function ParaphernaliaPage() {
       date: "2026-03-01",
     };
 
-    const ws = XLSX.utils.json_to_sheet([sample]);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "ParaphernaliaTemplate");
-
     if (format === "xlsx") {
-      const out = XLSX.write(wb, { type: "array", bookType: "xlsx" });
+      const out = await buildBrandedWorkbookBuffer([
+        {
+          name: "ParaphernaliaTemplate",
+          title: "Paraphernalia Import Template",
+          subtitle: "Sample paraphernalia data for import",
+          rows: [sample],
+        },
+      ]);
       downloadBlob("paraphernalia_import_template.xlsx", new Blob([out], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
       return;
     }
 
+    const ws = XLSX.utils.aoa_to_sheet(buildBrandedAoa([sample], "Paraphernalia Import Template", "Sample paraphernalia data for import"));
     const csv = XLSX.utils.sheet_to_csv(ws);
     downloadBlob("paraphernalia_import_template.csv", new Blob([csv], { type: "text/csv;charset=utf-8;" }));
   }
@@ -685,7 +691,7 @@ export default function ParaphernaliaPage() {
     }));
   }
 
-  function exportParaphernaliaXlsx() {
+  async function exportParaphernaliaXlsx() {
     const rowsA = paraphernaliaItemsExportRows();
     const rowsB = inventorySnapshotExportRows();
     const rowsC = restockExportRows();
@@ -694,12 +700,30 @@ export default function ParaphernaliaPage() {
       return;
     }
 
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rowsA.length ? rowsA : [{}]), "Paraphernalia");
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rowsB.length ? rowsB : [{}]), "InventorySnapshot");
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rowsC.length ? rowsC : [{}]), "RestockHistory");
+    const sheetRowsA: Array<Record<string, unknown>> = rowsA.length ? rowsA : [{}];
+    const sheetRowsB: Array<Record<string, unknown>> = rowsB.length ? rowsB : [{}];
+    const sheetRowsC: Array<Record<string, unknown>> = rowsC.length ? rowsC : [{}];
 
-    const out = XLSX.write(wb, { type: "array", bookType: "xlsx" });
+    const out = await buildBrandedWorkbookBuffer([
+      {
+        name: "Paraphernalia",
+        title: "Paraphernalia Export",
+        subtitle: "Paraphernalia Items",
+        rows: sheetRowsA,
+      },
+      {
+        name: "InventorySnapshot",
+        title: "Inventory Snapshot Export",
+        subtitle: "Inventory Snapshot",
+        rows: sheetRowsB,
+      },
+      {
+        name: "RestockHistory",
+        title: "Restock History Export",
+        subtitle: "Restock History",
+        rows: sheetRowsC,
+      },
+    ]);
     downloadBlob(`${paraphernaliaExportFileBase()}.xlsx`, new Blob([out], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
   }
 
@@ -713,12 +737,12 @@ export default function ParaphernaliaPage() {
       return;
     }
 
-    const ws = XLSX.utils.json_to_sheet(rows);
+    const ws = XLSX.utils.aoa_to_sheet(buildBrandedAoa(rows, "Paraphernalia Export", "Combined export of items, inventory snapshot, and restock history"));
     const csv = XLSX.utils.sheet_to_csv(ws);
     downloadBlob(`${paraphernaliaExportFileBase()}.csv`, new Blob([csv], { type: "text/csv;charset=utf-8;" }));
   }
 
-  function exportParaphernaliaPdf() {
+  async function exportParaphernaliaPdf() {
     const rowsA = paraphernaliaItemsExportRows();
     const rowsB = inventorySnapshotExportRows();
     const rowsC = restockExportRows();
@@ -728,10 +752,9 @@ export default function ParaphernaliaPage() {
     }
 
     const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
-    doc.setFontSize(14);
-    doc.text("Paraphernalia Export", 40, 40);
+    const startY = await addBrandedPdfHeader(doc, "Paraphernalia Export", "Combined export of items, inventory snapshot, and restock history");
 
-    let y = 60;
+    let y = startY + 12;
     const sections: Array<{ title: string; rows: Record<string, string>[] }> = [
       { title: "Paraphernalia Items", rows: rowsA },
       { title: "Inventory Stock Snapshot", rows: rowsB },
@@ -1069,6 +1092,7 @@ export default function ParaphernaliaPage() {
 
       <div className="space-y-3">
         <div className="text-sm font-semibold text-black">Paraphernalia Items</div>
+        <TableZoomWrapper storageKey="paraphernalia-items">
         <div className="relative overflow-x-auto rounded-2xl glass-panel animate-slide-up">
           <table className="w-full text-sm text-black">
             <thead className="bg-white border-b text-black">
@@ -1126,10 +1150,12 @@ export default function ParaphernaliaPage() {
             </tbody>
           </table>
         </div>
+        </TableZoomWrapper>
       </div>
 
       <div className="space-y-3">
         <div className="text-sm font-semibold text-black">Inventory Stock Snapshot</div>
+        <TableZoomWrapper storageKey="paraphernalia-inventory">
         <div className="relative overflow-x-auto rounded-2xl glass-panel animate-slide-up">
           <table className="w-full text-sm text-black">
             <thead className="bg-white border-b text-black">
@@ -1193,10 +1219,12 @@ export default function ParaphernaliaPage() {
             </tbody>
           </table>
         </div>
+        </TableZoomWrapper>
       </div>
 
       <div className="space-y-3">
         <div className="text-sm font-semibold text-black">Restock History</div>
+        <TableZoomWrapper storageKey="paraphernalia-restock">
         <div className="relative overflow-x-auto rounded-2xl glass-panel animate-slide-up">
           <table className="w-full text-sm text-black">
             <thead className="bg-white border-b text-black">
@@ -1254,6 +1282,7 @@ export default function ParaphernaliaPage() {
             </tbody>
           </table>
         </div>
+        </TableZoomWrapper>
       </div>
 
       {createOpen ? (

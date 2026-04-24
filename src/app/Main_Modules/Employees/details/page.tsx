@@ -2,7 +2,7 @@
 
 import React, { Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import {
   CalendarDays,
   Mail,
@@ -323,38 +323,43 @@ function ImageViewerModal({
   );
 }
 
-function safeBackHref(from: string | null) {
-  if (!from) return "/Main_Modules/Employees/";
+function safeBackHref(from: string | null, fallback: string) {
+  if (!from) return fallback;
   // basic safety: only allow internal module routes
-  if (!from.startsWith("/Main_Modules/")) return "/Main_Modules/Employees/";
+  if (!from.startsWith("/Main_Modules/")) return fallback;
   return from;
 }
 
 function EmployeeDetailsInner() {
   const params = useSearchParams();
+  const pathname = usePathname() ?? "";
   const id = params.get("id");
   const from = params.get("from");
-  const backHref = safeBackHref(from);
+  const isApplicantRoute = pathname.startsWith("/Main_Modules/Applicants/");
+  const detailLabel = isApplicantRoute ? "Applicant" : "Employee";
+  const detailLabelLower = detailLabel.toLowerCase();
+  const accessModuleKey = isApplicantRoute ? "applicants" : "employees";
+  const backHref = safeBackHref(from, isApplicantRoute ? "/Main_Modules/Applicants/" : "/Main_Modules/Employees/");
 
   const { role: sessionRole } = useAuthRole();
-  const { canAccess: canAccessEmployees } = useMyModuleAccess("employees");
-  const { canEdit: canEditEmployees } = useMyModuleEditAccess("employees");
+  const { canAccess: canAccessModule } = useMyModuleAccess(accessModuleKey);
+  const { canEdit: canEditModule } = useMyModuleEditAccess(accessModuleKey);
   const {
     allowedColumns: allowedEmployeeColumns,
     restricted: employeeColumnsRestricted,
     loading: loadingEmployeeColumns,
-  } = useMyColumnAccess("employees");
+  } = useMyColumnAccess(accessModuleKey);
   const {
     allowedColumns: allowedApplicantColumns,
     restricted: applicantColumnsRestricted,
     loading: loadingApplicantColumns,
-  } = useMyApplicantColumnAccess("employees", id);
+  } = useMyApplicantColumnAccess(accessModuleKey, id);
   const {
     hasAccess: hasApplicantRowAccess,
     restricted: applicantRowsRestricted,
     loading: loadingApplicantRows,
-  } = useMyApplicantRowAccess("employees", id);
-  const canEdit = canEditEmployees;
+  } = useMyApplicantRowAccess(accessModuleKey, id);
+  const canEdit = canEditModule;
 
   const canViewEmployeeColumn = (columnKey: string) => {
     const hasModuleAccess = !employeeColumnsRestricted || allowedEmployeeColumns.has(columnKey);
@@ -424,7 +429,7 @@ function EmployeeDetailsInner() {
 
       if (!id) {
         setLoading(false);
-        setError("Missing employee id");
+          setError(`Missing ${detailLabelLower} id`);
         return;
       }
 
@@ -498,7 +503,7 @@ function EmployeeDetailsInner() {
         setBio((bRes.data as Biodata) || null);
       } catch (e: unknown) {
        
-        setError(e instanceof Error ? e.message : "Failed to load employee");
+          setError(e instanceof Error ? e.message : `Failed to load ${detailLabelLower}`);
       } finally {
         setLoading(false);
       }
@@ -609,7 +614,7 @@ function EmployeeDetailsInner() {
   if (loading) {
     return (
       <div className="bg-white rounded-3xl border shadow-sm p-8">
-        <LoadingCircle label="Loading employee details..." />
+          <LoadingCircle label={`Loading ${detailLabelLower} details...`} />
       </div>
     );
   }
@@ -633,12 +638,12 @@ function EmployeeDetailsInner() {
   if (!applicant) {
     return (
       <div className="bg-white rounded-3xl border shadow-sm p-8 text-center text-gray-500">
-        Employee not found.
+          {detailLabel} not found.
       </div>
     );
   }
 
-  const name = showName ? getFullName(applicant) : "Employee";
+    const name = showName ? getFullName(applicant) : detailLabel;
 
   return (
     <div className="space-y-6">
@@ -694,7 +699,7 @@ function EmployeeDetailsInner() {
 
             <div className="mt-4 w-full border rounded-2xl overflow-hidden">
               <div className="grid grid-cols-2 text-sm">
-                <div className="px-4 py-3 text-gray-500">Employee Status</div>
+                  <div className="px-4 py-3 text-gray-500">{detailLabel} Status</div>
                 <div className="px-4 py-3 font-semibold text-gray-900 text-right">Full-time</div>
               </div>
               {showDetachment ? (
@@ -988,7 +993,7 @@ function EmployeeDetailsInner() {
         open={editorOpen}
         mode="edit"
         applicantId={id}
-        title="Edit Employee"
+          title={`Edit ${detailLabel}`}
         subtitle={name}
         onClose={() => setEditorOpen(false)}
         onSaved={() => {
@@ -1000,11 +1005,14 @@ function EmployeeDetailsInner() {
 }
 
 export default function EmployeeDetailsPage() {
+  const pathname = usePathname() ?? "";
+  const detailLabelLower = pathname.startsWith("/Main_Modules/Applicants/") ? "applicant" : "employee";
+
   return (
     <Suspense
       fallback={
         <div className="bg-white rounded-3xl border shadow-sm p-8 text-center text-gray-500">
-          Loading employee details...
+            Loading {detailLabelLower} details...
         </div>
       }
     >

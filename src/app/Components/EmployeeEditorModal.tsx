@@ -10,6 +10,7 @@ export type EmployeeEditorModalProps = {
   open: boolean;
   mode: Mode;
   applicantId?: string | null;
+  defaultStatus?: string;
   title?: string;
   subtitle?: string;
   onClose: () => void;
@@ -179,7 +180,7 @@ const BUCKETS = {
   licensure: "licensure",
 } as const;
 
-function emptyApplicantDraft(): ApplicantDraft {
+function emptyApplicantDraft(defaultStatus = "ACTIVE"): ApplicantDraft {
   return {
     custom_id: "",
     first_name: "",
@@ -198,7 +199,7 @@ function emptyApplicantDraft(): ApplicantDraft {
     date_hired_fsai: "",
     client_position: "",
     detachment: "",
-    status: "ACTIVE",
+    status: normalizeStatus(defaultStatus),
 
     date_resigned: "",
     last_duty: "",
@@ -266,6 +267,7 @@ function normalizeDateInput(value: string | null | undefined) {
 
 function normalizeStatus(value: string | null | undefined) {
   const v = String(value ?? "").trim().toUpperCase();
+  if (v === "APPLICANT") return "APPLICANT";
   if (v === "INACTIVE") return "INACTIVE";
   if (v === "REASSIGN") return "REASSIGN";
   if (v === "RETIRED") return "RETIRED";
@@ -347,6 +349,7 @@ export default function EmployeeEditorModal({
   open,
   mode,
   applicantId,
+  defaultStatus = "ACTIVE",
   title,
   subtitle,
   onClose,
@@ -372,7 +375,7 @@ export default function EmployeeEditorModal({
   const [maxStepIndex, setMaxStepIndex] = useState(0);
   const [draftApplicantId, setDraftApplicantId] = useState<string | null>(null);
 
-  const [app, setApp] = useState<ApplicantDraft>(emptyApplicantDraft);
+  const [app, setApp] = useState<ApplicantDraft>(() => emptyApplicantDraft(defaultStatus));
   const [certs, setCerts] = useState<CertificatesDraft>(emptyCertificatesDraft);
   const [lic, setLic] = useState<LicensureDraft>(emptyLicensureDraft);
   const [bio, setBio] = useState<BiodataDraft>(emptyBiodataDraft);
@@ -527,7 +530,7 @@ export default function EmployeeEditorModal({
     }
 
     if (mode === "create") {
-      setApp(emptyApplicantDraft());
+      setApp(emptyApplicantDraft(defaultStatus));
       setCerts(emptyCertificatesDraft());
       setLic(emptyLicensureDraft());
       setBio(emptyBiodataDraft());
@@ -696,7 +699,7 @@ export default function EmployeeEditorModal({
     return () => {
       cancelled = true;
     };
-  }, [open, mode, applicantId]);
+  }, [open, mode, applicantId, defaultStatus]);
 
   useEffect(() => {
     if (!open) return;
@@ -755,7 +758,7 @@ export default function EmployeeEditorModal({
   async function uploadToBucket(bucket: string, id: string, file: File, prefix: string) {
     const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
     const path = `${id}/${prefix}-${Date.now()}-${safeName}`;
-    const upRes = await supabase.storage.from(bucket).upload(path, file, { upsert: true });
+    const upRes = await supabase.storage.from(bucket).upload(path, file);
     if (upRes.error) throw upRes.error;
     return path;
   }
@@ -1373,6 +1376,8 @@ export default function EmployeeEditorModal({
                       className={`w-full border rounded-xl pl-9 pr-3 py-2 appearance-none bg-white ${
                         normalizeStatus(app.status) === "ACTIVE"
                           ? "border-emerald-300"
+                          : normalizeStatus(app.status) === "APPLICANT"
+                          ? "border-sky-300"
                           : normalizeStatus(app.status) === "INACTIVE"
                           ? "border-red-300"
                           : normalizeStatus(app.status) === "REASSIGN"
@@ -1383,6 +1388,7 @@ export default function EmployeeEditorModal({
                       }`}
                     >
                       <option value="ACTIVE">ACTIVE</option>
+                      <option value="APPLICANT">APPLICANT</option>
                       <option value="INACTIVE">INACTIVE</option>
                       <option value="REASSIGN">REASSIGN</option>
                       <option value="RESIGNED">RESIGNED</option>
@@ -1392,6 +1398,8 @@ export default function EmployeeEditorModal({
                       className={`absolute left-3 top-1/2 -translate-y-1/2 h-2.5 w-2.5 rounded-full ${
                         normalizeStatus(app.status) === "ACTIVE"
                           ? "bg-emerald-500"
+                          : normalizeStatus(app.status) === "APPLICANT"
+                          ? "bg-sky-500"
                           : normalizeStatus(app.status) === "INACTIVE"
                           ? "bg-red-500"
                           : normalizeStatus(app.status) === "REASSIGN"

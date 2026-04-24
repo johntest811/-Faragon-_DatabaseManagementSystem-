@@ -5,11 +5,13 @@ import { Download, FileDown, FileText, Search, Upload } from "lucide-react";
 import { supabase } from "@/app/Client/SupabaseClients";
 import { useAuthRole, useMyColumnAccess } from "@/app/Client/useRbac";
 import LoadingCircle from "@/app/Components/LoadingCircle";
+import TableZoomWrapper from "@/app/Components/TableZoomWrapper";
 import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import ImportSummaryModal, { ImportSummaryData } from "../Components/ImportSummaryModal";
 import SpreadsheetImportModal from "@/app/Components/SpreadsheetImportModal";
+import { addBrandedPdfHeader, buildBrandedAoa, buildBrandedWorkbookBuffer } from "../Components/exportBranding";
 
 type CategoryConfig = {
   key: "firearms" | "communications" | "furniture" | "office" | "sec" | "vehicle";
@@ -333,7 +335,7 @@ export default function LogisticsInventoryPage() {
     setLoading(false);
   }, [loadingInventoryColumns, inventoryColumnsError, inventoryColumnsRestricted, allowedInventoryColumns]);
 
-  function downloadTemplate(format: "xlsx" | "csv") {
+  async function downloadTemplate(format: "xlsx" | "csv") {
 
     
     const sample = {
@@ -361,16 +363,20 @@ export default function LogisticsInventoryPage() {
       remarks: "Optional remarks",
     };
 
-    const ws = XLSX.utils.json_to_sheet([sample]);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "InventoryTemplate");
-
     if (format === "xlsx") {
-      const out = XLSX.write(wb, { type: "array", bookType: "xlsx" });
+      const out = await buildBrandedWorkbookBuffer([
+        {
+          name: "InventoryTemplate",
+          title: "Inventory Import Template",
+          subtitle: "Sample inventory data for import",
+          rows: [sample],
+        },
+      ]);
       downloadBlob("inventory_import_template.xlsx", new Blob([out], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
       return;
     }
 
+    const ws = XLSX.utils.aoa_to_sheet(buildBrandedAoa([sample], "Inventory Import Template", "Sample inventory data for import"));
     const csv = XLSX.utils.sheet_to_csv(ws);
     downloadBlob("inventory_import_template.csv", new Blob([csv], { type: "text/csv;charset=utf-8;" }));
   }
@@ -764,16 +770,20 @@ function downloadInventoryTemplateXlsx() {
     return `inventory_export_${new Date().toISOString().slice(0, 10)}`;
   }
 
-  function exportInventoryXlsx() {
+  async function exportInventoryXlsx() {
     const exportRows = inventoryExportRows();
     if (!exportRows.length) {
       setError("No rows available for export.");
       return;
     }
-    const ws = XLSX.utils.json_to_sheet(exportRows);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Inventory");
-    const out = XLSX.write(wb, { type: "array", bookType: "xlsx" });
+    const out = await buildBrandedWorkbookBuffer([
+      {
+        name: "Inventory",
+        title: "Inventory Export",
+        subtitle: "Inventory snapshots and totals",
+        rows: exportRows,
+      },
+    ]);
     downloadBlob(`${inventoryExportFileBase()}.xlsx`, new Blob([out], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
   }
 
@@ -783,12 +793,12 @@ function downloadInventoryTemplateXlsx() {
       setError("No rows available for export.");
       return;
     }
-    const ws = XLSX.utils.json_to_sheet(exportRows);
+    const ws = XLSX.utils.aoa_to_sheet(buildBrandedAoa(exportRows, "Inventory Export", "Inventory snapshots and totals"));
     const csv = XLSX.utils.sheet_to_csv(ws);
     downloadBlob(`${inventoryExportFileBase()}.csv`, new Blob([csv], { type: "text/csv;charset=utf-8;" }));
   }
 
-  function exportInventoryPdf() {
+  async function exportInventoryPdf() {
     const exportRows = inventoryExportRows();
     if (!exportRows.length) {
       setError("No rows available for export.");
@@ -797,10 +807,9 @@ function downloadInventoryTemplateXlsx() {
     const headers = Object.keys(exportRows[0]);
     const body = exportRows.map((row) => headers.map((h) => String(row[h] ?? "")));
     const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
-    doc.setFontSize(14);
-    doc.text("Inventory Export", 40, 40);
+    const startY = await addBrandedPdfHeader(doc, "Inventory Export", "Inventory snapshots and totals");
     autoTable(doc, {
-      startY: 60,
+      startY: startY + 10,
       head: [headers],
       body,
       styles: { fontSize: 7, cellPadding: 2 },
@@ -1149,6 +1158,7 @@ function downloadInventoryTemplateXlsx() {
         {error ? <div className="rounded-2xl border bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
         {success ? <div className="rounded-2xl border bg-green-50 px-4 py-3 text-sm text-green-700">{success}</div> : null}
 
+        <TableZoomWrapper storageKey="inventory" defaultZoom={0.8}>
         <div className="relative overflow-x-auto rounded-2xl glass-panel animate-slide-up">
           <table className="w-full text-sm text-black min-w-[1500px] border-separate border-spacing-y-2">
             <thead className="sticky top-0 z-10">
@@ -1256,6 +1266,7 @@ function downloadInventoryTemplateXlsx() {
             </tbody>
           </table>
         </div>
+        </TableZoomWrapper>
 
         {showGrandTotalColumn ? (
           <div className="glass-panel rounded-2xl border-none px-4 py-3 flex items-center justify-between">

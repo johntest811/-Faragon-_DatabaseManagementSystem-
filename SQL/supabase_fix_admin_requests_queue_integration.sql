@@ -29,6 +29,7 @@ values
   ('inventory', 'Inventory', '/Main_Modules/Inventory/'),
   ('paraphernalia', 'Paraphernalia', '/Main_Modules/Paraphernalia/'),
   ('reports', 'Reports', '/Main_Modules/Reports/'),
+  ('car_insurance_expiration', 'Car Insurance Expiration', '/Main_Modules/Logistics/CarInsuranceExpiration/'),
   ('requests', 'Requests', '/Main_Modules/Requests/'),
   ('audit', 'Audit', '/Main_Modules/Audit/'),
   ('settings', 'Settings', '/Main_Modules/Settings/'),
@@ -123,6 +124,7 @@ $$;
 create or replace function public.trg_ensure_role_module_access_for_column_access()
 returns trigger
 language plpgsql
+set search_path = public
 as $$
 begin
   insert into public.role_module_access (role_id, module_key, can_read, can_write)

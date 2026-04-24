@@ -28,8 +28,8 @@ CREATE TABLE public.access_requests (
   approver_full_name text,
   requested_applicant_id uuid,
   requested_row_identifier_value text,
-  requested_can_edit boolean NOT NULL DEFAULT false,
   requested_can_write boolean NOT NULL DEFAULT false,
+  requested_can_edit boolean NOT NULL DEFAULT false,
   CONSTRAINT access_requests_pkey PRIMARY KEY (id),
   CONSTRAINT access_requests_module_fkey FOREIGN KEY (requested_module_key) REFERENCES public.modules(module_key),
   CONSTRAINT access_requests_requester_admin_fkey FOREIGN KEY (requester_admin_id) REFERENCES public.admins(id),
@@ -72,11 +72,11 @@ CREATE TABLE public.admin_module_access_overrides (
   admin_id uuid NOT NULL,
   module_key text NOT NULL,
   can_read boolean NOT NULL DEFAULT true,
-  can_edit boolean NOT NULL DEFAULT false,
-  can_write boolean NOT NULL DEFAULT false,
   created_at timestamp with time zone NOT NULL DEFAULT now(),
   updated_at timestamp with time zone NOT NULL DEFAULT now(),
   created_by uuid,
+  can_write boolean NOT NULL DEFAULT false,
+  can_edit boolean NOT NULL DEFAULT false,
   CONSTRAINT admin_module_access_overrides_pkey PRIMARY KEY (admin_id, module_key),
   CONSTRAINT admin_module_access_overrides_admin_fkey FOREIGN KEY (admin_id) REFERENCES public.admins(id),
   CONSTRAINT admin_module_access_overrides_module_fkey FOREIGN KEY (module_key) REFERENCES public.modules(module_key)
@@ -405,6 +405,15 @@ CREATE TABLE public.other_expiration_items (
   created_at timestamp with time zone NOT NULL DEFAULT now(),
   updated_at timestamp with time zone NOT NULL DEFAULT now(),
   days_before_expiry integer NOT NULL DEFAULT 30 CHECK (days_before_expiry >= 1 AND days_before_expiry <= 365),
+  record_no integer,
+  patrol text,
+  post_distributions text,
+  make text,
+  model text,
+  color text,
+  plate_number text,
+  insurance_company text,
+  policy_from_date date,
   CONSTRAINT other_expiration_items_pkey PRIMARY KEY (id)
 );
 CREATE TABLE public.other_expiration_notification_log (
@@ -478,8 +487,8 @@ CREATE TABLE public.role_module_access (
   role_id uuid NOT NULL,
   module_key text NOT NULL,
   can_read boolean NOT NULL DEFAULT true,
-  can_edit boolean NOT NULL DEFAULT false,
   can_write boolean NOT NULL DEFAULT false,
+  can_edit boolean NOT NULL DEFAULT false,
   CONSTRAINT role_module_access_pkey PRIMARY KEY (role_id, module_key),
   CONSTRAINT role_module_access_module_key_fkey FOREIGN KEY (module_key) REFERENCES public.modules(module_key),
   CONSTRAINT role_module_access_role_id_fkey FOREIGN KEY (role_id) REFERENCES public.app_roles(role_id)
@@ -520,11 +529,11 @@ CREATE TABLE public.user_module_access_overrides (
   user_id uuid NOT NULL,
   module_key text NOT NULL,
   can_read boolean NOT NULL DEFAULT true,
-  can_edit boolean NOT NULL DEFAULT false,
-  can_write boolean NOT NULL DEFAULT false,
   created_at timestamp with time zone NOT NULL DEFAULT now(),
   updated_at timestamp with time zone NOT NULL DEFAULT now(),
   created_by uuid,
+  can_write boolean NOT NULL DEFAULT false,
+  can_edit boolean NOT NULL DEFAULT false,
   CONSTRAINT user_module_access_overrides_pkey PRIMARY KEY (user_id, module_key),
   CONSTRAINT user_module_access_overrides_module_fkey FOREIGN KEY (module_key) REFERENCES public.modules(module_key)
 );

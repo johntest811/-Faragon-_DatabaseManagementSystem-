@@ -6,6 +6,7 @@ import { supabase } from "../../Client/SupabaseClients";
 import { RotateCcw, LayoutGrid, Table, SlidersHorizontal, Search } from "lucide-react";
 import { useAuthRole, useMyModuleDeleteAccess } from "../../Client/useRbac";
 import LoadingCircle from "../../Components/LoadingCircle";
+import TableZoomWrapper from "@/app/Components/TableZoomWrapper";
 import EmployeeStatusMenu from "../Components/EmployeeStatusMenu";
 import { buildEmployeeStatusUpdatePatch, loadLicensureMap } from "../employeeListData";
 
@@ -159,7 +160,7 @@ export default function ArchivePage() {
   function normalizeStatus(input: string | null) {
     const v = (input ?? "").trim().toUpperCase();
     if (!v) return "ACTIVE";
-    if (v === "ACTIVE" || v === "INACTIVE" || v === "REASSIGN" || v === "RETIRED" || v === "RESIGNED") return v;
+    if (v === "ACTIVE" || v === "APPLICANT" || v === "INACTIVE" || v === "REASSIGN" || v === "RETIRED" || v === "RESIGNED") return v;
     return "ACTIVE";
   }
 
@@ -491,6 +492,7 @@ export default function ArchivePage() {
       ) : filtered.length === 0 ? (
         <div className="glass-panel animate-slide-up rounded-2xl p-8 text-center text-gray-500">No archived employees.</div>
       ) : viewMode === "table" ? (
+    <TableZoomWrapper storageKey="archive">
     <div className="relative overflow-x-auto rounded-2xl glass-panel animate-slide-up">
       <table className="min-w-[1200px] w-full text-sm text-black border-separate border-spacing-y-2">
         <thead className="sticky top-0 z-10">
@@ -559,13 +561,17 @@ export default function ArchivePage() {
                   )}
                 </td>
                 <td className="px-4 py-3">
-                  <span
-                    className={`px-3 py-1 rounded-full text-xs font-bold ${
-                      normalizeStatus(e.status) === "ACTIVE" ? "bg-emerald-500 text-white" : "bg-red-500 text-white"
-                    }`}
-                  >
-                    {normalizeStatus(e.status)}
-                  </span>
+                  {sessionRole !== "employee" ? (
+                    <EmployeeStatusMenu value={normalizeStatus(e.status)} onChange={(nextStatus) => void updateEmployeeStatus(e, nextStatus)} />
+                  ) : (
+                    <span
+                      className={`px-3 py-1 rounded-full text-xs font-bold ${
+                        normalizeStatus(e.status) === "ACTIVE" ? "bg-emerald-500 text-white" : "bg-red-500 text-white"
+                      }`}
+                    >
+                      {normalizeStatus(e.status)}
+                    </span>
+                  )}
                 </td>
                 <td className="px-4 py-3 text-center rounded-r-xl">
                   <div className="inline-flex items-center gap-2">
@@ -601,6 +607,7 @@ export default function ArchivePage() {
         </tbody>
       </table>
     </div>
+    </TableZoomWrapper>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
           {filtered.map((e) => {

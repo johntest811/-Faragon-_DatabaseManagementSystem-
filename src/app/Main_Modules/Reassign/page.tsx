@@ -7,11 +7,13 @@ import { Pencil, LayoutGrid, Table, SlidersHorizontal, Search, FileDown, FileTex
 import { useAuthRole, useMyModuleDeleteAccess } from "../../Client/useRbac";
 import EmployeeEditorModal from "../../Components/EmployeeEditorModal";
 import LoadingCircle from "../../Components/LoadingCircle";
+import TableZoomWrapper from "@/app/Components/TableZoomWrapper";
 import EmployeeStatusMenu from "../Components/EmployeeStatusMenu";
 import { buildEmployeeStatusUpdatePatch, loadLicensureMap } from "../employeeListData";
 import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
+import { addBrandedPdfHeader, buildBrandedAoa, buildBrandedWorkbookBuffer } from "../Components/exportBranding";
 
 type Applicant = {
   applicant_id: string;
@@ -62,7 +64,7 @@ function shortCode(id: string) {
 function normalizeStatus(input: string | null) {
   const v = (input ?? "").trim().toUpperCase();
   if (!v) return "ACTIVE";
-  if (v === "ACTIVE" || v === "INACTIVE" || v === "REASSIGN" || v === "RETIRED" || v === "RESIGNED") return v;
+  if (v === "ACTIVE" || v === "APPLICANT" || v === "INACTIVE" || v === "REASSIGN" || v === "RETIRED" || v === "RESIGNED") return v;
   return "ACTIVE";
 }
 
@@ -331,7 +333,7 @@ export default function ReassignPage() {
     return parts.join("_");
   }
 
-  function exportEmployeesXlsx() {
+  async function exportEmployeesXlsx() {
     setError("");
     const rows = getExportCandidates();
     if (!rows.length) {
@@ -351,27 +353,14 @@ export default function ReassignPage() {
       Phone: (e.client_contact_num ?? "").trim(),
     }));
 
-    const headers = ["Name", "Job Title", "Detachment", "Gender", "Hire Date", "Service Length", "Email", "Phone"];
-    const body = data.map((row) => [
-      row.Name,
-      row["Job Title"],
-      row.Detachment,
-      row.Gender,
-      row["Hire Date"],
-      row["Service Length"],
-      row.Email,
-      row.Phone,
+    const out = await buildBrandedWorkbookBuffer([
+      {
+        name: "Reassign",
+        title,
+        subtitle: `Generated: ${new Date().toLocaleString()}`,
+        rows: data,
+      },
     ]);
-    const ws = XLSX.utils.aoa_to_sheet([
-      [title],
-      [`Generated: ${new Date().toLocaleString()}`],
-      [],
-      headers,
-      ...body,
-    ]);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Reassign");
-    const out = XLSX.write(wb, { type: "array", bookType: "xlsx" });
     downloadBlob(
       `${exportFileBase()}.xlsx`,
       new Blob([out], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" })
@@ -379,7 +368,7 @@ export default function ReassignPage() {
     setExportOpen(false);
   }
 
-  function exportEmployeesPdf() {
+  async function exportEmployeesPdf() {
     setError("");
     const rows = getExportCandidates();
     if (!rows.length) {
@@ -389,8 +378,7 @@ export default function ReassignPage() {
     const title = exportTitle.trim() || "Reassign (1+ year of service)";
     const now = new Date();
     const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
-    doc.setFontSize(14);
-    doc.text(title, 40, 40);
+    const startY = await addBrandedPdfHeader(doc, title, "Generated export of employees with 1+ year of service");
 
     const head = [["Name", "Job Title", "Detachment", "Gender", "Hire Date", "Service", "Email", "Phone"]];
     const body = rows.map((e) => [
@@ -405,7 +393,7 @@ export default function ReassignPage() {
     ]);
 
     autoTable(doc, {
-      startY: 60,
+      startY: startY + 10,
       head,
       body,
       styles: { fontSize: 8, cellPadding: 3 },
@@ -665,6 +653,7 @@ export default function ReassignPage() {
       ) : filtered.length === 0 ? (
         <div className="glass-panel animate-slide-up rounded-2xl p-8 text-center text-gray-500">No employees in Reassign.</div>
       ) : viewMode === "table" ? (
+    <TableZoomWrapper storageKey="reassign">
     <div className="relative overflow-x-auto rounded-2xl glass-panel animate-slide-up">
       <table className="min-w-[1200px] w-full text-sm text-black border-separate border-spacing-y-2">
         <thead className="sticky top-0 z-10">
@@ -736,7 +725,11 @@ export default function ReassignPage() {
                   )}
                 </td>
                 <td className="px-4 py-3">
-                  <span className="px-3 py-1 rounded-full text-xs font-bold bg-orange-500 text-white">REASSIGN</span>
+                  {sessionRole !== "employee" ? (
+                    <EmployeeStatusMenu value={normalizeStatus(e.status)} onChange={(nextStatus) => void updateEmployeeStatus(e, nextStatus)} />
+                  ) : (
+                    <span className="px-3 py-1 rounded-full text-xs font-bold bg-orange-500 text-white">REASSIGN</span>
+                  )}
                 </td>
                 {sessionRole !== "employee" ? (
                   <td className="px-4 py-3 text-center rounded-r-xl">
@@ -783,6 +776,7 @@ export default function ReassignPage() {
         </tbody>
       </table>
     </div>
+    </TableZoomWrapper>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
           {filtered.map((e) => {

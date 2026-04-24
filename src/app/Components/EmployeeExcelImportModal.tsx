@@ -8,6 +8,7 @@ export type EmployeeExcelImportModalProps = {
   open: boolean;
   onClose: () => void;
   allowTemplateDownloads?: boolean;
+  defaultStatus?: string;
   onImported?: (result: { inserted: number; updated: number; skipped: number; errors: string[] }) => void;
 };
 
@@ -149,6 +150,7 @@ function isRowEffectivelyEmpty(row: RowObject) {
 
 function normalizeStatus(value: unknown) {
   const v = String(value ?? "").trim().toUpperCase();
+  if (v === "APPLICANT") return "APPLICANT";
   if (v === "INACTIVE") return "INACTIVE";
   if (v === "REASSIGN") return "REASSIGN";
   if (v === "RETIRED") return "RETIRED";
@@ -234,7 +236,7 @@ function hasHeader(row: RowObject, header: string) {
   return Object.keys(row).some((k) => normKey(k) === target);
 }
 
-function rowToApplicant(row: RowObject): { payload: ApplicantInsert | null; error?: string } {
+function rowToApplicant(row: RowObject, defaultStatus: string): { payload: ApplicantInsert | null; error?: string } {
   if (isRowEffectivelyEmpty(row)) {
     return { payload: null, error: "Empty row" };
   }
@@ -370,7 +372,11 @@ function rowToApplicant(row: RowObject): { payload: ApplicantInsert | null; erro
     detachment: toNullableText(
       pick(row, ["detachment", "deployment", "assignment", "post", "site", "location"])
     ),
-    status: normalizeStatus(pick(row, ["status"])),
+    status: (() => {
+      const rawStatus = pick(row, ["status"]);
+      const text = toText(rawStatus).trim();
+      return text ? normalizeStatus(text) : normalizeStatus(defaultStatus);
+    })(),
 
     security_licensed_num: toNullableText(
       pick(row, [
@@ -437,13 +443,20 @@ function rowToLicensure(row: RowObject) {
   } as Omit<LicensureUpsert, "applicant_id">;
 }
 
-export default function EmployeeExcelImportModal({ open, onClose, allowTemplateDownloads = true, onImported }: EmployeeExcelImportModalProps) {
+export default function EmployeeExcelImportModal({
+  open,
+  onClose,
+  allowTemplateDownloads = true,
+  defaultStatus = "ACTIVE",
+  onImported,
+}: EmployeeExcelImportModalProps) {
   const [fileName, setFileName] = useState<string>("");
   const [rows, setRows] = useState<RowObject[]>([]);
   const [parsingError, setParsingError] = useState<string>("");
   const [importing, setImporting] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [resultMsg, setResultMsg] = useState<string>("");
+  const normalizedDefaultStatus = normalizeStatus(defaultStatus);
 
   function normalizeMatchKey(v: unknown) {
     return String(v ?? "")
@@ -510,13 +523,17 @@ export default function EmployeeExcelImportModal({ open, onClose, allowTemplateD
   }
 
   function downloadCsvTemplate() {
-    const lines = [toCsvLine([...TEMPLATE_HEADERS]), toCsvLine(new Array(TEMPLATE_HEADERS.length).fill(""))];
+    const templateRow = new Array(TEMPLATE_HEADERS.length).fill("");
+    templateRow[TEMPLATE_HEADERS.length - 1] = normalizedDefaultStatus;
+    const lines = [toCsvLine([...TEMPLATE_HEADERS]), toCsvLine(templateRow)];
     const blob = new Blob([lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
     downloadBlob("employee_import_template.csv", blob);
   }
 
   function downloadXlsxTemplate() {
-    const aoa = [[...TEMPLATE_HEADERS], new Array(TEMPLATE_HEADERS.length).fill("")];
+    const templateRow = new Array(TEMPLATE_HEADERS.length).fill("");
+    templateRow[TEMPLATE_HEADERS.length - 1] = normalizedDefaultStatus;
+    const aoa = [[...TEMPLATE_HEADERS], templateRow];
     const ws = XLSX.utils.aoa_to_sheet(aoa);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Employees");
@@ -622,7 +639,7 @@ export default function EmployeeExcelImportModal({ open, onClose, allowTemplateD
 
   const preview = useMemo(() => {
     const converted = rows.map((r, idx) => {
-      const { payload, error } = rowToApplicant(r);
+      const { payload, error } = rowToApplicant(r, normalizedDefaultStatus);
       return {
         idx: idx + 2, // header row assumed
         name: payload ? `${payload.first_name ?? ""} ${payload.last_name ?? ""}`.trim() : "—",
@@ -677,7 +694,7 @@ export default function EmployeeExcelImportModal({ open, onClose, allowTemplateD
     const prepared: { applicant: ApplicantInsert; licensure: Omit<LicensureUpsert, "applicant_id"> }[] = [];
 
     rows.forEach((r, i) => {
-      const { payload, error } = rowToApplicant(r);
+      const { payload, error } = rowToApplicant(r, normalizedDefaultStatus);
       if (!payload) {
         errors.push(`Row ${i + 2}: ${error || "Invalid row"}`);
         return;

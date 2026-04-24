@@ -48,7 +48,14 @@ function nextLicenseExpiryFromLicensureRow(r: LicensureRow | null) {
 
 function normalizeEmployeeStatus(value: string | null | undefined) {
 	const normalized = String(value ?? "").trim().toUpperCase();
-	if (normalized === "ACTIVE" || normalized === "INACTIVE" || normalized === "REASSIGN" || normalized === "RETIRED" || normalized === "RESIGNED") {
+	if (
+		normalized === "ACTIVE" ||
+		normalized === "APPLICANT" ||
+		normalized === "INACTIVE" ||
+		normalized === "REASSIGN" ||
+		normalized === "RETIRED" ||
+		normalized === "RESIGNED"
+	) {
 		return normalized;
 	}
 	return "ACTIVE";

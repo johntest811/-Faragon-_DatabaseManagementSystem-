@@ -7,6 +7,7 @@ import { Pencil, LayoutGrid, Table, SlidersHorizontal, Search } from "lucide-rea
 import { useAuthRole, useMyModuleDeleteAccess } from "../../Client/useRbac";
 import EmployeeEditorModal from "../../Components/EmployeeEditorModal";
 import LoadingCircle from "../../Components/LoadingCircle";
+import TableZoomWrapper from "@/app/Components/TableZoomWrapper";
 import EmployeeStatusMenu from "../Components/EmployeeStatusMenu";
 import { buildEmployeeStatusUpdatePatch, loadLicensureMap } from "../employeeListData";
 
@@ -59,7 +60,7 @@ function shortCode(id: string) {
 function normalizeStatus(input: string | null) {
   const v = (input ?? "").trim().toUpperCase();
   if (!v) return "ACTIVE";
-  if (v === "ACTIVE" || v === "INACTIVE" || v === "REASSIGN" || v === "RETIRED" || v === "RESIGNED") return v;
+  if (v === "ACTIVE" || v === "APPLICANT" || v === "INACTIVE" || v === "REASSIGN" || v === "RETIRED" || v === "RESIGNED") return v;
   return "ACTIVE";
 }
 
@@ -503,6 +504,7 @@ export default function RetiredPage() {
       ) : filtered.length === 0 ? (
         <div className="glass-panel animate-slide-up rounded-2xl p-8 text-center text-gray-500">No employees in Retired.</div>
       ) : viewMode === "table" ? (
+    <TableZoomWrapper storageKey="retired">
     <div className="relative overflow-x-auto rounded-2xl glass-panel animate-slide-up">
       <table className="min-w-[1200px] w-full text-sm text-black border-separate border-spacing-y-2">
         <thead className="sticky top-0 z-10">
@@ -578,7 +580,11 @@ export default function RetiredPage() {
                   )}
                 </td>
                 <td className="px-4 py-3">
-                  <span className="px-3 py-1 rounded-full text-xs font-bold bg-gray-700 text-white">RETIRED</span>
+                  {sessionRole !== "employee" && canDeleteRetired ? (
+                    <EmployeeStatusMenu value={normalizeStatus(e.status)} onChange={(nextStatus) => void updateEmployeeStatus(e, nextStatus)} />
+                  ) : (
+                    <span className="px-3 py-1 rounded-full text-xs font-bold bg-gray-700 text-white">RETIRED</span>
+                  )}
                 </td>
                 {sessionRole !== "employee" ? (
                   <td className="px-4 py-3 text-center rounded-r-xl">
@@ -625,6 +631,7 @@ export default function RetiredPage() {
         </tbody>
       </table>
     </div>
+    </TableZoomWrapper>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
           {filtered.map((e) => {

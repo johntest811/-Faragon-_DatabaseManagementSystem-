@@ -720,6 +720,7 @@ function PermissionsPageContent() {
 										const effectiveModuleOn = roleModuleOn || overrideModuleOn;
 										const effectiveDeleteOn = roleDeleteOn || overrideDeleteOn;
 										const moduleLockedByRole = roleModuleOn && !overrideModuleOn;
+										const editLockedByRole = roleModuleEditAccess.has(m.module_key) && !adminModuleEditAccess.has(m.module_key);
 										const deleteLockedByRole = roleDeleteOn && !overrideDeleteOn;
 										const moduleBusy =
 											savingIndividualKey === `admin-module:${selectedAdminId}:${m.module_key}`;
@@ -784,6 +785,21 @@ function PermissionsPageContent() {
 																	void toggleAdminModule(m.module_key);
 																}}
 																disabled={!canManage || moduleBusy || moduleLockedByRole}
+															/>
+														</label>
+														<label className="text-xs text-gray-700 flex items-center gap-2">
+															<span className="text-gray-500">Edit</span>
+															<input
+																type="checkbox"
+																checked={roleModuleEditAccess.has(m.module_key) || adminModuleEditAccess.has(m.module_key)}
+																onChange={() => {
+																	if (editLockedByRole) {
+																		setError("This edit access is inherited from role. Edit it in Roles tab.");
+																		return;
+																	}
+																	void toggleAdminEdit(m.module_key);
+																}}
+																disabled={!canManage || editBusy || editLockedByRole}
 															/>
 														</label>
 														<label className="text-xs text-gray-700 flex items-center gap-2">

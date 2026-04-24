@@ -22,6 +22,7 @@ values
   ('inventory', 'Inventory', '/Main_Modules/Inventory/'),
   ('paraphernalia', 'Paraphernalia', '/Main_Modules/Paraphernalia/'),
   ('reports', 'Reports', '/Main_Modules/Reports/'),
+  ('car_insurance_expiration', 'Car Insurance Expiration', '/Main_Modules/Logistics/CarInsuranceExpiration/'),
 
   -- Request-access page (keep reachable so users can ask for permissions)
   ('requests', 'Requests', '/Main_Modules/Requests/'),
@@ -90,7 +91,7 @@ insert into public.role_module_access (role_id, module_key, can_read, can_write)
 select r.role_id, m.module_key, true, true
 from public.app_roles r
 join public.modules m
-  on m.module_key in (
+  on m.module_key in ('client', 'inventory', 'paraphernalia', 'reports', 'car_insurance_expiration', 'logistics')
     'dashboard','employees','reassign','resigned','retired','archive',
     'client','inventory','paraphernalia','reports',
     'trash','audit','settings','requests','logistics'

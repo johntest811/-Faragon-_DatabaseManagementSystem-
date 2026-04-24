@@ -11,8 +11,10 @@ import { useAuthRole, useMyColumnAccess, useMyModuleAccess, useMyModuleDeleteAcc
 import EmployeeEditorModal from "../../Components/EmployeeEditorModal";
 import EmployeeExcelImportModal from "../../Components/EmployeeExcelImportModal";
 import LoadingCircle from "../../Components/LoadingCircle";
+import TableZoomWrapper from "@/app/Components/TableZoomWrapper";
 import ImportSummaryModal, { ImportSummaryData } from "../Components/ImportSummaryModal";
 import EmployeeStatusMenu from "../Components/EmployeeStatusMenu";
+import { addBrandedPdfHeader, buildBrandedAoa, buildBrandedWorkbookBuffer } from "../Components/exportBranding";
 import { buildEmployeeStatusUpdatePatch, loadLicensureMap } from "../employeeListData";
 
 type Applicant = {
@@ -92,7 +94,7 @@ function shortCode(id: string) {
 function normalizeStatus(input: string | null) {
 	const v = (input ?? "").trim().toUpperCase();
 	if (!v) return "ACTIVE";
-	if (v === "ACTIVE" || v === "INACTIVE" || v === "REASSIGN" || v === "RETIRED" || v === "RESIGNED") return v;
+	if (v === "ACTIVE" || v === "APPLICANT" || v === "INACTIVE" || v === "REASSIGN" || v === "RETIRED" || v === "RESIGNED") return v;
 	return "ACTIVE";
 }
 
@@ -319,7 +321,7 @@ export default function EmployeesPage() {
 
 
 	const [filtersOpen, setFiltersOpen] = useState(false);
-	const [statusFilter, setStatusFilter] = useState<"ALL" | "ACTIVE" | "INACTIVE" | "REASSIGN" | "RETIRED">("ALL");
+	const [statusFilter, setStatusFilter] = useState<"ALL" | "ACTIVE" | "APPLICANT" | "INACTIVE" | "REASSIGN" | "RETIRED">("ALL");
 	const [genderFilter, setGenderFilter] = useState<string>("ALL");
 	const [detachmentFilter, setDetachmentFilter] = useState<string>("ALL");
 	const [positionFilter, setPositionFilter] = useState<string>("ALL");
@@ -464,12 +466,12 @@ export default function EmployeesPage() {
 		const q = search.trim().toLowerCase();
 		let list = employees;
 
-		// By default Employees page shows Active/Inactive.
-		// If the admin explicitly filters for REASSIGN/RETIRED, allow it.
+				// By default Employees page shows Active/Inactive.
+				// If the admin explicitly filters for REASSIGN/RETIRED/APPLICANT, allow it.
 		if (statusFilter === "ALL") {
 			list = list.filter((e) => {
 				const s = normalizeStatus(e.status);
-				return s !== "REASSIGN" && s !== "RETIRED" && s !== "RESIGNED";
+						return s !== "REASSIGN" && s !== "RETIRED" && s !== "RESIGNED" && s !== "APPLICANT";
 			});
 		}
 
@@ -871,15 +873,18 @@ if (hiredMonthFilter !== "ALL") {
 		}
 
 		const now = new Date();
-		const headers = exportColumnDefs.map((c) => c.label);
-		const body = rows.map((e) => exportColumnDefs.map((c) => c.value(e, now)));
-		const ws = XLSX.utils.aoa_to_sheet([headers, ...body]);
+		const title = exportTitle.trim() || "Employees Export";
+		const subtitle = `Generated: ${new Date().toLocaleString()}`;
+		const exportRows = rows.map((e) =>
+			Object.fromEntries(exportColumnDefs.map((c) => [c.label, c.value(e, now)]))
+		) as Record<string, string>[];
+		const ws = XLSX.utils.aoa_to_sheet(buildBrandedAoa(exportRows, title, subtitle));
 		const csv = XLSX.utils.sheet_to_csv(ws);
 		downloadBlob(`${exportFileBase()}.csv`, new Blob([csv], { type: "text/csv;charset=utf-8;" }));
 		setExportOpen(false);
 	}
 
-	function exportEmployeesXlsx() {
+	async function exportEmployeesXlsx() {
 		setError("");
 		const rows = exportCandidates;
 		if (!rows.length) {
@@ -893,19 +898,19 @@ if (hiredMonthFilter !== "ALL") {
 		const title = exportTitle.trim() || "Employees Export";
 
 		const now = new Date();
+		const subtitle = `Generated: ${new Date().toLocaleString()}`;
+		const exportRows = rows.map((e) =>
+			Object.fromEntries(exportColumnDefs.map((c) => [c.label, c.value(e, now)]))
+		) as Record<string, string>[];
 
-		const headers = exportColumnDefs.map((c) => c.label);
-		const body = rows.map((e) => exportColumnDefs.map((c) => c.value(e, now)));
-		const ws = XLSX.utils.aoa_to_sheet([
-			[title],
-			[`Generated: ${new Date().toLocaleString()}`],
-			[],
-			headers,
-			...body,
+		const out = await buildBrandedWorkbookBuffer([
+			{
+				name: "Employees",
+				title,
+				subtitle,
+				rows: exportRows,
+			},
 		]);
-		const wb = XLSX.utils.book_new();
-		XLSX.utils.book_append_sheet(wb, ws, "Employees");
-		const out = XLSX.write(wb, { type: "array", bookType: "xlsx" });
 		downloadBlob(
 			`${exportFileBase()}.xlsx`,
 			new Blob([out], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" })
@@ -913,7 +918,7 @@ if (hiredMonthFilter !== "ALL") {
 		setExportOpen(false);
 	}
 
-	function exportExpiringPdf() {
+	async function exportExpiringPdf() {
 		setError("");
 		const title = exportTitle.trim() || "Employees Export";
 		const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
@@ -923,10 +928,9 @@ if (hiredMonthFilter !== "ALL") {
 			return;
 		}
 
-		doc.setFontSize(14);
-		doc.text(`${title} - Expiring Licenses`, 40, 40);
+		const startY = await addBrandedPdfHeader(doc, title, "Expiring Licenses");
 		autoTable(doc, {
-			startY: 60,
+			startY: startY + 10,
 			head: [["Name", "Job Title", "Detachment", "Expiry Date", "Days Until Expiry"]],
 			body: exportExpiringRows.map((r) => [
 				r.name,
@@ -950,7 +954,7 @@ if (hiredMonthFilter !== "ALL") {
 		return parts.join("_");
 	}
 
-	function exportServiceXlsx() {
+	async function exportServiceXlsx() {
 		setError("");
 		const rows = exportServiceRowsFiltered;
 		if (!rows.length) {
@@ -961,25 +965,33 @@ if (hiredMonthFilter !== "ALL") {
 		const monthLabel =
 			HIRE_MONTH_OPTIONS.find((opt) => opt.value === serviceExportMonth)?.label ?? "All Months";
 		const title = serviceExportTitle.trim() || "Employees 1+ Year Export";
-		const headers = serviceExportShowBirthday
-			? ["Name", "Job Title", "Detachment", "Hired Date", "Birthday", "Years w/ Company"]
-			: ["Name", "Job Title", "Detachment", "Hired Date", "Years w/ Company"];
-		const body = rows.map((row) =>
+		const subtitle = `Generated: ${new Date().toLocaleString()} • Month Filter: ${monthLabel}`;
+		const exportRows = rows.map((row) =>
 			serviceExportShowBirthday
-				? [row.name, row.job, row.detachment, row.hired_on, row.birthday, row.service]
-				: [row.name, row.job, row.detachment, row.hired_on, row.service]
+				? {
+					Name: row.name,
+					"Job Title": row.job,
+					Detachment: row.detachment,
+					"Hired Date": row.hired_on,
+					Birthday: row.birthday,
+					"Years w/ Company": row.service,
+				}
+				: {
+					Name: row.name,
+					"Job Title": row.job,
+					Detachment: row.detachment,
+					"Hired Date": row.hired_on,
+					"Years w/ Company": row.service,
+				}
 		);
-		const ws = XLSX.utils.aoa_to_sheet([
-			[title],
-			[`Generated: ${new Date().toLocaleString()}`],
-			[`Month Filter: ${monthLabel}`],
-			[],
-			headers,
-			...body,
+		const out = await buildBrandedWorkbookBuffer([
+			{
+				name: "1+ Year In Company",
+				title,
+				subtitle,
+				rows: exportRows,
+			},
 		]);
-		const wb = XLSX.utils.book_new();
-		XLSX.utils.book_append_sheet(wb, ws, "1+ Year In Company");
-		const out = XLSX.write(wb, { type: "array", bookType: "xlsx" });
 		downloadBlob(
 			`${serviceExportFileBase()}.xlsx`,
 			new Blob([out], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" })
@@ -987,7 +999,7 @@ if (hiredMonthFilter !== "ALL") {
 		setServiceExportOpen(false);
 	}
 
-	function exportServicePdf() {
+	async function exportServicePdf() {
 		setError("");
 		const rows = exportServiceRowsFiltered;
 		if (!rows.length) {
@@ -999,6 +1011,7 @@ if (hiredMonthFilter !== "ALL") {
 			HIRE_MONTH_OPTIONS.find((opt) => opt.value === serviceExportMonth)?.label ?? "All Months";
 		const title = serviceExportTitle.trim() || "Employees 1+ Year Export";
 		const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
+		const subtitle = `Month Filter: ${monthLabel}`;
 		const head = serviceExportShowBirthday
 			? [["Name", "Job Title", "Detachment", "Hired Date", "Birthday", "Years w/ Company"]]
 			: [["Name", "Job Title", "Detachment", "Hired Date", "Years w/ Company"]];
@@ -1008,10 +1021,9 @@ if (hiredMonthFilter !== "ALL") {
 				: [r.name, r.job, r.detachment, r.hired_on, r.service]
 		);
 
-		doc.setFontSize(14);
-		doc.text(`${title} - ${monthLabel}`, 40, 40);
+		const startY = await addBrandedPdfHeader(doc, title, subtitle);
 		autoTable(doc, {
-			startY: 60,
+			startY: startY + 10,
 			head,
 			body,
 			styles: { fontSize: 8, cellPadding: 3 },
@@ -1269,6 +1281,7 @@ if (hiredMonthFilter !== "ALL") {
 					})}
 				</div>
 ) : (
+	<TableZoomWrapper storageKey="employees">
 	<div className="relative overflow-x-auto rounded-2xl glass-panel animate-slide-up">
 		<table className="min-w-[1200px] w-full text-sm text-black border-separate border-spacing-y-2">
 			<thead className="sticky top-0 z-10">
@@ -1350,16 +1363,20 @@ if (hiredMonthFilter !== "ALL") {
 							</td>
 							{showStatusColumn ? (
 								<td className="px-4 py-3">
-									<span
-										className={`px-3 py-1 rounded-full text-xs font-bold ${
-											normalizeStatus(e.status) === "ACTIVE" ? "bg-emerald-500 text-white" : "bg-red-500 text-white"
-										}`}
-									>
-										{normalizeStatus(e.status)}
-									</span>
+									{canEditEmployees ? (
+										<EmployeeStatusMenu value={normalizeStatus(e.status)} onChange={(nextStatus) => void updateEmployeeStatus(e, nextStatus)} />
+									) : (
+										<span
+											className={`px-3 py-1 rounded-full text-xs font-bold ${
+												normalizeStatus(e.status) === "ACTIVE" ? "bg-emerald-500 text-white" : "bg-red-500 text-white"
+											}`}
+										>
+											{normalizeStatus(e.status)}
+										</span>
+									)}
 								</td>
 							) : null}
-							{canAccessEmployees && canDeleteEmployees ? (
+							{canAccessEmployees && (canDeleteEmployees || canEditEmployees) ? (
 								<td className="px-4 py-3 text-center rounded-r-xl">
 									<div className="inline-flex items-center gap-2">
 										<button
@@ -1404,6 +1421,7 @@ if (hiredMonthFilter !== "ALL") {
 			</tbody>
 		</table>
 	</div>
+	</TableZoomWrapper>
 )}
 
 
@@ -1680,13 +1698,14 @@ if (hiredMonthFilter !== "ALL") {
 										value={statusFilter}
 										onChange={(e) =>
 											setStatusFilter(
-												e.target.value as "ALL" | "ACTIVE" | "INACTIVE" | "REASSIGN" | "RETIRED"
+												e.target.value as "ALL" | "ACTIVE" | "APPLICANT" | "INACTIVE" | "REASSIGN" | "RETIRED"
 											)
 										}
 										className="w-full border rounded-xl px-3 py-2 bg-white"
 									>
 										<option value="ALL">All</option>
 										<option value="ACTIVE">ACTIVE</option>
+										<option value="APPLICANT">APPLICANT</option>
 										<option value="INACTIVE">INACTIVE</option>
 										<option value="REASSIGN">REASSIGN</option>
 										<option value="RETIRED">RETIRED</option>
