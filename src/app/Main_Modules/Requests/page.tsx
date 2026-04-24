@@ -2,6 +2,7 @@
 
 import React, { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { createPortal } from "react-dom";
 import { supabase } from "../../Client/SupabaseClients";
 import { useAuthRole, useMyModules, useMyModuleDeleteAccess, useMyModuleEditAccess } from "../../Client/useRbac";
 import LoadingCircle from "../../Components/LoadingCircle";
@@ -57,6 +58,121 @@ type AccessRequestRow = {
   approver_username?: string | null;
   approver_full_name?: string | null;
 };
+
+type RequestResolveMenuProps = {
+  busy: boolean;
+  onResolve: (status: "APPROVED" | "REJECTED") => void | Promise<void>;
+};
+
+function RequestResolveMenu({ busy, onResolve }: RequestResolveMenuProps) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const [menuPosition, setMenuPosition] = useState<{ top: number; left: number; maxHeight: number; width: number } | null>(null);
+
+  const updateMenuPosition = useCallback(() => {
+    if (typeof window === "undefined" || !rootRef.current) return;
+
+    const rect = rootRef.current.getBoundingClientRect();
+    const safeMargin = 8;
+    const gap = 8;
+    const width = Math.min(240, Math.max(176, window.innerWidth - safeMargin * 2));
+    const left = Math.max(safeMargin, Math.min(rect.left, window.innerWidth - width - safeMargin));
+    const top = Math.min(rect.bottom + gap, Math.max(safeMargin, window.innerHeight - safeMargin - 96));
+    const maxHeight = Math.max(120, window.innerHeight - top - safeMargin);
+
+    setMenuPosition({ top, left, width, maxHeight });
+  }, []);
+
+  useEffect(() => {
+    if (!open) {
+      setMenuPosition(null);
+      return;
+    }
+
+    updateMenuPosition();
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (!target) return;
+      if (rootRef.current?.contains(target)) return;
+      if (menuRef.current?.contains(target)) return;
+      setOpen(false);
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("resize", updateMenuPosition);
+    window.addEventListener("scroll", updateMenuPosition, true);
+
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("resize", updateMenuPosition);
+      window.removeEventListener("scroll", updateMenuPosition, true);
+    };
+  }, [open, updateMenuPosition]);
+
+  return (
+    <div ref={rootRef} className="inline-flex">
+      <button
+        type="button"
+        disabled={busy}
+        onClick={() => {
+          if (busy) return;
+          setOpen((value) => !value);
+        }}
+        className={`min-w-[11rem] rounded-xl border bg-white px-3 py-2 text-sm font-semibold text-black shadow-sm outline-none transition focus:ring-2 focus:ring-[#FFDA03]/60 ${
+          busy ? "opacity-60 cursor-not-allowed" : "cursor-pointer"
+        }`}
+      >
+        {busy ? "Working…" : "Change status"}
+      </button>
+
+      {open && menuPosition
+        ? createPortal(
+            <div
+              ref={menuRef}
+              role="menu"
+              className="fixed z-50 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl"
+              style={{ top: menuPosition.top, left: menuPosition.left, width: menuPosition.width, maxHeight: menuPosition.maxHeight }}
+            >
+              <div className="border-b border-slate-100 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-500">
+                Resolve request
+              </div>
+              <div className="max-h-full overflow-auto p-1">
+                <button
+                  type="button"
+                  className="flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                  onClick={() => {
+                    setOpen(false);
+                    void onResolve("APPROVED");
+                  }}
+                >
+                  <span>Approve</span>
+                </button>
+                <button
+                  type="button"
+                  className="flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                  onClick={() => {
+                    setOpen(false);
+                    void onResolve("REJECTED");
+                  }}
+                >
+                  <span>Reject</span>
+                </button>
+              </div>
+            </div>,
+            document.body
+          )
+        : null}
+    </div>
+  );
+}
 
 function normalizeRoleNameLoose(value: unknown) {
   return String(value ?? "").trim().toLowerCase();
@@ -1365,26 +1481,10 @@ function RequestsPageContent() {
                         <td className="px-3 py-2 text-xs text-black whitespace-nowrap">{reviewerLabel}</td>
                         <td className="px-3 py-2 text-xs text-black">{r.reason ?? ""}</td>
                         <td className="px-3 py-2">
-                          <select
-                            defaultValue=""
-                            disabled={busy}
-                            aria-label={`Resolve request for ${requesterLabel}`}
-                            onChange={(event) => {
-                              const nextStatus = event.currentTarget.value as "APPROVED" | "REJECTED" | "";
-                              if (!nextStatus) return;
-                              event.currentTarget.value = "";
-                              void resolveRequest(r, nextStatus);
-                            }}
-                            className={`min-w-[11rem] rounded-xl border bg-white px-3 py-2 text-sm font-semibold text-black shadow-sm outline-none transition focus:ring-2 focus:ring-[#FFDA03]/60 ${
-                              busy ? "opacity-60 cursor-not-allowed" : "cursor-pointer"
-                            }`}
-                          >
-                            <option value="" disabled>
-                              {busy ? "Working…" : "Change status"}
-                            </option>
-                            <option value="APPROVED">Approve</option>
-                            <option value="REJECTED">Reject</option>
-                          </select>
+                          <RequestResolveMenu
+                            busy={busy}
+                            onResolve={(nextStatus) => resolveRequest(r, nextStatus)}
+                          />
                         </td>
                       </tr>
                     );

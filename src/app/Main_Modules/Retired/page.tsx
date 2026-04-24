@@ -10,6 +10,7 @@ import LoadingCircle from "../../Components/LoadingCircle";
 import TableZoomWrapper from "@/app/Components/TableZoomWrapper";
 import EmployeeStatusMenu from "../Components/EmployeeStatusMenu";
 import { buildEmployeeStatusUpdatePatch, loadLicensureMap } from "../employeeListData";
+import { useLiveNow } from "../../Client/useLiveNow";
 
 type Applicant = {
   applicant_id: string;
@@ -164,6 +165,7 @@ export default function RetiredPage() {
   const fetchRunIdRef = useRef(0);
   const [search, setSearch] = useState("");
   const [sortBy, setSortBy] = useState<"name" | "last_name" | "letter" | "created_at" | "category" | "service">("name");
+  const liveNow = useLiveNow();
 
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [genderFilter, setGenderFilter] = useState<string>("ALL");
@@ -285,7 +287,7 @@ export default function RetiredPage() {
 
     if (yearsServiceFilter !== "ALL") {
       list = list.filter((e) => {
-        const years = serviceYearsExact(e.date_hired_fsai, new Date());
+        const years = serviceYearsExact(e.date_hired_fsai, liveNow);
         if (years == null) return false;
         if (yearsServiceFilter === "<1") return years < 1;
         if (yearsServiceFilter === "1-5") return years >= 1 && years <= 5;
@@ -341,8 +343,8 @@ export default function RetiredPage() {
         return d !== 0 ? d : getFullName(a).localeCompare(getFullName(b));
       }
       if (sortBy === "service") {
-        const ay = serviceYearsExact(a.date_hired_fsai, new Date());
-        const by = serviceYearsExact(b.date_hired_fsai, new Date());
+        const ay = serviceYearsExact(a.date_hired_fsai, liveNow);
+        const by = serviceYearsExact(b.date_hired_fsai, liveNow);
         const score = (v: number | null) => (v == null ? -1 : v);
         const d = score(by) - score(ay);
         return d !== 0 ? d : getFullName(a).localeCompare(getFullName(b));
@@ -351,7 +353,7 @@ export default function RetiredPage() {
     });
 
     return sorted;
-  }, [employees, search, sortBy, genderFilter, detachmentFilter, positionFilter, hasPhotoFilter, hiredMonthFilter, yearsServiceFilter]);
+  }, [employees, search, sortBy, genderFilter, detachmentFilter, positionFilter, hasPhotoFilter, hiredMonthFilter, yearsServiceFilter, liveNow]);
 
   const filterOptions = useMemo(() => {
     const det = new Set<string>();

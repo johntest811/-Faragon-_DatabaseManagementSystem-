@@ -9,6 +9,7 @@ import LoadingCircle from "../../Components/LoadingCircle";
 import TableZoomWrapper from "@/app/Components/TableZoomWrapper";
 import EmployeeStatusMenu from "../Components/EmployeeStatusMenu";
 import { buildEmployeeStatusUpdatePatch, loadLicensureMap } from "../employeeListData";
+import { useLiveNow } from "../../Client/useLiveNow";
 
 type Applicant = {
   applicant_id: string;
@@ -26,13 +27,6 @@ type Applicant = {
   profile_image_path: string | null;
   is_archived: boolean | null;
   archived_at: string | null;
-};
-
-type LicensureRow = {
-  applicant_id: string;
-  driver_expiration: string | null;
-  security_expiration: string | null;
-  insurance_expiration: string | null;
 };
 
 const BUCKETS = {
@@ -103,31 +97,7 @@ function serviceYearsExact(fromIso: string | null, now = new Date()) {
   return diff.years + diff.months / 12 + diff.days / 365.25;
 }
 
-function ymd(d: string | null) {
-  if (!d) return null;
-  const dt = new Date(d);
-  if (Number.isNaN(dt.getTime())) return null;
-  return dt.toISOString().slice(0, 10);
-}
 
-function daysUntil(dateYmd: string | null) {
-  if (!dateYmd) return null;
-  const today = new Date();
-  const t = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-  const dt = new Date(dateYmd);
-  if (Number.isNaN(dt.getTime())) return null;
-  const diff = dt.getTime() - t.getTime();
-  return Math.ceil(diff / (24 * 60 * 60 * 1000));
-}
-
-function nextLicenseExpiryFromLicensureRow(r: LicensureRow | null) {
-  if (!r) return { ymd: null as string | null, days: null as number | null };
-  const cands = [ymd(r.driver_expiration), ymd(r.security_expiration), ymd(r.insurance_expiration)].filter(Boolean) as string[];
-  if (!cands.length) return { ymd: null, days: null };
-  const sorted = [...cands].sort((a, b) => a.localeCompare(b));
-  const next = sorted[0];
-  return { ymd: next, days: daysUntil(next) };
-}
 
 export default function ArchivePage() {
   const router = useRouter();
@@ -148,6 +118,7 @@ export default function ArchivePage() {
   const fetchRunIdRef = useRef(0);
   const [search, setSearch] = useState("");
   const [sortBy, setSortBy] = useState<"name" | "last_name" | "letter" | "created_at" | "category" | "service">("name");
+  const liveNow = useLiveNow();
 
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [genderFilter, setGenderFilter] = useState<string>("ALL");
@@ -291,7 +262,7 @@ export default function ArchivePage() {
 
     if (yearsServiceFilter !== "ALL") {
       list = list.filter((e) => {
-        const years = serviceYearsExact(e.date_hired_fsai, new Date());
+        const years = serviceYearsExact(e.date_hired_fsai, liveNow);
         if (years == null) return false;
         if (yearsServiceFilter === "<1") return years < 1;
         if (yearsServiceFilter === "1-5") return years >= 1 && years <= 5;
@@ -337,8 +308,8 @@ export default function ArchivePage() {
         return d !== 0 ? d : getFullName(a).localeCompare(getFullName(b));
       }
       if (sortBy === "service") {
-        const ay = serviceYearsExact(a.date_hired_fsai, new Date());
-        const by = serviceYearsExact(b.date_hired_fsai, new Date());
+        const ay = serviceYearsExact(a.date_hired_fsai, liveNow);
+        const by = serviceYearsExact(b.date_hired_fsai, liveNow);
         const score = (v: number | null) => (v == null ? -1 : v);
         const d = score(by) - score(ay);
         return d !== 0 ? d : getFullName(a).localeCompare(getFullName(b));
@@ -347,7 +318,7 @@ export default function ArchivePage() {
     });
 
     return sorted;
-  }, [items, search, sortBy, genderFilter, detachmentFilter, positionFilter, hasPhotoFilter, hiredMonthFilter, yearsServiceFilter]);
+  }, [items, search, sortBy, genderFilter, detachmentFilter, positionFilter, hasPhotoFilter, hiredMonthFilter, yearsServiceFilter, liveNow]);
 
   const filterOptions = useMemo(() => {
     const det = new Set<string>();

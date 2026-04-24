@@ -14,6 +14,7 @@ import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { addBrandedPdfHeader, buildBrandedAoa, buildBrandedWorkbookBuffer } from "../Components/exportBranding";
+import { useLiveNow } from "../../Client/useLiveNow";
 
 type Applicant = {
   applicant_id: string;
@@ -239,6 +240,7 @@ export default function ReassignPage() {
   const fetchRunIdRef = useRef(0);
   const [search, setSearch] = useState("");
   const [sortBy, setSortBy] = useState<"name" | "last_name" | "letter" | "created_at" | "category" | "service">("name");
+  const liveNow = useLiveNow();
 
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [genderFilter, setGenderFilter] = useState<string>("ALL");

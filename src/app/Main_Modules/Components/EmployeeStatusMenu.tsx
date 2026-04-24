@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Check, ChevronDown } from "lucide-react";
 
 export const EMPLOYEE_STATUS_OPTIONS = [
@@ -76,32 +77,64 @@ export default function EmployeeStatusMenu({ value, onChange, disabled = false }
 	const normalized = normalizeStatus(value);
 	const [open, setOpen] = useState(false);
 	const rootRef = useRef<HTMLDivElement | null>(null);
+	const menuRef = useRef<HTMLDivElement | null>(null);
+	const [menuPosition, setMenuPosition] = useState<{ top: number; left: number; maxHeight: number; width: number } | null>(null);
 	const currentOption = useMemo(
 		() => EMPLOYEE_STATUS_OPTIONS.find((option) => option.value === normalized) ?? EMPLOYEE_STATUS_OPTIONS[0],
 		[normalized]
 	);
 	const tone = statusTone(normalized);
 
+	const updateMenuPosition = useCallback(() => {
+		if (typeof window === "undefined" || !rootRef.current) return;
+
+		const rect = rootRef.current.getBoundingClientRect();
+		const safeMargin = 8;
+		const gap = 8;
+		const width = Math.min(240, Math.max(176, window.innerWidth - safeMargin * 2));
+		const left = Math.max(safeMargin, Math.min(rect.left, window.innerWidth - width - safeMargin));
+		const top = Math.min(rect.bottom + gap, Math.max(safeMargin, window.innerHeight - safeMargin - 120));
+		const maxHeight = Math.max(160, window.innerHeight - top - safeMargin);
+
+		setMenuPosition({ top, left, maxHeight, width });
+	}, []);
+
 	useEffect(() => {
 		if (!open) return;
 
 		const handlePointerDown = (event: PointerEvent) => {
 			const target = event.target as Node | null;
-			if (!target || !rootRef.current) return;
-			if (!rootRef.current.contains(target)) setOpen(false);
+			if (!target) return;
+			if (rootRef.current?.contains(target)) return;
+			if (menuRef.current?.contains(target)) return;
+			setOpen(false);
 		};
 
 		const handleKeyDown = (event: KeyboardEvent) => {
 			if (event.key === "Escape") setOpen(false);
 		};
 
+		updateMenuPosition();
+
 		document.addEventListener("pointerdown", handlePointerDown);
 		document.addEventListener("keydown", handleKeyDown);
+		window.addEventListener("resize", updateMenuPosition);
+		window.addEventListener("scroll", updateMenuPosition, true);
 		return () => {
 			document.removeEventListener("pointerdown", handlePointerDown);
 			document.removeEventListener("keydown", handleKeyDown);
+			window.removeEventListener("resize", updateMenuPosition);
+			window.removeEventListener("scroll", updateMenuPosition, true);
 		};
-	}, [open]);
+	}, [open, updateMenuPosition]);
+
+	useEffect(() => {
+		if (open) {
+			updateMenuPosition();
+			return;
+		}
+		setMenuPosition(null);
+	}, [open, updateMenuPosition]);
 
 	return (
 		<div ref={rootRef} className="relative inline-flex">
@@ -125,37 +158,42 @@ export default function EmployeeStatusMenu({ value, onChange, disabled = false }
 			</button>
 
 			{open ? (
-				<div
-					role="menu"
-					onClick={(event) => event.stopPropagation()}
-					className="absolute bottom-full left-0 z-30 mb-2 min-w-[12rem] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl"
-				>
-					<div className="border-b border-slate-100 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-500">
-						Change status
-					</div>
-					<div className="max-h-64 overflow-auto p-1">
-						{EMPLOYEE_STATUS_OPTIONS.map((option) => {
-							const selected = option.value === normalized;
-							return (
-								<button
-									key={option.value}
-									type="button"
-									onClick={(event) => {
-										event.stopPropagation();
-										setOpen(false);
-										if (!selected) onChange(option.value);
-									}}
-									className={`flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-sm transition ${
-										selected ? tone.menuSelected : "text-slate-700 hover:bg-slate-50"
-									}`}
-								>
-									<span>{option.label}</span>
-									{selected ? <Check className="h-4 w-4" /> : null}
-								</button>
-							);
-						})}
-					</div>
-				</div>
+				createPortal(
+					<div
+						ref={menuRef}
+						role="menu"
+						onClick={(event) => event.stopPropagation()}
+						className="fixed z-50 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl"
+						style={menuPosition ? { top: menuPosition.top, left: menuPosition.left, width: menuPosition.width, maxHeight: menuPosition.maxHeight } : undefined}
+					>
+						<div className="border-b border-slate-100 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-500">
+							Change status
+						</div>
+						<div className="max-h-full overflow-auto p-1">
+							{EMPLOYEE_STATUS_OPTIONS.map((option) => {
+								const selected = option.value === normalized;
+								return (
+									<button
+										key={option.value}
+										type="button"
+										onClick={(event) => {
+											event.stopPropagation();
+											setOpen(false);
+											if (!selected) onChange(option.value);
+										}}
+										className={`flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-sm transition ${
+											selected ? tone.menuSelected : "text-slate-700 hover:bg-slate-50"
+										}`}
+									>
+										<span>{option.label}</span>
+										{selected ? <Check className="h-4 w-4" /> : null}
+									</button>
+								);
+							})}
+						</div>
+					</div>,
+					document.body
+				)
 			) : null}
 		</div>
 	);

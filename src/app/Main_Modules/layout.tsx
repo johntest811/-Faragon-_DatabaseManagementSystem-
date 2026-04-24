@@ -578,7 +578,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
   const [activityCount, setActivityCount] = useState(0);
   const [activityMissingTable, setActivityMissingTable] = useState(false);
   const [resendingKey, setResendingKey] = useState<string | null>(null);
-  const [clearingKey, setClearingKey] = useState<string | null>(null);
+  const [clearingAllExpiring, setClearingAllExpiring] = useState(false);
   const [sendToEmployees, setSendToEmployees] = useState(true);
   const [recentActivity, setRecentActivity] = useState<RecentActivityRow[]>([]);
   const [expiringCount, setExpiringCount] = useState(0);
@@ -1007,25 +1007,29 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
     }
   }, [api, refreshNotificationPrefs]);
 
-  const clearExpiringNotification = useCallback(
-    async (row: ExpiringSummaryRow) => {
-      const key = getExpiringSummaryRowKey(row);
-      if (!key) return;
+  const clearAllExpiringNotifications = useCallback(async () => {
+    if (!expiringRows.length) return;
 
-      try {
-        setClearingKey(key);
-        const dismissedKeys = readDismissedExpiringSummaryKeys();
-        dismissedKeys.add(key);
-        writeDismissedExpiringSummaryKeys(dismissedKeys);
-        await refreshExpiring();
-      } catch {
-        // ignore
-      } finally {
-        setClearingKey(null);
+    const ok = window.confirm("Clear all expiring licenses and records from this list?");
+    if (!ok) return;
+
+    try {
+      setClearingAllExpiring(true);
+      const dismissedKeys = readDismissedExpiringSummaryKeys();
+      for (const row of expiringRows) {
+        const key = getExpiringSummaryRowKey(row);
+        if (key) dismissedKeys.add(key);
       }
-    },
-    [refreshExpiring]
-  );
+      writeDismissedExpiringSummaryKeys(dismissedKeys);
+      setExpiringRows([]);
+      setExpiringCount(0);
+      await refreshExpiring();
+    } catch {
+      // ignore
+    } finally {
+      setClearingAllExpiring(false);
+    }
+  }, [expiringRows, refreshExpiring]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1836,13 +1840,25 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
                     <div className="absolute right-0 mt-2 w-[420px] max-w-[92vw] rounded-2xl border bg-white shadow-lg overflow-hidden z-50">
                       <div className="px-4 py-3 border-b flex items-center justify-between">
                         <div className="text-sm font-semibold text-black">Expiring Licenses and Records</div>
-                        <Link
-                          href="/Main_Modules/Settings/"
-                          className="text-xs text-blue-600 hover:underline"
-                          onClick={() => setExpiringOpen(false)}
-                        >
-                          Settings
-                        </Link>
+                        <div className="flex items-center gap-3">
+                          <button
+                            type="button"
+                            className="text-xs text-red-600 hover:underline disabled:opacity-50"
+                            disabled={!expiringRows.length || clearingAllExpiring}
+                            onClick={() => {
+                              void clearAllExpiringNotifications();
+                            }}
+                          >
+                            {clearingAllExpiring ? "Clearing..." : "Clear all"}
+                          </button>
+                          <Link
+                            href="/Main_Modules/Settings/"
+                            className="text-xs text-blue-600 hover:underline"
+                            onClick={() => setExpiringOpen(false)}
+                          >
+                            Settings
+                          </Link>
+                        </div>
                       </div>
 
                       <div className="max-h-[360px] overflow-auto">
@@ -1892,18 +1908,6 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
                                 <div className="mt-1 flex items-center justify-between gap-3">
                                   <div className="text-[11px] text-gray-500">Days: {r.days_until_expiry}</div>
                                   <div className="flex items-center gap-2">
-                                    <button
-                                      type="button"
-                                      disabled={clearingKey === getExpiringSummaryRowKey(r)}
-                                      className="text-[11px] px-2 py-0.5 rounded-full border bg-white text-gray-800 hover:bg-white disabled:opacity-50"
-                                      onClick={async (ev) => {
-                                        ev.stopPropagation();
-                                        await clearExpiringNotification(r);
-                                      }}
-                                    >
-                                      Clear
-                                    </button>
-
                                     {(() => {
                                       const badge = emailBadge(expiringEmailByApplicantId[String(r.applicant_id)] ?? null);
                                       const isSent = Number(r.sent_count ?? 0) > 0;

@@ -10,6 +10,7 @@ import LoadingCircle from "../../Components/LoadingCircle";
 import TableZoomWrapper from "@/app/Components/TableZoomWrapper";
 import EmployeeStatusMenu from "../Components/EmployeeStatusMenu";
 import { buildEmployeeStatusUpdatePatch, loadLicensureMap } from "../employeeListData";
+import { useLiveNow } from "../../Client/useLiveNow";
 
 type Applicant = {
   applicant_id: string;
@@ -173,6 +174,7 @@ export default function ResignedPage() {
   const fetchRunIdRef = useRef(0);
   const [search, setSearch] = useState("");
   const [sortBy, setSortBy] = useState<"name" | "last_name" | "letter" | "created_at" | "category" | "service">("name");
+  const liveNow = useLiveNow();
 
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [genderFilter, setGenderFilter] = useState<string>("ALL");
@@ -292,7 +294,7 @@ export default function ResignedPage() {
 
     if (yearsServiceFilter !== "ALL") {
       list = list.filter((e) => {
-        const years = serviceYearsExact(e.date_hired_fsai, new Date());
+        const years = serviceYearsExact(e.date_hired_fsai, liveNow);
         if (years == null) return false;
         if (yearsServiceFilter === "<1") return years < 1;
         if (yearsServiceFilter === "1-5") return years >= 1 && years <= 5;
@@ -324,8 +326,8 @@ export default function ResignedPage() {
       sorted.sort((a, b) => String(a.detachment ?? "").localeCompare(String(b.detachment ?? "")));
     } else if (sortBy === "service") {
       sorted.sort((a, b) => {
-        const ay = serviceYearsExact(a.date_hired_fsai, new Date()) ?? -1;
-        const by = serviceYearsExact(b.date_hired_fsai, new Date()) ?? -1;
+        const ay = serviceYearsExact(a.date_hired_fsai, liveNow) ?? -1;
+        const by = serviceYearsExact(b.date_hired_fsai, liveNow) ?? -1;
         return by - ay;
       });
     }
@@ -341,6 +343,7 @@ export default function ResignedPage() {
     hasPhotoFilter,
     hiredMonthFilter,
     yearsServiceFilter,
+    liveNow,
   ]);
 
   const detachmentOptions = useMemo(() => {

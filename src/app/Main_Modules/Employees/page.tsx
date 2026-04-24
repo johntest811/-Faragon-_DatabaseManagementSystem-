@@ -16,6 +16,7 @@ import ImportSummaryModal, { ImportSummaryData } from "../Components/ImportSumma
 import EmployeeStatusMenu from "../Components/EmployeeStatusMenu";
 import { addBrandedPdfHeader, buildBrandedAoa, buildBrandedWorkbookBuffer } from "../Components/exportBranding";
 import { buildEmployeeStatusUpdatePatch, loadLicensureMap } from "../employeeListData";
+import { useLiveNow } from "../../Client/useLiveNow";
 
 type Applicant = {
 	applicant_id: string;
@@ -240,6 +241,7 @@ export default function EmployeesPage() {
 	const canExportEmployees = isAdmin && canViewEmployeeColumn("export_file");
 	const canImportEmployees = isAdmin && canViewEmployeeColumn("import_file");
 	const canDownloadEmployeeTemplate = isAdmin && canViewEmployeeColumn("export_template");
+	const liveNow = useLiveNow();
 
 	const showPhotoColumn = canViewEmployeeColumn("profile_image_path");
 	const showNameColumn =
@@ -514,7 +516,7 @@ if (hiredMonthFilter !== "ALL") {
         if (yearsServiceFilter !== "ALL") {
              list = list.filter((e) => {
         if (!e.date_hired_fsai) return false;
-				const years = serviceYearsExact(e.date_hired_fsai, new Date());
+				const years = serviceYearsExact(e.date_hired_fsai, liveNow);
 				if (years == null) return false;
 
 				if (yearsServiceFilter === "<1") return years < 1;
@@ -583,8 +585,8 @@ if (hiredMonthFilter !== "ALL") {
 				return d !== 0 ? d : getFullName(a).localeCompare(getFullName(b));
 			}
 			if (sortBy === "service") {
-				const ay = serviceYearsExact(a.date_hired_fsai, new Date());
-				const by = serviceYearsExact(b.date_hired_fsai, new Date());
+				const ay = serviceYearsExact(a.date_hired_fsai, liveNow);
+				const by = serviceYearsExact(b.date_hired_fsai, liveNow);
 				// Longest service first; missing join dates last.
 				const score = (v: number | null) => (v == null ? -1 : v);
 				const d = score(by) - score(ay);
@@ -606,7 +608,8 @@ if (hiredMonthFilter !== "ALL") {
   positionFilter,
   hasPhotoFilter,
   hiredMonthFilter,
-  yearsServiceFilter,
+yearsServiceFilter,
+liveNow,
 ]);
 
 	const exportCandidates = useMemo(() => {
@@ -655,7 +658,7 @@ if (hiredMonthFilter !== "ALL") {
 	}, [filtered, expiringSummaryByApplicantId, licensureByApplicantId, showNameColumn, showPositionColumn, showDetachmentColumn]);
 
 	const exportServiceRows = useMemo(() => {
-		const now = new Date();
+			const now = liveNow;
 		const items = filtered
 			.map((e) => {
 				const years = serviceYearsExact(e.date_hired_fsai, now);
@@ -692,7 +695,7 @@ if (hiredMonthFilter !== "ALL") {
 			.sort((a, b) => b.years - a.years);
 
 		return items.slice(0, 300);
-	}, [filtered, showNameColumn, showPositionColumn, showDetachmentColumn]);
+	}, [filtered, showNameColumn, showPositionColumn, showDetachmentColumn, liveNow]);
 
 	const exportServiceRowsFiltered = useMemo(() => {
 		if (serviceExportMonth === "ALL") return exportServiceRows;
@@ -820,7 +823,7 @@ if (hiredMonthFilter !== "ALL") {
 				is_archived: true,
 				archived_at: new Date().toISOString(),
 				archived_by: null,
-				status: normalizedStatus,
+				status: "INACTIVE",
 			})
 			.eq("applicant_id", archiveEmployee.applicant_id);
 
