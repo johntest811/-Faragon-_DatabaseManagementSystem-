@@ -33,7 +33,8 @@ CREATE TABLE public.access_requests (
   CONSTRAINT access_requests_pkey PRIMARY KEY (id),
   CONSTRAINT access_requests_module_fkey FOREIGN KEY (requested_module_key) REFERENCES public.modules(module_key),
   CONSTRAINT access_requests_requester_admin_fkey FOREIGN KEY (requester_admin_id) REFERENCES public.admins(id),
-  CONSTRAINT access_requests_approver_admin_fkey FOREIGN KEY (approver_admin_id) REFERENCES public.admins(id)
+  CONSTRAINT access_requests_approver_admin_fkey FOREIGN KEY (approver_admin_id) REFERENCES public.admins(id),
+  CONSTRAINT access_requests_requested_applicant_fkey FOREIGN KEY (requested_applicant_id) REFERENCES public.applicants(applicant_id)
 );
 CREATE TABLE public.admin_applicant_access_overrides (
   admin_id uuid NOT NULL,
@@ -143,7 +144,7 @@ CREATE TABLE public.applicants (
   province_address character varying,
   emergency_contact_person character varying,
   emergency_contact_num character varying,
-  status character varying DEFAULT 'ACTIVE'::character varying CHECK (NULLIF(btrim(status::text), ''::text) IS NULL OR (upper(NULLIF(btrim(status::text), ''::text)) = ANY (ARRAY['ACTIVE'::text, 'INACTIVE'::text, 'REASSIGN'::text, 'RETIRED'::text, 'RESIGNED'::text]))),
+  status character varying DEFAULT 'ACTIVE'::character varying CHECK (NULLIF(btrim(status::text), ''::text) IS NULL OR (upper(NULLIF(btrim(status::text), ''::text)) = ANY (ARRAY['ACTIVE'::text, 'APPLICANT'::text, 'INACTIVE'::text, 'REASSIGN'::text, 'RETIRED'::text, 'RESIGNED'::text]))),
   profile_image_path text,
   sss_certain_path text,
   tin_id_path text,

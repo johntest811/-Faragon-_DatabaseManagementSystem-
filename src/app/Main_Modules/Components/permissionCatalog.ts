@@ -228,6 +228,13 @@ export const MODULE_CATALOG: ModuleCatalogItem[] = [
     ],
   },
   {
+    moduleKey: "access_reviewer_queue",
+    displayName: "Reviewer Queue",
+    path: "/Main_Modules/Requests/Queue/",
+    group: "system",
+    columns: [],
+  },
+  {
     moduleKey: "audit",
     displayName: "Audit",
     path: "/Main_Modules/Audit/",

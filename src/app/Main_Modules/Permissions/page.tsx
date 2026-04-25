@@ -381,6 +381,20 @@ function PermissionsPageContent() {
 						{ onConflict: "admin_id,module_key" }
 					);
 				if (insErr) throw insErr;
+
+				const moduleColumns = visibleColumnsForModule(key);
+				if (moduleColumns.length > 0) {
+					const columnRows = moduleColumns.map((columnKey) => ({
+						admin_id: selectedAdminId,
+						module_key: key,
+						column_key: columnKey,
+						can_read: true,
+					}));
+					const { error: columnErr } = await supabase
+						.from("admin_column_access_overrides")
+						.upsert(columnRows, { onConflict: "admin_id,module_key,column_key" });
+					if (columnErr) throw columnErr;
+				}
 			}
 
 			setSuccess("Individual page access updated.");
@@ -396,6 +410,28 @@ function PermissionsPageContent() {
 			setSavingIndividualKey("");
 		}
 	}
+
+	useEffect(() => {
+		const channel = supabase
+			.channel("realtime:rbac-permission-sync")
+			.on("postgres_changes", { event: "*", schema: "public", table: "role_module_access" }, () => {
+				if (selectedAdmin) void loadSelectedAdminAccess(selectedAdmin);
+			})
+			.on("postgres_changes", { event: "*", schema: "public", table: "role_column_access" }, () => {
+				if (selectedAdmin) void loadSelectedAdminAccess(selectedAdmin);
+			})
+			.on("postgres_changes", { event: "*", schema: "public", table: "admin_module_access_overrides" }, () => {
+				if (selectedAdmin) void loadSelectedAdminAccess(selectedAdmin);
+			})
+			.on("postgres_changes", { event: "*", schema: "public", table: "admin_column_access_overrides" }, () => {
+				if (selectedAdmin) void loadSelectedAdminAccess(selectedAdmin);
+			})
+			.subscribe();
+
+		return () => {
+			supabase.removeChannel(channel);
+		};
+	}, [loadSelectedAdminAccess, selectedAdmin]);
 
 	async function toggleAdminEdit(moduleKey: string) {
 		setError("");
@@ -729,15 +765,14 @@ function PermissionsPageContent() {
 										const deleteBusy =
 											savingIndividualKey === `admin-delete:${selectedAdminId}:${m.module_key}`;
 
-										const overrideCols = adminColumnAccess[m.module_key] ?? new Set<string>();
-										const roleCols = roleColumnAccess[m.module_key] ?? new Set<string>();
-										const effectiveRestricted = roleCols.size > 0 || overrideCols.size > 0;
-										const effectiveVisibleCols = Array.from(
-											new Set([...Array.from(roleCols), ...Array.from(overrideCols)])
-										)
+												const overrideCols = adminColumnAccess[m.module_key] ?? new Set<string>();
+												const roleCols = roleColumnAccess[m.module_key] ?? new Set<string>();
+												const explicitCols = new Set([...Array.from(roleCols), ...Array.from(overrideCols)]);
+												const moduleHasExplicitColumns = explicitCols.size > 0;
+												const effectiveVisibleCols = Array.from(explicitCols)
 											.filter((col) => !shouldHidePermissionColumn(col))
 											.map((col) => formatPermissionColumnLabel(col));
-										const effectiveCols = effectiveRestricted
+												const effectiveCols = moduleHasExplicitColumns
 											? effectiveVisibleCols.length
 												? effectiveVisibleCols.sort().join(", ")
 												: "Internal columns only"
@@ -826,8 +861,10 @@ function PermissionsPageContent() {
 															savingIndividualKey === `admin-column:${selectedAdminId}:${m.module_key}:${col}`;
 														const roleColOn = roleCols.has(col);
 														const overrideColOn = overrideCols.has(col);
-														const colOn = roleColOn || overrideColOn;
-														const colLockedByRole = roleColOn && !overrideColOn;
+														const colInheritedByRole = roleColOn && !overrideColOn;
+														const colOn = effectiveModuleOn && (!moduleHasExplicitColumns || roleColOn || overrideColOn);
+														const colLockedByRole =
+															colInheritedByRole || (roleModuleOn && !overrideModuleOn && !moduleHasExplicitColumns);
 														return (
 															<label
 																key={`col-${m.module_key}-${col}`}

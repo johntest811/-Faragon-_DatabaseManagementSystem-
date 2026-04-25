@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../../Client/SupabaseClients";
-import { useAuthRole } from "../../../Client/useRbac";
+import { useAuthRole, useMyModuleAccess } from "../../../Client/useRbac";
 import { AccessTabs } from "../../Components/AccessTabs";
 import LoadingCircle from "../../../Components/LoadingCircle";
 import { useToast } from "../../../Components/ToastProvider";
@@ -173,7 +173,8 @@ function reviewerDisplayName(row: AccessRequestRow) {
 
 export default function RequestsQueuePage() {
   const router = useRouter();
-  const { role } = useAuthRole();
+  const { role, loading: loadingRole } = useAuthRole();
+  const { canAccess: hasQueueAccess, loading: loadingQueueAccess } = useMyModuleAccess("access_reviewer_queue");
   const toast = useToast();
 
   const [error, setError] = useState<string>("");
@@ -202,7 +203,9 @@ export default function RequestsQueuePage() {
   const legacySession = useMemo(() => readLegacyAdminSession(), []);
   const legacyRole = normalizeRoleNameLoose(legacySession?.role);
   const reviewerAdminId = String(legacySession?.id ?? "").trim();
-  const canReviewRequests = role === "superadmin" || legacyRole === "superadmin";
+  const canReviewByRole = role === "superadmin" || legacyRole === "superadmin";
+  const canReviewRequests = canReviewByRole || hasQueueAccess;
+  const accessLoading = loadingRole || (!canReviewByRole && loadingQueueAccess);
 
   const applicantLabelById = useMemo(() => {
     const map = new Map<string, string>();
@@ -276,11 +279,19 @@ export default function RequestsQueuePage() {
     };
   }, [canReviewRequests, loadPendingRequests]);
 
+  if (accessLoading) {
+    return (
+      <section className="glass-panel rounded-2xl shadow-sm p-5 animate-slide-up border-none">
+        <LoadingCircle label="Checking reviewer queue access…" />
+      </section>
+    );
+  }
+
   async function resolveRequest(req: AccessRequestRow, nextStatus: "APPROVED" | "REJECTED") {
     setError("");
     setSuccess("");
     if (!canReviewRequests) {
-      setError("Only superadmin reviewers can review requests.");
+      setError("Only superadmin reviewers or queue-approved accounts can review requests.");
       return;
     }
 
@@ -567,7 +578,7 @@ export default function RequestsQueuePage() {
           <div>
             <div className="text-lg font-semibold text-black">Reviewer Queue</div>
             <div className="text-sm text-black">
-              Only superadmin accounts can review pending requests.
+              Only superadmin accounts or accounts with Reviewer Queue access can review pending requests.
             </div>
           </div>
           <button onClick={() => router.push("/Main_Modules/AdminAccounts/")} className="animated-btn px-4 py-2 rounded-xl bg-white border hover:bg-white">

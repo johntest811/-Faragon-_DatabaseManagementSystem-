@@ -230,63 +230,39 @@ export function useMyModules() {
       if (legacySession) {
         try {
           const legacyRole = normalizeRoleName(legacySession.role);
-          if (!legacyRole) {
-            if (!cancelled) {
-              setModules([]);
-              setLoading(false);
-            }
-            return;
-          }
+          const roleRowPromise = legacyRole
+            ? supabase
+                .from("app_roles")
+                .select("role_id")
+                .eq("role_name", legacyRole)
+                .single()
+            : Promise.resolve({ data: null, error: null } as { data: { role_id?: string } | null; error: null });
 
-          const { data: roleRow, error: roleErr } = await supabase
-            .from("app_roles")
-            .select("role_id")
-            .eq("role_name", legacyRole)
-            .single();
+          const { data: roleRow, error: roleErr } = await roleRowPromise;
 
-          if (roleErr || !roleRow?.role_id) {
-            if (!cancelled) {
-              setModules([]);
-              setLoading(false);
-            }
-            return;
-          }
+          const [roleModulesRes, adminOverridesRes] = await Promise.all([
+            roleRow?.role_id
+              ? supabase.from("role_module_access").select("module_key, can_read").eq("role_id", roleRow.role_id)
+              : Promise.resolve({ data: [] as Array<{ module_key: string; can_read: boolean | null }>, error: null }),
+            supabase
+              .from("admin_module_access_overrides")
+              .select("module_key, can_read")
+              .eq("admin_id", legacySession.id),
+          ]);
 
-          const { data: accessRows, error: accessErr } = await supabase
-            .from("role_module_access")
-            .select("module_key, can_read")
-            .eq("role_id", roleRow.role_id);
-          if (accessErr) throw accessErr;
+          if (roleErr && legacyRole) throw roleErr;
+          if (roleModulesRes.error) throw roleModulesRes.error;
+          if (adminOverridesRes.error) throw adminOverridesRes.error;
 
-          const keys = ((accessRows as Array<{ module_key: string; can_read: boolean }> | null) ?? [])
+          const roleKeys = ((roleModulesRes.data as Array<{ module_key: string; can_read: boolean }> | null) ?? [])
             .filter((r) => r && r.can_read)
             .map((r) => r.module_key);
 
-          if (!keys.length) {
-            if (!cancelled) {
-              setModules([]);
-              setLoading(false);
-            }
-            return;
-          }
-
-          const { data: modRows, error: modErr } = await supabase
-            .from("modules")
-            .select("module_key, display_name")
-            .in("module_key", keys)
-            .order("module_key");
-          if (modErr) throw modErr;
-
-          const { data: adminOverrideRows } = await supabase
-            .from("admin_module_access_overrides")
-            .select("module_key, can_read")
-            .eq("admin_id", legacySession.id);
-
-          const overrideKeys = (((adminOverrideRows as Array<{ module_key: string; can_read: boolean }> | null) ?? []) || [])
+          const overrideKeys = ((adminOverridesRes.data as Array<{ module_key: string; can_read: boolean }> | null) ?? [])
             .filter((row) => row && row.can_read)
             .map((row) => row.module_key);
 
-          const allKeys = Array.from(new Set([...(keys || []), ...overrideKeys]));
+          const allKeys = Array.from(new Set([...roleKeys, ...overrideKeys]));
           if (!allKeys.length) {
             if (!cancelled) {
               setModules([]);
@@ -303,7 +279,7 @@ export function useMyModules() {
           if (mergedErr) throw mergedErr;
 
           if (!cancelled) {
-            setModules(((mergedRows as ModuleRow[]) ?? (modRows as ModuleRow[]) ?? []) || []);
+            setModules(((mergedRows as ModuleRow[]) ?? []) || []);
             setLoading(false);
           }
         } catch (e: unknown) {
@@ -437,27 +413,26 @@ export function useMyModuleDeleteAccess(moduleKey: string): ModuleDeleteAccessRe
             return;
           }
 
-          const { data: roleRow, error: roleErr } = await supabase
-            .from("app_roles")
-            .select("role_id")
-            .eq("role_name", roleName ?? "")
-            .single();
+          const roleRowPromise = roleName
+            ? supabase
+                .from("app_roles")
+                .select("role_id")
+                .eq("role_name", roleName)
+                .single()
+            : Promise.resolve({ data: null, error: null } as { data: { role_id?: string } | null; error: null });
 
-          if (roleErr || !roleRow?.role_id) {
-            if (!cancelled) {
-              setCanDelete(false);
-              setLoading(false);
-            }
-            return;
-          }
+          const { data: roleRow, error: roleErr } = await roleRowPromise;
 
           const [roleModulesRes, adminModulesRes] = await Promise.all([
-            supabase.from("role_module_access").select("module_key, can_write").eq("role_id", roleRow.role_id),
+            roleRow?.role_id
+              ? supabase.from("role_module_access").select("module_key, can_write").eq("role_id", roleRow.role_id)
+              : Promise.resolve({ data: [] as Array<{ module_key: string; can_write: boolean | null }>, error: null }),
             supabase
               .from("admin_module_access_overrides")
               .select("module_key, can_write")
               .eq("admin_id", legacySession.id),
           ]);
+          if (roleErr && roleName) throw roleErr;
           if (roleModulesRes.error) throw roleModulesRes.error;
           if (adminModulesRes.error) throw adminModulesRes.error;
 
@@ -495,24 +470,23 @@ export function useMyModuleDeleteAccess(moduleKey: string): ModuleDeleteAccessRe
           return;
         }
 
-        const { data: roleRow, error: roleErr } = await supabase
-          .from("app_roles")
-          .select("role_id")
-          .eq("role_name", roleName ?? "")
-          .single();
+          const roleRowPromise = roleName
+            ? supabase
+                .from("app_roles")
+                .select("role_id")
+                .eq("role_name", roleName)
+                .single()
+            : Promise.resolve({ data: null, error: null } as { data: { role_id?: string } | null; error: null });
 
-        if (roleErr || !roleRow?.role_id) {
-          if (!cancelled) {
-            setCanDelete(false);
-            setLoading(false);
-          }
-          return;
-        }
+          const { data: roleRow, error: roleErr } = await roleRowPromise;
 
-        const [roleModulesRes, userModulesRes] = await Promise.all([
-          supabase.from("role_module_access").select("module_key, can_write").eq("role_id", roleRow.role_id),
-          supabase.from("user_module_access_overrides").select("module_key, can_write").eq("user_id", session.user.id),
-        ]);
+          const [roleModulesRes, userModulesRes] = await Promise.all([
+            roleRow?.role_id
+              ? supabase.from("role_module_access").select("module_key, can_write").eq("role_id", roleRow.role_id)
+              : Promise.resolve({ data: [] as Array<{ module_key: string; can_write: boolean | null }>, error: null }),
+            supabase.from("user_module_access_overrides").select("module_key, can_write").eq("user_id", session.user.id),
+          ]);
+          if (roleErr && roleName) throw roleErr;
         if (roleModulesRes.error) throw roleModulesRes.error;
         if (userModulesRes.error) throw userModulesRes.error;
 
@@ -598,27 +572,26 @@ export function useMyModuleEditAccess(moduleKey: string): ModuleEditAccessResult
             return;
           }
 
-          const { data: roleRow, error: roleErr } = await supabase
-            .from("app_roles")
-            .select("role_id")
-            .eq("role_name", roleName ?? "")
-            .single();
+          const roleRowPromise = roleName
+            ? supabase
+                .from("app_roles")
+                .select("role_id")
+                .eq("role_name", roleName)
+                .single()
+            : Promise.resolve({ data: null, error: null } as { data: { role_id?: string } | null; error: null });
 
-          if (roleErr || !roleRow?.role_id) {
-            if (!cancelled) {
-              setCanEdit(false);
-              setLoading(false);
-            }
-            return;
-          }
+          const { data: roleRow, error: roleErr } = await roleRowPromise;
 
           const [roleModulesRes, adminModulesRes] = await Promise.all([
-            supabase.from("role_module_access").select("module_key, can_edit").eq("role_id", roleRow.role_id),
+            roleRow?.role_id
+              ? supabase.from("role_module_access").select("module_key, can_edit").eq("role_id", roleRow.role_id)
+              : Promise.resolve({ data: [] as Array<{ module_key: string; can_edit: boolean | null }>, error: null }),
             supabase
               .from("admin_module_access_overrides")
               .select("module_key, can_edit")
               .eq("admin_id", legacySession.id),
           ]);
+          if (roleErr && roleName) throw roleErr;
           if (roleModulesRes.error) throw roleModulesRes.error;
           if (adminModulesRes.error) throw adminModulesRes.error;
 

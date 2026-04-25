@@ -436,6 +436,7 @@ const ALL_MENU = [
   { key: "archive", name: "Archive", href: "/Main_Modules/Archive/", icon: Archive },
   { key: "logistics", name: "Logistics", href: "/Main_Modules/Logistics/", icon: Truck },
   { key: "requests", name: "Requests", href: "/Main_Modules/Requests/", icon: ClipboardCheck },
+  { key: "access_reviewer_queue", name: "Reviewer Queue", href: "/Main_Modules/Requests/Queue/", icon: ClipboardCheck },
   { key: "access", name: "Admin Accounts", href: "/Main_Modules/AdminAccounts/", icon: Shield },
   { key: "audit", name: "Audit", href: "/Main_Modules/Audit/", icon: ClipboardList },
   { key: "settings", name: "Settings", href: "/Main_Modules/Settings/", icon: Settings },
@@ -454,6 +455,7 @@ type ModuleKey =
   | "paraphernalia"
   | "reports"
   | "requests"
+  | "access_reviewer_queue"
   | "audit"
   | "settings"
   | "access"
@@ -475,6 +477,9 @@ function accessRequirementForPath(pathname: string): AccessRequirement | null {
     p.startsWith("/Main_Modules/Permissions/") ||
     p.startsWith("/Main_Modules/Requests/Queue/")
   ) {
+    if (p.startsWith("/Main_Modules/Requests/Queue/")) {
+      return { kind: "module", moduleKey: "access_reviewer_queue" };
+    }
     return { kind: "superadmin" };
   }
 
@@ -1202,6 +1207,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
         "paraphernalia",
         "reports",
         "requests",
+        "access_reviewer_queue",
         "audit",
         "settings",
         "access",
@@ -1294,7 +1300,6 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
     () =>
       [
         { key: "access_accounts", name: "Admin Accounts", href: "/Main_Modules/AdminAccounts/", icon: Shield },
-        { key: "access_reviewer_queue", name: "Reviewer Queue", href: "/Main_Modules/Requests/Queue/", icon: ClipboardCheck },
       ] as const,
     []
   );
