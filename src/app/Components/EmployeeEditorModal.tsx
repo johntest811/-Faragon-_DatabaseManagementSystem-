@@ -169,6 +169,20 @@ type EmploymentRecordRow = {
   leave_reason: string | null;
 };
 
+type OtherDocumentItem = {
+  document_id?: string;
+  label: string;
+  bucket: string;
+  path: string;
+};
+
+type OtherDocumentRow = {
+  document_id: string;
+  label: string | null;
+  bucket: string | null;
+  file_path: string | null;
+};
+
 type JobTitleRow = {
   title_id: string;
   title: string;
@@ -322,6 +336,40 @@ function toNullableText(value: string) {
   return v.length ? v : null;
 }
 
+function collapseWhitespace(value: string | null | undefined) {
+  return String(value ?? "").trim().replace(/\s+/g, " ");
+}
+
+function normalizeDocumentBucket(value: string | null | undefined) {
+  return value === "applicants" || value === "licensure" || value === "certificates"
+    ? value
+    : "certificates";
+}
+
+function inferDocumentLabelFromFileName(fileName: string | null | undefined) {
+  const trimmed = String(fileName ?? "").trim();
+  if (!trimmed) return "";
+  const withoutExtension = trimmed.replace(/\.[^/.]+$/, "");
+  return collapseWhitespace(withoutExtension.replace(/[_-]+/g, " "));
+}
+
+function inferDocumentLabelFromPath(path: string | null | undefined) {
+  const storagePath = String(path ?? "").trim();
+  if (!storagePath) return "";
+  const fileName = storagePath.split("/").filter(Boolean).pop() ?? "";
+  if (!fileName) return "";
+  const withoutGeneratedPrefix = fileName.replace(/^[A-Za-z0-9_]+-\d{10,}-/, "");
+  return inferDocumentLabelFromFileName(withoutGeneratedPrefix);
+}
+
+function resolveOtherDocumentLabel(label: string | null | undefined, path: string | null | undefined, fallbackIndex?: number) {
+  const manualLabel = collapseWhitespace(label);
+  if (manualLabel) return manualLabel;
+  const derivedLabel = inferDocumentLabelFromPath(path);
+  if (derivedLabel) return derivedLabel;
+  return fallbackIndex != null ? `Document ${fallbackIndex + 1}` : "Document";
+}
+
 function toNullableInt(value: string) {
   const v = value.trim();
   if (!v) return null;
@@ -343,6 +391,11 @@ function getLegacyAdminId(): string | null {
 
 function sectionButton(active: boolean) {
   return `px-3 py-2 rounded-xl border text-sm ${active ? "bg-[#FFDA03] text-black border-[#FFDA03]" : "bg-white text-black"}`;
+}
+
+function isMissingRelationError(error: unknown, relationName: string) {
+  const message = String((error as { message?: unknown })?.message ?? error ?? "").toLowerCase();
+  return message.includes(relationName.toLowerCase()) && message.includes("does not exist");
 }
 
 export default function EmployeeEditorModal({
@@ -380,6 +433,7 @@ export default function EmployeeEditorModal({
   const [lic, setLic] = useState<LicensureDraft>(emptyLicensureDraft);
   const [bio, setBio] = useState<BiodataDraft>(emptyBiodataDraft);
   const [jobs, setJobs] = useState<EmploymentItem[]>([]);
+  const [otherDocs, setOtherDocs] = useState<OtherDocumentItem[]>([]);
   const [jobTitleOptions, setJobTitleOptions] = useState<JobTitleRow[]>([]);
   const [newJobTitle, setNewJobTitle] = useState("");
   const [jobTitlesSource, setJobTitlesSource] = useState<"table" | "applicants">("table");
@@ -535,6 +589,7 @@ export default function EmployeeEditorModal({
       setLic(emptyLicensureDraft());
       setBio(emptyBiodataDraft());
       setJobs([]);
+      setOtherDocs([]);
       return;
     }
 
@@ -548,42 +603,44 @@ export default function EmployeeEditorModal({
       setError("");
 
       try {
-        const aRes = await supabase
-          .from("applicants")
-          .select(
-            "applicant_id, custom_id, first_name, middle_name, last_name, gender, birth_date, age, client_contact_num, client_email, present_address, province_address, emergency_contact_person, emergency_contact_num, education_attainment, date_hired_fsai, client_position, detachment, status, date_resigned, last_duty, security_licensed_num, sss_number, pagibig_number, philhealth_number, tin_number, profile_image_path, sss_certain_path, tin_id_path, pag_ibig_id_path, philhealth_id_path, security_license_path"
-          )
-          .eq("applicant_id", idToLoad)
-          .maybeSingle();
+        const [aRes, cRes, lRes, bRes, odRes, hRes] = await Promise.all([
+          supabase
+            .from("applicants")
+            .select(
+              "applicant_id, custom_id, first_name, middle_name, last_name, gender, birth_date, age, client_contact_num, client_email, present_address, province_address, emergency_contact_person, emergency_contact_num, education_attainment, date_hired_fsai, client_position, detachment, status, date_resigned, last_duty, security_licensed_num, sss_number, pagibig_number, philhealth_number, tin_number, profile_image_path, sss_certain_path, tin_id_path, pag_ibig_id_path, philhealth_id_path, security_license_path"
+            )
+            .eq("applicant_id", idToLoad)
+            .maybeSingle(),
+          supabase
+            .from("certificates")
+            .select(
+              "course_title_degree, training_path, seminar_path, gun_safety_certificate_path, highschool_diploma_path, college_diploma_path, vocational_path, training_when_where, seminar_when_where, highschool_when_where, college_when_where, vocational_when_where, course_when_where"
+            )
+            .eq("applicant_id", idToLoad)
+            .maybeSingle(),
+          supabase
+            .from("licensure")
+            .select("driver_license_number, driver_expiration, security_license_number, security_expiration")
+            .eq("applicant_id", idToLoad)
+            .maybeSingle(),
+          supabase
+            .from("biodata")
+            .select("applicant_form_path")
+            .eq("applicant_id", idToLoad)
+            .maybeSingle(),
+          supabase
+            .from("applicant_other_documents")
+            .select("document_id, label, bucket, file_path")
+            .eq("applicant_id", idToLoad)
+            .order("created_at", { ascending: true }),
+          supabase
+            .from("employment_history")
+            .select("employment_id, company_name, position, telephone, inclusive_dates, leave_reason")
+            .eq("applicant_id", idToLoad)
+            .order("created_at", { ascending: true }),
+        ]);
 
         if (aRes.error) throw aRes.error;
-
-        const cRes = await supabase
-          .from("certificates")
-          .select(
-            "course_title_degree, training_path, seminar_path, gun_safety_certificate_path, highschool_diploma_path, college_diploma_path, vocational_path, training_when_where, seminar_when_where, highschool_when_where, college_when_where, vocational_when_where, course_when_where"
-          )
-          .eq("applicant_id", idToLoad)
-          .maybeSingle();
-
-        const lRes = await supabase
-          .from("licensure")
-          .select("driver_license_number, driver_expiration, security_license_number, security_expiration")
-          .eq("applicant_id", idToLoad)
-          .maybeSingle();
-
-        const bRes = await supabase
-          .from("biodata")
-          .select("applicant_form_path")
-          .eq("applicant_id", idToLoad)
-          .maybeSingle();
-
-        // Employment: prefer employment_history (multi-row); fall back to employment_record.
-        const hRes = await supabase
-          .from("employment_history")
-          .select("employment_id, company_name, position, telephone, inclusive_dates, leave_reason")
-          .eq("applicant_id", idToLoad)
-          .order("created_at", { ascending: true });
 
         let employmentItems: EmploymentItem[] = [];
         if (!hRes.error) {
@@ -687,6 +744,20 @@ export default function EmployeeEditorModal({
         setBio({ applicant_form_path: b.applicant_form_path ?? "" });
 
         setJobs(employmentItems);
+        if (odRes.error) {
+          if (!isMissingRelationError(odRes.error, "applicant_other_documents")) {
+            console.warn(odRes.error);
+          }
+          setOtherDocs([]);
+        } else {
+          const docs = ((odRes.data ?? []) as unknown as OtherDocumentRow[]).map((row, index) => ({
+            document_id: row.document_id,
+            label: resolveOtherDocumentLabel(row.label, row.file_path, index),
+            bucket: normalizeDocumentBucket(row.bucket),
+            path: row.file_path ?? "",
+          }));
+          setOtherDocs(docs);
+        }
       } catch (e: unknown) {
         if (!cancelled) setError(e instanceof Error ? e.message : "Failed to load employee");
       } finally {
@@ -766,7 +837,7 @@ export default function EmployeeEditorModal({
   async function onPickFile(
     bucket: string,
     prefix: string,
-    setter: (path: string) => void,
+    setter: (path: string, file?: File) => void,
     file?: File | null
   ) {
     if (!file) return;
@@ -778,7 +849,7 @@ export default function EmployeeEditorModal({
     setError("");
     try {
       const path = await uploadToBucket(bucket, id, file, prefix);
-      setter(path);
+      setter(path, file);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Upload failed");
     }
@@ -906,6 +977,20 @@ export default function EmployeeEditorModal({
           await supabase.from("employment_history").insert(cleanJobs);
         }
 
+        const cleanOtherDocs = otherDocs
+          .map((doc, index) => ({
+            applicant_id: newId,
+            label: resolveOtherDocumentLabel(doc.label, doc.path, index),
+            bucket: normalizeDocumentBucket(doc.bucket),
+            file_path: toNullableText(doc.path),
+          }))
+          .filter((doc) => doc.file_path);
+
+        if (cleanOtherDocs.length) {
+          const odIns = await supabase.from("applicant_other_documents").insert(cleanOtherDocs);
+          if (odIns.error && !isMissingRelationError(odIns.error, "applicant_other_documents")) throw odIns.error;
+        }
+
         onSaved?.(newId, nextStatus);
         onClose();
 
@@ -1025,6 +1110,25 @@ export default function EmployeeEditorModal({
           const ins = await supabase.from("employment_history").insert(cleanJobs);
           if (ins.error) throw ins.error;
         }
+      }
+
+      const odDel = await supabase.from("applicant_other_documents").delete().eq("applicant_id", effectiveId);
+      if (odDel.error && !isMissingRelationError(odDel.error, "applicant_other_documents")) {
+        throw odDel.error;
+      }
+
+      const cleanOtherDocs = otherDocs
+        .map((doc, index) => ({
+          applicant_id: effectiveId,
+          label: resolveOtherDocumentLabel(doc.label, doc.path, index),
+          bucket: normalizeDocumentBucket(doc.bucket),
+          file_path: toNullableText(doc.path),
+        }))
+        .filter((doc) => doc.file_path);
+
+      if (cleanOtherDocs.length) {
+        const odIns = await supabase.from("applicant_other_documents").insert(cleanOtherDocs);
+        if (odIns.error && !isMissingRelationError(odIns.error, "applicant_other_documents")) throw odIns.error;
       }
 
       onSaved?.(effectiveId, nextStatus);
@@ -1759,6 +1863,114 @@ export default function EmployeeEditorModal({
                     onPick={(file) => onPickFile(BUCKETS.certificates, "vocational", (p) => setCerts((d) => ({ ...d, vocational_path: p })), file)}
                   />
                 </div>
+              </div>
+
+              <div className="rounded-2xl border p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-semibold text-black">Other Documents</div>
+                    <div className="text-xs text-gray-500">Add as many additional documents as needed. New uploads default to the Certificates bucket, and labels auto-fill from the filename.</div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setOtherDocs((prev) => [...prev, { label: "", bucket: "certificates", path: "" }])}
+                    className="px-3 py-2 rounded-xl bg-[#FFDA03] text-black text-sm font-semibold"
+                  >
+                    + Add Document
+                  </button>
+                </div>
+
+                {otherDocs.length === 0 ? (
+                  <div className="mt-3 text-sm text-gray-500">No other documents yet.</div>
+                ) : (
+                  <div className="mt-3 space-y-3">
+                    {otherDocs.map((doc, idx) => {
+                      const preview = publicUrl(doc.bucket, doc.path || null);
+                      return (
+                        <div key={doc.document_id ?? `other-doc-${idx}`} className="rounded-xl border p-3">
+                          <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-3 items-end">
+                            <label className="text-sm text-black">
+                              <div className="text-gray-600 mb-1">Document Label</div>
+                              <input
+                                value={doc.label}
+                                onChange={(e) =>
+                                  setOtherDocs((prev) =>
+                                    prev.map((item, i) => (i === idx ? { ...item, label: e.target.value } : item))
+                                  )
+                                }
+                                placeholder="e.g. NBI Clearance"
+                                className="w-full border rounded-xl px-3 py-2"
+                              />
+                            </label>
+                            <button
+                              type="button"
+                              onClick={() => setOtherDocs((prev) => prev.filter((_, i) => i !== idx))}
+                              className="px-3 py-2 rounded-xl border bg-white text-black text-sm"
+                            >
+                              Remove
+                            </button>
+                          </div>
+
+                          <div className="mt-2 text-xs text-gray-500 break-all">{doc.path || "Not uploaded"}</div>
+                          <div className="mt-3 flex items-center gap-2">
+                            <div className="text-xs font-medium text-gray-500">
+                              Bucket: {doc.bucket === "applicants" ? "Applicants" : doc.bucket === "licensure" ? "Licensure" : "Certificates"}
+                            </div>
+                            {preview ? (
+                              <a
+                                href={preview}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="px-3 py-2 rounded-xl border bg-white text-sm text-blue-600"
+                              >
+                                View
+                              </a>
+                            ) : null}
+                            <label className="px-3 py-2 rounded-xl bg-[#FFDA03] text-black text-sm font-semibold cursor-pointer">
+                              Upload
+                              <input
+                                type="file"
+                                className="hidden"
+                                accept="image/*,application/pdf"
+                                onChange={(e) =>
+                                  onPickFile(
+                                    doc.bucket || "certificates",
+                                    `other_document_${idx + 1}`,
+                                    (path, uploadedFile) =>
+                                      setOtherDocs((prev) =>
+                                        prev.map((item, i) =>
+                                          i === idx
+                                            ? {
+                                                ...item,
+                                                path,
+                                                label:
+                                                  collapseWhitespace(item.label) ||
+                                                  inferDocumentLabelFromFileName(uploadedFile?.name) ||
+                                                  resolveOtherDocumentLabel(item.label, path, idx),
+                                              }
+                                            : item
+                                        )
+                                      ),
+                                    e.target.files?.[0]
+                                  )
+                                }
+                              />
+                            </label>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setOtherDocs((prev) => prev.map((item, i) => (i === idx ? { ...item, path: "" } : item)))
+                              }
+                              className="px-3 py-2 rounded-xl border bg-white text-black text-sm"
+                            >
+                              Clear
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             </div>
           )}

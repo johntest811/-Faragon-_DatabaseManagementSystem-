@@ -15,6 +15,15 @@ const BRAND_SOURCES = {
 	iso: "/ISO.png",
 } as const;
 
+const BRAND_LAYOUT = {
+	logo: { width: 96, height: 44 },
+	title: { width: 420, height: 52 },
+	iso: { width: 96, height: 44 },
+	workbook: { row1: 56, row2: 30, row3: 22, row4: 8, row5: 24 },
+	pdfTop: 16,
+	pdfMargin: 36,
+} as const;
+
 let brandImagePromise: Promise<Record<keyof typeof BRAND_SOURCES, BrandImage | null>> | null = null;
 
 function safeText(value: unknown) {
@@ -133,26 +142,26 @@ export async function buildBrandedWorkbookBuffer(sheets: BrandedWorkbookSheet[])
 		const columnCount = Math.max(normalizedHeaders.length, 3);
 
 		worksheet.views = [{ state: "frozen", ySplit: 5 }];
-		worksheet.getRow(1).height = 44;
-		worksheet.getRow(2).height = 28;
-		worksheet.getRow(3).height = sheetSpec.subtitle ? 22 : 10;
-		worksheet.getRow(4).height = 8;
+		worksheet.getRow(1).height = BRAND_LAYOUT.workbook.row1;
+		worksheet.getRow(2).height = BRAND_LAYOUT.workbook.row2;
+		worksheet.getRow(3).height = sheetSpec.subtitle ? BRAND_LAYOUT.workbook.row3 : 10;
+		worksheet.getRow(4).height = BRAND_LAYOUT.workbook.row4;
 		worksheet.getRow(5).height = 24;
 
 		if (logoId != null) {
-			worksheet.addImage(logoId, { tl: { col: 0, row: 0.1 }, ext: { width: 76, height: 34 } });
+			const fit = fitWithin(images.logo as BrandImage, BRAND_LAYOUT.logo.width, BRAND_LAYOUT.logo.height);
+			worksheet.addImage(logoId, { tl: { col: 0, row: 0.1 }, ext: { width: fit.width, height: fit.height } });
 		}
 		if (titleId != null) {
+			const fit = fitWithin(images.title as BrandImage, BRAND_LAYOUT.title.width, BRAND_LAYOUT.title.height);
 			worksheet.addImage(titleId, {
-				tl: { col: Math.max(1, Math.floor(columnCount / 2) - 2), row: 0.05 },
-				ext: { width: 320, height: 64 },
+				tl: { col: Math.max(1, Math.floor(columnCount / 2) - Math.max(1, Math.ceil(fit.width / 80))), row: 0.05 },
+				ext: { width: fit.width, height: fit.height },
 			});
 		}
 		if (isoId != null) {
-			worksheet.addImage(isoId, {
-				tl: { col: Math.max(0, columnCount - 1), row: 0.1 },
-				ext: { width: 76, height: 34 },
-			});
+			const fit = fitWithin(images.iso as BrandImage, BRAND_LAYOUT.iso.width, BRAND_LAYOUT.iso.height);
+			worksheet.addImage(isoId, { tl: { col: Math.max(0, columnCount - 1), row: 0.1 }, ext: { width: fit.width, height: fit.height } });
 		}
 
 		writeCenteredRow(worksheet, 2, columnCount, sheetSpec.title, { size: 16, bold: true });
@@ -226,26 +235,26 @@ export function buildBrandedAoa<T extends Record<string, unknown>>(rows: T[], ti
 export async function addBrandedPdfHeader(doc: jsPDF, title: string, subtitle?: string) {
 	const images = await loadBrandImages();
 	const pageWidth = doc.internal.pageSize.getWidth();
-	const margin = 36;
-	const top = 18;
-	const fallbackHeight = 40;
+	const margin = BRAND_LAYOUT.pdfMargin;
+	const top = BRAND_LAYOUT.pdfTop;
+	const fallbackHeight = 44;
 	let maxHeight = fallbackHeight;
 
 	if (images.logo) {
-		const fit = fitWithin(images.logo, 76, 34);
+		const fit = fitWithin(images.logo, BRAND_LAYOUT.logo.width, BRAND_LAYOUT.logo.height);
 		doc.addImage(images.logo.dataUrl, "PNG", margin, top, fit.width, fit.height);
 		maxHeight = Math.max(maxHeight, fit.height);
 	}
 
 	if (images.title) {
-		const fit = fitWithin(images.title, Math.min(320, pageWidth - margin * 2), 56);
+		const fit = fitWithin(images.title, Math.min(BRAND_LAYOUT.title.width, pageWidth - margin * 2), BRAND_LAYOUT.title.height);
 		const x = (pageWidth - fit.width) / 2;
 		doc.addImage(images.title.dataUrl, "PNG", x, top, fit.width, fit.height);
 		maxHeight = Math.max(maxHeight, fit.height);
 	}
 
 	if (images.iso) {
-		const fit = fitWithin(images.iso, 76, 34);
+		const fit = fitWithin(images.iso, BRAND_LAYOUT.iso.width, BRAND_LAYOUT.iso.height);
 		doc.addImage(images.iso.dataUrl, "PNG", pageWidth - margin - fit.width, top, fit.width, fit.height);
 		maxHeight = Math.max(maxHeight, fit.height);
 	}

@@ -119,6 +119,17 @@ CREATE TABLE public.app_roles (
   role_name text NOT NULL UNIQUE,
   CONSTRAINT app_roles_pkey PRIMARY KEY (role_id)
 );
+CREATE TABLE public.applicant_other_documents (
+  document_id uuid NOT NULL DEFAULT gen_random_uuid(),
+  applicant_id uuid NOT NULL,
+  label text NOT NULL DEFAULT ''::text,
+  bucket text NOT NULL DEFAULT 'applicants'::text CHECK (bucket = ANY (ARRAY['applicants'::text, 'certificates'::text, 'licensure'::text])),
+  file_path text NOT NULL DEFAULT ''::text,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT applicant_other_documents_pkey PRIMARY KEY (document_id),
+  CONSTRAINT applicant_other_documents_applicant_id_fkey FOREIGN KEY (applicant_id) REFERENCES public.applicants(applicant_id)
+);
 CREATE TABLE public.applicants (
   applicant_id uuid NOT NULL DEFAULT gen_random_uuid(),
   created_at timestamp with time zone NOT NULL DEFAULT now(),
@@ -415,6 +426,8 @@ CREATE TABLE public.other_expiration_items (
   plate_number text,
   insurance_company text,
   policy_from_date date,
+  car_registration_from_date date,
+  car_registration_to_date date,
   CONSTRAINT other_expiration_items_pkey PRIMARY KEY (id)
 );
 CREATE TABLE public.other_expiration_notification_log (

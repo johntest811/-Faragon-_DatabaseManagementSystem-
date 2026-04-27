@@ -15,6 +15,7 @@ const APP_REFRESH_TABLES = [
   "role_column_access",
   "modules",
   "applicants",
+  "applicant_other_documents",
   "access_requests",
   "contracts",
   "contract_employees",

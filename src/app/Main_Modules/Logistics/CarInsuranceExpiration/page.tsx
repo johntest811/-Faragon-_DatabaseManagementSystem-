@@ -27,6 +27,8 @@ type CarInsuranceRow = {
   insurance_company: string | null;
   policy_from_date: string | null;
   expires_on: string;
+  car_registration_from_date: string | null;
+  car_registration_to_date: string | null;
   days_before_expiry: number | null;
   recipient_email: string | null;
   notes: string | null;
@@ -46,6 +48,8 @@ type CarInsuranceForm = {
   insuranceCompany: string;
   policyFromDate: string;
   policyToDate: string;
+  carRegistrationFromDate: string;
+  carRegistrationToDate: string;
   daysBeforeExpiry: string;
   remarks: string;
 };
@@ -61,8 +65,27 @@ type CarInsuranceImportRow = {
   insuranceCompany: string;
   policyFromDate: string;
   policyToDate: string;
+  carRegistrationFromDate: string;
+  carRegistrationToDate: string;
   daysBeforeExpiry: string;
   remarks: string;
+};
+
+type TableField = {
+  key:
+    | "recordNo"
+    | "patrol"
+    | "postDistributions"
+    | "make"
+    | "model"
+    | "color"
+    | "plateNumber"
+    | "insuranceCompany"
+    | "policyTerm"
+    | "carRegistrationDate"
+    | "daysBeforeExpiry"
+    | "remarks";
+  label: string;
 };
 
 type FormField = {
@@ -91,9 +114,26 @@ const IMPORT_TEMPLATE_SAMPLE: CarInsuranceImportRow = {
   insuranceCompany: "Faragon Insurance Co.",
   policyFromDate: "2026-01-01",
   policyToDate: "2026-12-31",
+  carRegistrationFromDate: "2026-01-05",
+  carRegistrationToDate: "2026-12-31",
   daysBeforeExpiry: "30",
   remarks: "Sample row for the import template",
 };
+
+const TABLE_FIELDS: TableField[] = [
+  { key: "recordNo", label: "No." },
+  { key: "patrol", label: "Patrol" },
+  { key: "postDistributions", label: "Post/s Distributions" },
+  { key: "make", label: "Make" },
+  { key: "model", label: "Model" },
+  { key: "color", label: "Color" },
+  { key: "plateNumber", label: "Plate Number" },
+  { key: "insuranceCompany", label: "Insurance Company" },
+  { key: "policyTerm", label: "Policy Term" },
+  { key: "carRegistrationDate", label: "Car Registration Date" },
+  { key: "daysBeforeExpiry", label: "Days Before Expiry" },
+  { key: "remarks", label: "Remarks" },
+];
 
 const FORM_FIELDS: FormField[] = [
   { key: "recordNo", label: "No.", columnKey: "record_no", type: "number", placeholder: "1", min: 1 },
@@ -104,8 +144,10 @@ const FORM_FIELDS: FormField[] = [
   { key: "color", label: "Color", columnKey: "color", type: "text", placeholder: "Vehicle color" },
   { key: "plateNumber", label: "Plate Number", columnKey: "plate_number", type: "text", placeholder: "ABC-1234" },
   { key: "insuranceCompany", label: "Insurance Company", columnKey: "insurance_company", type: "text", placeholder: "Insurance provider" },
-  { key: "policyFromDate", label: "Policy From Date", columnKey: "policy_from_date", type: "date" },
-  { key: "policyToDate", label: "Policy To Date Expiration", columnKey: "expires_on", type: "date" },
+  { key: "policyFromDate", label: "Policy Term (Date Registered)", columnKey: "policy_from_date", type: "date" },
+  { key: "policyToDate", label: "Policy Term (Expiration)", columnKey: "expires_on", type: "date" },
+  { key: "carRegistrationFromDate", label: "Car Registration Date (Date Register)", columnKey: "car_registration_from_date", type: "date" },
+  { key: "carRegistrationToDate", label: "Car Registration Date (Expiration)", columnKey: "car_registration_to_date", type: "date" },
   { key: "daysBeforeExpiry", label: "Days Before Expiry", columnKey: "days_before_expiry", type: "number", placeholder: "30", min: 1, max: 365 },
   {
     key: "remarks",
@@ -129,6 +171,8 @@ function emptyForm(recordNo = ""): CarInsuranceForm {
     insuranceCompany: "",
     policyFromDate: "",
     policyToDate: "",
+    carRegistrationFromDate: "",
+    carRegistrationToDate: "",
     daysBeforeExpiry: "30",
     remarks: "",
   };
@@ -181,6 +225,42 @@ function buildItemName(form: CarInsuranceForm) {
     [cleanText(form.make), cleanText(form.model)].filter(Boolean).join(" "),
   ].filter(Boolean);
   return parts.join(" • ") || "Car Insurance";
+}
+
+function getPolicyExpirationDays(row: CarInsuranceRow) {
+  return daysUntil(row.expires_on);
+}
+
+function getCarRegistrationExpirationDays(row: CarInsuranceRow) {
+  return daysUntil(row.car_registration_to_date);
+}
+
+function nextExpirationForRow(row: CarInsuranceRow) {
+  const options = [
+    { label: "Policy Term", from: row.policy_from_date, to: row.expires_on, days: getPolicyExpirationDays(row) },
+    {
+      label: "Car Registration Date",
+      from: row.car_registration_from_date,
+      to: row.car_registration_to_date,
+      days: getCarRegistrationExpirationDays(row),
+    },
+  ].filter((item) => item.days !== null) as Array<{ label: string; from: string | null; to: string | null; days: number }>;
+
+  if (!options.length) return null;
+  options.sort((a, b) => a.days - b.days);
+  return options[0];
+}
+
+function renderDateGroup(label: string, fromLabel: string, fromValue: string | null, toLabel: string, toValue: string | null) {
+  const remaining = daysUntil(toValue);
+  return (
+    <div className="space-y-1">
+      <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">{label}</div>
+      <div className="text-xs text-gray-600">{fromLabel}: {formatDate(fromValue)}</div>
+      <div className="text-sm text-black whitespace-nowrap">{toLabel}: {formatDate(toValue)}</div>
+      <div className={`text-xs font-medium ${dueClass(remaining)}`}>{formatDueLabel(remaining)}</div>
+    </div>
+  );
 }
 
 function normalizeHeader(value: unknown) {
@@ -246,8 +326,10 @@ function buildExportRows(rows: CarInsuranceRow[]) {
     Color: row.color ?? "",
     "Plate Number": row.plate_number ?? "",
     "Insurance Company": row.insurance_company ?? "",
-    "Policy From Date": row.policy_from_date ?? "",
-    "Policy To Date Expiration": row.expires_on ?? "",
+    "Policy Term - Date Registered": row.policy_from_date ?? "",
+    "Policy Term - Expiration": row.expires_on ?? "",
+    "Car Registration Date - Date Register": row.car_registration_from_date ?? "",
+    "Car Registration Date - Expiration": row.car_registration_to_date ?? "",
     "Days Before Expiry": row.days_before_expiry ?? "",
     Remarks: row.notes ?? "",
   }));
@@ -263,7 +345,15 @@ function parseSpreadsheetRow(row: Record<string, unknown>, idx: number) {
   const plateNumber = toNullableText(pickByAliases(row, ["plate_number", "plate number", "plate"]));
   const insuranceCompany = toNullableText(pickByAliases(row, ["insurance_company", "insurance company", "insurer"]));
   const policyFromDate = normalizeDateValue(pickByAliases(row, ["policy_from_date", "policy from date", "from date"]));
-  const policyToDate = normalizeDateValue(pickByAliases(row, ["expires_on", "policy to date expiration", "policy to date", "expiry date", "expiration date"]));
+  const policyToDate = normalizeDateValue(
+    pickByAliases(row, ["expires_on", "policy term expiration", "policy to date expiration", "policy to date", "expiry date", "expiration date"])
+  );
+  const carRegistrationFromDate = normalizeDateValue(
+    pickByAliases(row, ["car_registration_from_date", "car registration from date", "car registration date register", "date register"])
+  );
+  const carRegistrationToDate = normalizeDateValue(
+    pickByAliases(row, ["car_registration_to_date", "car registration to date", "car registration expiration", "car registration date expiration"])
+  );
   const daysBeforeExpiry = toNumberOrNull(pickByAliases(row, ["days_before_expiry", "days before expiry", "days before expiration", "lead days"]));
   const remarks = toNullableText(pickByAliases(row, ["notes", "remarks", "remark"]));
 
@@ -275,11 +365,23 @@ function parseSpreadsheetRow(row: Record<string, unknown>, idx: number) {
     };
   }
 
-  if (!patrol || !postDistributions || !make || !model || !color || !insuranceCompany || !policyFromDate || !policyToDate || !Number.isFinite(daysBeforeExpiry ?? Number.NaN)) {
+  if (
+    !patrol ||
+    !postDistributions ||
+    !make ||
+    !model ||
+    !color ||
+    !insuranceCompany ||
+    !policyFromDate ||
+    !policyToDate ||
+    !carRegistrationFromDate ||
+    !carRegistrationToDate ||
+    !Number.isFinite(daysBeforeExpiry ?? Number.NaN)
+  ) {
     return {
       payload: null,
       displayName: `Row ${idx + 2}`,
-      error: "Missing required car insurance fields.",
+      error: "Missing required policy term or car registration fields.",
     };
   }
 
@@ -294,6 +396,8 @@ function parseSpreadsheetRow(row: Record<string, unknown>, idx: number) {
     insuranceCompany,
     policyFromDate,
     policyToDate,
+    carRegistrationFromDate,
+    carRegistrationToDate,
     daysBeforeExpiry: String(daysBeforeExpiry ?? ""),
     remarks: remarks ?? "",
   } satisfies CarInsuranceForm;
@@ -310,6 +414,8 @@ function parseSpreadsheetRow(row: Record<string, unknown>, idx: number) {
       insuranceCompany,
       policyFromDate,
       policyToDate,
+      carRegistrationFromDate,
+      carRegistrationToDate,
       daysBeforeExpiry,
       remarks,
     },
@@ -334,6 +440,8 @@ function buildSearchIndex(row: CarInsuranceRow) {
     row.insurance_company,
     row.policy_from_date,
     row.expires_on,
+    row.car_registration_from_date,
+    row.car_registration_to_date,
     row.days_before_expiry,
     row.notes,
     row.item_name,
@@ -373,7 +481,7 @@ export default function CarInsuranceExpirationPage() {
 
   const nextRecordNo = useMemo(() => getNextRecordNo(rows), [rows]);
 
-  const visibleTableFields = useMemo(() => FORM_FIELDS, []);
+  const visibleTableFields = useMemo(() => TABLE_FIELDS, []);
 
   useEffect(() => {
     if (editingId !== null) return;
@@ -402,13 +510,36 @@ export default function CarInsuranceExpirationPage() {
       const res = await supabase
         .from("other_expiration_items")
         .select(
-          "id, item_name, expiration_type, record_no, patrol, post_distributions, make, model, color, plate_number, insurance_company, policy_from_date, expires_on, days_before_expiry, recipient_email, notes, is_active, created_at, updated_at"
+          "id, item_name, expiration_type, record_no, patrol, post_distributions, make, model, color, plate_number, insurance_company, policy_from_date, expires_on, car_registration_from_date, car_registration_to_date, days_before_expiry, recipient_email, notes, is_active, created_at, updated_at"
         )
         .eq("expiration_type", EXPIRATION_TYPE)
         .order("expires_on", { ascending: true })
         .limit(500);
 
-      if (res.error) throw res.error;
+      if (res.error) {
+        const msg = String((res.error as { message?: unknown })?.message ?? res.error);
+        if (!/car_registration_(from|to)_date|car registration/i.test(msg)) throw res.error;
+
+        const fallback = await supabase
+          .from("other_expiration_items")
+          .select(
+            "id, item_name, expiration_type, record_no, patrol, post_distributions, make, model, color, plate_number, insurance_company, policy_from_date, expires_on, days_before_expiry, recipient_email, notes, is_active, created_at, updated_at"
+          )
+          .eq("expiration_type", EXPIRATION_TYPE)
+          .order("expires_on", { ascending: true })
+          .limit(500);
+
+        if (fallback.error) throw fallback.error;
+        setRows(
+          (((fallback.data as CarInsuranceRow[]) ?? []) || []).map((row) => ({
+            ...row,
+            car_registration_from_date: null,
+            car_registration_to_date: null,
+          }))
+        );
+        return;
+      }
+
       setRows((res.data as CarInsuranceRow[]) ?? []);
     } catch (e: unknown) {
       setRows([]);
@@ -439,16 +570,24 @@ export default function CarInsuranceExpirationPage() {
   const stats = useMemo(() => {
     let dueSoon = 0;
     let overdue = 0;
+    let next: { row: CarInsuranceRow; label: string; date: string | null } | null = null;
 
     for (const row of rows) {
-      const days = daysUntil(row.expires_on);
       const reminderDays = Number(row.days_before_expiry ?? 30);
 
-      if (days === null) continue;
-      if (days < 0) {
-        overdue += 1;
-      } else if (days <= reminderDays) {
-        dueSoon += 1;
+      const entries = [
+        { label: "Policy Term", date: row.expires_on, days: getPolicyExpirationDays(row) },
+        { label: "Car Registration Date", date: row.car_registration_to_date, days: getCarRegistrationExpirationDays(row) },
+      ];
+
+      for (const entry of entries) {
+        if (entry.days === null) continue;
+        const currentBestDays = next?.date ? daysUntil(next.date) : null;
+        if (!next || currentBestDays === null || entry.days < currentBestDays) {
+          next = { row, label: entry.label, date: entry.date };
+        }
+        if (entry.days < 0) overdue += 1;
+        else if (entry.days <= reminderDays) dueSoon += 1;
       }
     }
 
@@ -456,7 +595,7 @@ export default function CarInsuranceExpirationPage() {
       total: rows.length,
       dueSoon,
       overdue,
-      next: rows[0] ?? null,
+      next,
     };
   }, [rows]);
 
@@ -481,6 +620,8 @@ export default function CarInsuranceExpirationPage() {
       insuranceCompany: row.insurance_company ?? "",
       policyFromDate: row.policy_from_date ?? "",
       policyToDate: row.expires_on ?? "",
+      carRegistrationFromDate: row.car_registration_from_date ?? "",
+      carRegistrationToDate: row.car_registration_to_date ?? "",
       daysBeforeExpiry: String(row.days_before_expiry ?? 30),
       remarks: row.notes ?? "",
     });
@@ -504,6 +645,8 @@ export default function CarInsuranceExpirationPage() {
     const reminderDays = Number(form.daysBeforeExpiry);
     const policyToDate = cleanText(form.policyToDate);
     const policyFromDate = cleanText(form.policyFromDate);
+    const carRegistrationFromDate = cleanText(form.carRegistrationFromDate);
+    const carRegistrationToDate = cleanText(form.carRegistrationToDate);
     const plateNumber = cleanText(form.plateNumber);
 
     if (!Number.isFinite(recordNo) || recordNo <= 0) {
@@ -539,11 +682,19 @@ export default function CarInsuranceExpirationPage() {
       return;
     }
     if (!policyFromDate) {
-      setError("Policy From Date is required.");
+      setError("Policy Term (Date Registered) is required.");
       return;
     }
     if (!policyToDate) {
-      setError("Policy To Date Expiration is required.");
+      setError("Policy Term (Expiration) is required.");
+      return;
+    }
+    if (!carRegistrationFromDate) {
+      setError("Car Registration Date (Date Register) is required.");
+      return;
+    }
+    if (!carRegistrationToDate) {
+      setError("Car Registration Date (Expiration) is required.");
       return;
     }
     if (!Number.isFinite(reminderDays) || reminderDays < 1 || reminderDays > 365) {
@@ -570,6 +721,8 @@ export default function CarInsuranceExpirationPage() {
         insurance_company: cleanText(form.insuranceCompany),
         policy_from_date: policyFromDate,
         expires_on: policyToDate,
+        car_registration_from_date: carRegistrationFromDate,
+        car_registration_to_date: carRegistrationToDate,
         days_before_expiry: Math.trunc(reminderDays),
         recipient_email: existing?.recipient_email ?? null,
         notes: cleanText(form.remarks) || null,
@@ -655,6 +808,8 @@ export default function CarInsuranceExpirationPage() {
           insuranceCompany: payload.insuranceCompany,
           policyFromDate: payload.policyFromDate,
           policyToDate: payload.policyToDate,
+          carRegistrationFromDate: payload.carRegistrationFromDate,
+          carRegistrationToDate: payload.carRegistrationToDate,
           daysBeforeExpiry: String(payload.daysBeforeExpiry),
           remarks: payload.remarks ?? "",
         }),
@@ -669,6 +824,8 @@ export default function CarInsuranceExpirationPage() {
         insurance_company: payload.insuranceCompany,
         policy_from_date: payload.policyFromDate,
         expires_on: payload.policyToDate,
+        car_registration_from_date: payload.carRegistrationFromDate,
+        car_registration_to_date: payload.carRegistrationToDate,
         days_before_expiry: payload.daysBeforeExpiry,
         recipient_email: existing?.recipient_email ?? null,
         notes: payload.remarks ?? null,
@@ -747,7 +904,7 @@ export default function CarInsuranceExpirationPage() {
     }
   }
 
-  function renderTableValue(row: CarInsuranceRow, field: FormField) {
+  function renderTableValue(row: CarInsuranceRow, field: TableField) {
     switch (field.key) {
       case "recordNo":
         return row.record_no ?? "—";
@@ -765,17 +922,16 @@ export default function CarInsuranceExpirationPage() {
         return row.plate_number || "—";
       case "insuranceCompany":
         return row.insurance_company || "—";
-      case "policyFromDate":
-        return formatDate(row.policy_from_date);
-      case "policyToDate": {
-        const remaining = daysUntil(row.expires_on);
-        return (
-          <div className="space-y-1">
-            <div className="whitespace-nowrap text-black">{formatDate(row.expires_on)}</div>
-            <div className={`text-xs font-medium ${dueClass(remaining)}`}>{formatDueLabel(remaining)}</div>
-          </div>
+      case "policyTerm":
+        return renderDateGroup("Policy Term", "Date Registered", row.policy_from_date, "Expiration", row.expires_on);
+      case "carRegistrationDate":
+        return renderDateGroup(
+          "Car Registration Date",
+          "Date Register",
+          row.car_registration_from_date,
+          "Expiration",
+          row.car_registration_to_date
         );
-      }
       case "daysBeforeExpiry":
         return row.days_before_expiry ?? "—";
       case "remarks":
@@ -837,8 +993,8 @@ export default function CarInsuranceExpirationPage() {
           <div>
             <div className="text-2xl font-semibold text-black">{PAGE_TITLE}</div>
             <div className="mt-1 max-w-4xl text-sm text-gray-500">
-              Track patrol vehicles, insurance providers, and policy expiration dates. Reminder emails use the shared Gmail
-              sender and the Days Before Expiry value on each record.
+              Track patrol vehicles, insurance providers, policy term dates, and car registration dates. Reminder emails use
+              the shared Gmail sender and the Days Before Expiry value on each record.
             </div>
           </div>
 
@@ -880,7 +1036,9 @@ export default function CarInsuranceExpirationPage() {
           <div className="rounded-2xl border border-white/70 bg-white/80 p-4 shadow-sm">
             <div className="text-xs uppercase tracking-wide text-gray-500">Next expiration</div>
             <div className="mt-1 text-sm font-semibold text-black">
-              {stats.next ? `${formatDate(stats.next.expires_on)} • No. ${stats.next.record_no ?? stats.next.id}` : "—"}
+              {stats.next
+                ? `${stats.next.label} • ${formatDate(stats.next.date)} • No. ${stats.next.row.record_no ?? stats.next.row.id}`
+                : "—"}
             </div>
           </div>
         </div>
@@ -991,7 +1149,7 @@ export default function CarInsuranceExpirationPage() {
               <input
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search by patrol, plate number, make, model, or insurer"
+                placeholder="Search by patrol, plate number, make, model, insurer, policy term, or car registration"
                 className="w-full rounded-xl border border-gray-200 bg-white py-2 pl-9 pr-3 text-sm text-black placeholder:text-gray-400"
               />
             </div>
@@ -1038,7 +1196,14 @@ export default function CarInsuranceExpirationPage() {
                       className={`${index % 2 === 0 ? "bg-white" : "bg-gray-50/60"} ${canEditRecords ? "cursor-pointer hover:bg-[#FFF7CC]" : ""}`}
                     >
                       {visibleTableFields.map((field) => (
-                        <td key={`${row.id}:${field.key}`} className="border-b border-gray-100 px-3 py-3 align-top text-black whitespace-nowrap">
+                        <td
+                          key={`${row.id}:${field.key}`}
+                          className={`border-b border-gray-100 px-3 py-3 align-top text-black ${
+                            field.key === "policyTerm" || field.key === "carRegistrationDate"
+                              ? "whitespace-normal min-w-[220px]"
+                              : "whitespace-nowrap"
+                          }`}
+                        >
                           {renderTableValue(row, field)}
                         </td>
                       ))}
@@ -1100,7 +1265,7 @@ export default function CarInsuranceExpirationPage() {
               <div className="flex flex-wrap items-start justify-between gap-3 border-b px-6 py-4">
                 <div>
                   <div className="text-lg font-semibold text-black">{formTitle}</div>
-                  <div className="text-sm text-gray-500">Fill the policy dates, then save to queue expiration reminders.</div>
+                  <div className="text-sm text-gray-500">Fill both date groups, then save to queue expiration reminders.</div>
                 </div>
 
                 <div className="flex items-center gap-2">
@@ -1204,7 +1369,10 @@ export default function CarInsuranceExpirationPage() {
             "Model",
             "Plate Number",
             "Insurance Company",
-            "Policy To Date Expiration",
+            "Policy Term - Date Registered",
+            "Policy Term - Expiration",
+            "Car Registration Date - Date Register",
+            "Car Registration Date - Expiration",
           ]}
         />
       </section>

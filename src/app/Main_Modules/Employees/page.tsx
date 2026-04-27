@@ -17,6 +17,7 @@ import EmployeeStatusMenu from "../Components/EmployeeStatusMenu";
 import { addBrandedPdfHeader, buildBrandedAoa, buildBrandedWorkbookBuffer } from "../Components/exportBranding";
 import { buildEmployeeStatusUpdatePatch, loadLicensureMap } from "../employeeListData";
 import { useLiveNow } from "../../Client/useLiveNow";
+import { buildPersonnelDetailExportRows } from "../Components/personnelExport";
 
 type Applicant = {
 	applicant_id: string;
@@ -256,46 +257,6 @@ export default function EmployeesPage() {
 	const showStatusColumn = canViewEmployeeColumn("status");
 	const showEmailColumn = canViewEmployeeColumn("client_email");
 	const showPhoneColumn = canViewEmployeeColumn("client_contact_num");
-
-	const exportColumnDefs = useMemo(
-		() => {
-			const cols: Array<{ key: string; label: string; value: (e: Applicant, now: Date) => string }> = [];
-			if (showNameColumn) cols.push({ key: "name", label: "Name", value: (e) => getFullName(e) });
-			if (showPositionColumn) cols.push({ key: "job", label: "Job Title", value: (e) => e.client_position ?? "" });
-			if (showDetachmentColumn) cols.push({ key: "detachment", label: "Detachment", value: (e) => e.detachment ?? "" });
-			if (showGenderColumn) cols.push({ key: "gender", label: "Gender", value: (e) => (e.gender ?? "").trim() });
-			if (showHiredDateColumn) {
-				cols.push({
-					key: "hire_date",
-					label: "Hire Date",
-					value: (e) => (e.date_hired_fsai ? new Date(e.date_hired_fsai).toLocaleDateString() : ""),
-				});
-			}
-			if (showYearsWithCompanyColumn) {
-				cols.push({
-					key: "service",
-					label: "Service Length",
-					value: (e, now) => formatServiceLengthShort(e.date_hired_fsai, now),
-				});
-			}
-			if (showEmailColumn) cols.push({ key: "email", label: "Email", value: (e) => (e.client_email ?? "").trim() });
-			if (showPhoneColumn) {
-				cols.push({ key: "phone", label: "Phone", value: (e) => (e.client_contact_num ?? "").trim() });
-			}
-
-			return cols;
-		},
-		[
-			showNameColumn,
-			showPositionColumn,
-			showDetachmentColumn,
-			showGenderColumn,
-			showHiredDateColumn,
-			showYearsWithCompanyColumn,
-			showEmailColumn,
-			showPhoneColumn,
-		]
-	);
 
 	const employeeColumnsSignature = useMemo(
 		() => Array.from(allowedEmployeeColumns).sort().join("|"),
@@ -863,24 +824,19 @@ liveNow,
 		return parts.join("_");
 	}
 
-	function exportEmployeesCsv() {
+	async function exportEmployeesCsv() {
 		setError("");
 		const rows = exportCandidates;
 		if (!rows.length) {
 			setError("No employees match the export filters.");
 			return;
 		}
-		if (!exportColumnDefs.length) {
-			setError("No permitted columns are available for export.");
-			return;
-		}
-
-		const now = new Date();
 		const title = exportTitle.trim() || "Employees Export";
 		const subtitle = `Generated: ${new Date().toLocaleString()}`;
-		const exportRows = rows.map((e) =>
-			Object.fromEntries(exportColumnDefs.map((c) => [c.label, c.value(e, now)]))
-		) as Record<string, string>[];
+		const exportRows = await buildPersonnelDetailExportRows(rows, {
+			codePrefix: "EMP",
+			codeLabel: "Employee Code",
+		});
 		const ws = XLSX.utils.aoa_to_sheet(buildBrandedAoa(exportRows, title, subtitle));
 		const csv = XLSX.utils.sheet_to_csv(ws);
 		downloadBlob(`${exportFileBase()}.csv`, new Blob([csv], { type: "text/csv;charset=utf-8;" }));
@@ -894,17 +850,12 @@ liveNow,
 			setError("No employees match the export filters.");
 			return;
 		}
-		if (!exportColumnDefs.length) {
-			setError("No permitted columns are available for export.");
-			return;
-		}
 		const title = exportTitle.trim() || "Employees Export";
-
-		const now = new Date();
 		const subtitle = `Generated: ${new Date().toLocaleString()}`;
-		const exportRows = rows.map((e) =>
-			Object.fromEntries(exportColumnDefs.map((c) => [c.label, c.value(e, now)]))
-		) as Record<string, string>[];
+		const exportRows = await buildPersonnelDetailExportRows(rows, {
+			codePrefix: "EMP",
+			codeLabel: "Employee Code",
+		});
 
 		const out = await buildBrandedWorkbookBuffer([
 			{

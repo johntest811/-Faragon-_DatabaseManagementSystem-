@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { FileDown, FileText, LayoutGrid, Pencil, Search, Table, Upload, UserPlus } from "lucide-react";
+import { FileDown, FileText, LayoutGrid, Pencil, Search, Table, Upload } from "lucide-react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { supabase } from "../../Client/SupabaseClients";
@@ -15,6 +15,7 @@ import ImportSummaryModal, { ImportSummaryData } from "../Components/ImportSumma
 import EmployeeStatusMenu from "../Components/EmployeeStatusMenu";
 import { buildEmployeeStatusUpdatePatch } from "../employeeListData";
 import { addBrandedPdfHeader, buildBrandedWorkbookBuffer } from "../Components/exportBranding";
+import { buildPersonnelDetailExportRows } from "../Components/personnelExport";
 
 type ApplicantRow = {
 	applicant_id: string;
@@ -76,13 +77,6 @@ function downloadBlob(filename: string, blob: Blob) {
 	a.click();
 	a.remove();
 	URL.revokeObjectURL(url);
-}
-
-function safeText(value: unknown) {
-	if (value == null) return "";
-	if (typeof value === "string") return value;
-	if (typeof value === "number" || typeof value === "boolean") return String(value);
-	return String(value);
 }
 
 function badgeClass(status: string) {
@@ -187,27 +181,6 @@ export default function ApplicantsPage() {
 		}
 	}, [viewMode]);
 
-	const summary = useMemo(() => {
-		const counts = { total: 0, applicant: 0, active: 0, inactive: 0, other: 0 };
-		counts.total = applicants.length;
-		for (const row of applicants) {
-			switch (normalizeStatus(row.status)) {
-				case "APPLICANT":
-					counts.applicant += 1;
-					break;
-				case "ACTIVE":
-					counts.active += 1;
-					break;
-				case "INACTIVE":
-					counts.inactive += 1;
-					break;
-				default:
-					counts.other += 1;
-			}
-		}
-		return counts;
-	}, [applicants]);
-
 	const filteredApplicants = useMemo(() => {
 		const q = search.trim().toLowerCase();
 		const list = [...applicants].filter((row) => {
@@ -238,25 +211,6 @@ export default function ApplicantsPage() {
 
 		return list.sort((a, b) => String(b.created_at ?? "").localeCompare(String(a.created_at ?? "")));
 	}, [applicants, search, statusFilter]);
-
-	const exportRows = useMemo(
-		() =>
-			filteredApplicants.map((row) => ({
-				"Applicant ID": row.applicant_id,
-				"Applicant Code": shortCode(row.applicant_id),
-				Name: getFullName(row),
-				Position: safeText(row.client_position),
-				Detachment: safeText(row.detachment),
-				Status: normalizeStatus(row.status),
-				Gender: safeText(row.gender),
-				"Birth Date": safeText(row.birth_date),
-				Age: safeText(row.age),
-				"Contact Number": safeText(row.client_contact_num),
-				Email: safeText(row.client_email),
-				"Created At": safeText(row.created_at),
-			})),
-		[filteredApplicants]
-	);
 
 	const totalLoading = loading || accessLoading || editLoading || columnLoading;
 	const canOpenApplicantDetails = canAccessApplicants;
@@ -306,6 +260,10 @@ export default function ApplicantsPage() {
 
 	async function exportApplicantsXlsx() {
 		if (!canExportApplicants) return;
+			const exportRows = await buildPersonnelDetailExportRows(filteredApplicants, {
+				codePrefix: "APP",
+				codeLabel: "Applicant Code",
+			});
 		if (!exportRows.length) {
 			setError("No rows available for export.");
 			return;
@@ -327,6 +285,10 @@ export default function ApplicantsPage() {
 
 	async function exportApplicantsPdf() {
 		if (!canExportApplicants) return;
+		const exportRows = await buildPersonnelDetailExportRows(filteredApplicants, {
+			codePrefix: "APP",
+			codeLabel: "Applicant Code",
+		});
 		if (!exportRows.length) {
 			setError("No rows available for export.");
 			return;

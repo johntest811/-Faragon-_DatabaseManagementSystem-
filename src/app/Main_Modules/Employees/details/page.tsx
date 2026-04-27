@@ -19,7 +19,7 @@ import {
   ZoomOut,
 } from "lucide-react";
 import { supabase } from "../../../Client/SupabaseClients";
-import { useAuthRole, useMyApplicantColumnAccess, useMyApplicantRowAccess, useMyColumnAccess, useMyModuleAccess, useMyModuleEditAccess } from "../../../Client/useRbac";
+import { useMyApplicantColumnAccess, useMyApplicantRowAccess, useMyColumnAccess, useMyModuleEditAccess } from "../../../Client/useRbac";
 import EmployeeEditorModal from "../../../Components/EmployeeEditorModal";
 import LoadingCircle from "../../../Components/LoadingCircle";
 
@@ -88,6 +88,13 @@ type EmploymentRecordRow = {
   company_name: string | null;
   position: string | null;
   leave_reason: string | null;
+};
+
+type OtherDocumentRow = {
+  document_id: string;
+  label: string | null;
+  bucket: string | null;
+  file_path: string | null;
 };
 
 type Biodata = {
@@ -340,9 +347,6 @@ function EmployeeDetailsInner() {
   const detailLabelLower = detailLabel.toLowerCase();
   const accessModuleKey = isApplicantRoute ? "applicants" : "employees";
   const backHref = safeBackHref(from, isApplicantRoute ? "/Main_Modules/Applicants/" : "/Main_Modules/Employees/");
-
-  const { role: sessionRole } = useAuthRole();
-  const { canAccess: canAccessModule } = useMyModuleAccess(accessModuleKey);
   const { canEdit: canEditModule } = useMyModuleEditAccess(accessModuleKey);
   const {
     allowedColumns: allowedEmployeeColumns,
@@ -389,6 +393,7 @@ function EmployeeDetailsInner() {
   const [applicant, setApplicant] = useState<Applicant | null>(null);
   const [certs, setCerts] = useState<Certificates | null>(null);
   const [employment, setEmployment] = useState<EmploymentItem[]>([]);
+  const [otherDocs, setOtherDocs] = useState<OtherDocumentRow[]>([]);
   const [lic, setLic] = useState<Licensure | null>(null);
   const [bio, setBio] = useState<Biodata | null>(null);
   const [viewerOpen, setViewerOpen] = useState(false);
@@ -424,6 +429,7 @@ function EmployeeDetailsInner() {
       setApplicant(null);
       setCerts(null);
       setEmployment([]);
+      setOtherDocs([]);
       setLic(null);
       setBio(null);
 
@@ -434,18 +440,14 @@ function EmployeeDetailsInner() {
       }
 
       try {
-        const { data: a, error: aErr } = await supabase
-          .from("applicants")
-          .select(
-            "applicant_id, created_at, custom_id, last_name, first_name, middle_name, birth_date, age, gender, education_attainment, date_hired_fsai, client_position, detachment, security_licensed_num, sss_number, pagibig_number, philhealth_number, tin_number, client_contact_num, client_email, present_address, province_address, emergency_contact_person, emergency_contact_num, status, profile_image_path, sss_certain_path, tin_id_path, pag_ibig_id_path, philhealth_id_path, security_license_path"
-          )
-          .eq("applicant_id", id)
-          .maybeSingle();
-
-        if (aErr) throw aErr;
-        setApplicant((a as Applicant) || null);
-
-        const [cRes, eRes, lRes] = await Promise.all([
+        const [aRes, cRes, eRes, lRes, bRes, odRes] = await Promise.all([
+          supabase
+            .from("applicants")
+            .select(
+              "applicant_id, created_at, custom_id, last_name, first_name, middle_name, birth_date, age, gender, education_attainment, date_hired_fsai, client_position, detachment, security_licensed_num, sss_number, pagibig_number, philhealth_number, tin_number, client_contact_num, client_email, present_address, province_address, emergency_contact_person, emergency_contact_num, status, profile_image_path, sss_certain_path, tin_id_path, pag_ibig_id_path, philhealth_id_path, security_license_path"
+            )
+            .eq("applicant_id", id)
+            .maybeSingle(),
           supabase
             .from("certificates")
             .select(
@@ -465,14 +467,20 @@ function EmployeeDetailsInner() {
             )
             .eq("applicant_id", id)
             .maybeSingle(),
+          supabase
+            .from("biodata")
+            .select("applicant_form_path")
+            .eq("applicant_id", id)
+            .maybeSingle(),
+          supabase
+            .from("applicant_other_documents")
+            .select("document_id, label, bucket, file_path")
+            .eq("applicant_id", id)
+            .order("created_at", { ascending: true }),
         ]);
 
-
-        const bRes = await supabase
-          .from("biodata")
-          .select("applicant_form_path")
-          .eq("applicant_id", id)
-          .maybeSingle();
+        if (aRes.error) throw aRes.error;
+        setApplicant((aRes.data as Applicant) || null);
 
         if (cRes.error) console.warn(cRes.error);
         if (eRes.error) {
@@ -501,6 +509,15 @@ function EmployeeDetailsInner() {
         if (!eRes.error) setEmployment(((eRes.data as EmploymentItem[]) || []) ?? []);
         setLic((lRes.data as Licensure) || null);
         setBio((bRes.data as Biodata) || null);
+        if (!odRes.error) {
+          setOtherDocs(((odRes.data as OtherDocumentRow[]) || []) ?? []);
+        } else {
+          const message = String((odRes.error as { message?: unknown })?.message ?? odRes.error ?? "");
+          if (!/applicant_other_documents|does not exist/i.test(message)) {
+            console.warn(odRes.error);
+          }
+          setOtherDocs([]);
+        }
       } catch (e: unknown) {
        
           setError(e instanceof Error ? e.message : `Failed to load ${detailLabelLower}`);
@@ -552,6 +569,7 @@ function EmployeeDetailsInner() {
     applicantColumnsRestricted,
     allowedEmployeeColumns,
     allowedApplicantColumns,
+    detailLabelLower,
   ]);
 
   const profile = useMemo(() => {
@@ -577,9 +595,18 @@ function EmployeeDetailsInner() {
     };
   }, [applicant, certs, bio]);
 
-  const scannedImageItems = useMemo(() => {
+  const otherDocumentItems = useMemo(
+    () =>
+      otherDocs.map((doc, idx) => ({
+        key: `other-document-${doc.document_id ?? idx}`,
+        title: doc.label?.trim() || `Other Document ${idx + 1}`,
+        url: doc.file_path ? publicUrl((doc.bucket || BUCKETS.certificates) as keyof typeof BUCKETS, doc.file_path) : null,
+      })),
+    [otherDocs]
+  );
+
+  const scannedDocumentItems = useMemo(() => {
     const list: Array<{ key: string; title: string; url: string | null }> = [
-      { key: "profile", title: "Profile Image", url: profile },
       { key: "applicationForm", title: "Application Form", url: docUrls?.applicationForm ?? null },
       { key: "sss", title: "SSS Certain", url: docUrls?.sss ?? null },
       { key: "tin", title: "TIN ID", url: docUrls?.tin ?? null },
@@ -592,15 +619,27 @@ function EmployeeDetailsInner() {
       { key: "hs", title: "Highschool Diploma", url: docUrls?.hs ?? null },
       { key: "college", title: "College Diploma", url: docUrls?.college ?? null },
       { key: "vocational", title: "Vocational", url: docUrls?.vocational ?? null },
+      ...otherDocumentItems,
     ];
 
-    return list
-      .filter((x): x is { key: string; title: string; url: string } => Boolean(x.url))
-      .filter((x) => isImageUrl(x.url));
-  }, [profile, docUrls]);
+    return list;
+  }, [docUrls, otherDocumentItems]);
+
+  const scannedImageItems = useMemo(
+    () => scannedDocumentItems.filter((x): x is { key: string; title: string; url: string } => Boolean(x.url)).filter((x) => isImageUrl(x.url)),
+    [scannedDocumentItems]
+  );
 
   function openImageViewerFromKey(key: string) {
     if (!canEdit) return;
+    if (key === "profile") {
+      if (!profile) return;
+      setViewerItems([{ key: "profile", title: "Profile Image", url: profile }]);
+      setViewerIndex(0);
+      setViewerZoom(1);
+      setViewerOpen(true);
+      return;
+    }
     if (!scannedImageItems.length) return;
 
     const idx = scannedImageItems.findIndex((x) => x.key === key);
@@ -923,20 +962,7 @@ function EmployeeDetailsInner() {
               </div>
             ) : null}
 
-            {[
-              { key: "applicationForm", title: "Application Form", url: docUrls?.applicationForm ?? null },
-              { key: "sss", title: "SSS Certain", url: docUrls?.sss ?? null },
-              { key: "tin", title: "TIN ID", url: docUrls?.tin ?? null },
-              { key: "pagibig", title: "PAG-IBIG ID", url: docUrls?.pagibig ?? null },
-              { key: "philhealth", title: "PHILHEALTH ID", url: docUrls?.philhealth ?? null },
-              { key: "securityLicense", title: "Security License", url: docUrls?.securityLicense ?? null },
-              { key: "gunSafety", title: "Gun Safety Certificate", url: docUrls?.gunSafety ?? null },
-              { key: "training", title: "Training Certificate", url: docUrls?.training ?? null },
-              { key: "seminar", title: "Seminar Certificate", url: docUrls?.seminar ?? null },
-              { key: "hs", title: "Highschool Diploma", url: docUrls?.hs ?? null },
-              { key: "college", title: "College Diploma", url: docUrls?.college ?? null },
-              { key: "vocational", title: "Vocational", url: docUrls?.vocational ?? null },
-            ].map((doc) => (
+            {scannedDocumentItems.map((doc) => (
               <div key={doc.key} className="flex items-center justify-between gap-3 py-2">
                 <div className="flex items-center gap-2 min-w-0">
                   <FileText className="w-4 h-4 text-yellow-700" />
