@@ -22,6 +22,7 @@ import { buildPersonnelDetailExportRows } from "../Components/personnelExport";
 type Applicant = {
 	applicant_id: string;
 	created_at: string;
+	custom_id: string | null;
 	first_name: string | null;
 	middle_name: string | null;
 	last_name: string | null;
@@ -39,13 +40,6 @@ type Applicant = {
 	is_trashed?: boolean | null;
 };
 
-type LicensureRow = {
-	applicant_id: string;
-	driver_expiration: string | null;
-	security_expiration: string | null;
-	insurance_expiration: string | null;
-};
-
 type EmployeeExpiringSummaryRow = {
 	applicant_id: string;
 	expires_on: string;
@@ -59,6 +53,7 @@ type EmployeesElectronApi = {
 };
 
 const EMPLOYEE_COLUMN_TO_DB_FIELDS: Record<string, string[]> = {
+	custom_id: ["custom_id"],
 	first_name: ["first_name"],
 	middle_name: ["middle_name"],
 	last_name: ["last_name"],
@@ -98,35 +93,6 @@ function normalizeStatus(input: string | null) {
 	if (!v) return "ACTIVE";
 	if (v === "ACTIVE" || v === "APPLICANT" || v === "INACTIVE" || v === "REASSIGN" || v === "RETIRED" || v === "RESIGNED") return v;
 	return "ACTIVE";
-}
-
-function ymd(d: string | null) {
-	if (!d) return null;
-	const dt = new Date(d);
-	if (Number.isNaN(dt.getTime())) return null;
-	const yyyy = dt.getFullYear();
-	const mm = String(dt.getMonth() + 1).padStart(2, "0");
-	const dd = String(dt.getDate()).padStart(2, "0");
-	return `${yyyy}-${mm}-${dd}`;
-}
-
-function daysUntil(dateYmd: string | null) {
-	if (!dateYmd) return null;
-	const [y, m, d] = String(dateYmd).split("-").map((n) => Number(n));
-	if (!y || !m || !d) return null;
-	const target = new Date(y, m - 1, d, 0, 0, 0, 0);
-	const now = new Date();
-	const today = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
-	return Math.round((target.getTime() - today.getTime()) / (24 * 60 * 60 * 1000));
-}
-
-function nextLicenseExpiryFromLicensureRow(r: LicensureRow | null) {
-	const candidates = [ymd(r?.driver_expiration ?? null), ymd(r?.security_expiration ?? null), ymd(r?.insurance_expiration ?? null)].filter(
-		Boolean
-	) as string[];
-	if (!candidates.length) return { ymd: null as string | null, days: null as number | null };
-	const min = candidates.reduce((acc, cur) => (cur < acc ? cur : acc));
-	return { ymd: min, days: daysUntil(min) };
 }
 
 function startOfDay(d: Date) {
@@ -190,6 +156,20 @@ function serviceYearsExact(fromIso: string | null, now = new Date()) {
 	return diff.years + diff.months / 12 + diff.days / 365.25;
 }
 
+function serviceYearsCompleted(fromIso: string | null, now = new Date()) {
+	if (!fromIso) return null;
+	const d = new Date(fromIso);
+	if (Number.isNaN(d.getTime())) return null;
+	return diffYearsMonthsDays(d, now).years;
+}
+
+function ymd(value: string | null) {
+	if (!value) return null;
+	const date = new Date(value);
+	if (Number.isNaN(date.getTime())) return null;
+	return date.toISOString().slice(0, 10);
+}
+
 function downloadBlob(filename: string, blob: Blob) {
 	const url = URL.createObjectURL(blob);
 	const a = document.createElement("a");
@@ -248,15 +228,9 @@ export default function EmployeesPage() {
 	const showNameColumn =
 		canViewEmployeeColumn("first_name") || canViewEmployeeColumn("middle_name") || canViewEmployeeColumn("last_name");
 	const showPositionColumn = canViewEmployeeColumn("client_position");
-	const showGenderColumn = canViewEmployeeColumn("gender");
-	const showBirthDateColumn = canViewEmployeeColumn("birth_date");
-	const showAgeColumn = canViewEmployeeColumn("age");
 	const showHiredDateColumn = canViewEmployeeColumn("date_hired_fsai");
-	const showYearsWithCompanyColumn = canViewEmployeeColumn("date_hired_fsai");
 	const showDetachmentColumn = canViewEmployeeColumn("detachment");
 	const showStatusColumn = canViewEmployeeColumn("status");
-	const showEmailColumn = canViewEmployeeColumn("client_email");
-	const showPhoneColumn = canViewEmployeeColumn("client_contact_num");
 
 	const employeeColumnsSignature = useMemo(
 		() => Array.from(allowedEmployeeColumns).sort().join("|"),
@@ -290,7 +264,9 @@ export default function EmployeesPage() {
 	const [positionFilter, setPositionFilter] = useState<string>("ALL");
 	const [hasPhotoFilter, setHasPhotoFilter] = useState<"ALL" | "YES" | "NO">("ALL");
 	const [hiredMonthFilter, setHiredMonthFilter] = useState("ALL"); // YYYY-MM
-    const [yearsServiceFilter, setYearsServiceFilter] = useState<"ALL" | "<1" | "1-5" | ">5">("ALL");
+	const [hiredFromFilter, setHiredFromFilter] = useState("");
+	const [hiredToFilter, setHiredToFilter] = useState("");
+	const [yearsServiceFilter, setYearsServiceFilter] = useState("ALL");
 
 
 	const [editorOpen, setEditorOpen] = useState(false);
@@ -488,10 +464,33 @@ if (hiredMonthFilter !== "ALL") {
         }
 
 
+		if (hiredFromFilter || hiredToFilter) {
+			list = list.filter((e) => {
+				const hiredYmd = ymd(e.date_hired_fsai);
+				if (!hiredYmd) return false;
+				if (hiredFromFilter && hiredYmd < hiredFromFilter) return false;
+				if (hiredToFilter && hiredYmd > hiredToFilter) return false;
+				return true;
+			});
+		}
+
+		if (yearsServiceFilter !== "ALL") {
+			list = list.filter((e) => {
+				const completedYears = serviceYearsCompleted(e.date_hired_fsai, liveNow);
+				if (completedYears == null) return false;
+				if (yearsServiceFilter === "LT1") return completedYears < 1;
+
+				const targetYears = Number(yearsServiceFilter);
+				if (!Number.isFinite(targetYears)) return true;
+				return completedYears === targetYears;
+			});
+		}
+
 		if (q) {
 			list = list.filter((e) => {
 				const haystack = [
 					e.applicant_id,
+					(e.custom_id ?? "").trim(),
 					shortCode(e.applicant_id),
 					getFullName(e),
 					e.client_position,
@@ -556,25 +555,34 @@ if (hiredMonthFilter !== "ALL") {
 			return getFullName(a).localeCompare(getFullName(b));
 		});
 
-		return sorted;
+	return sorted;
 	}, [
-  employees,
-  search,
-  sortBy,
-	licensureByApplicantId,
-	expiringSummaryByApplicantId,
-  statusFilter,
-  genderFilter,
-  detachmentFilter,
-  positionFilter,
-  hasPhotoFilter,
-  hiredMonthFilter,
-yearsServiceFilter,
-liveNow,
-]);
+		employees,
+		search,
+		sortBy,
+		licensureByApplicantId,
+		expiringSummaryByApplicantId,
+		statusFilter,
+		genderFilter,
+		detachmentFilter,
+		positionFilter,
+		hasPhotoFilter,
+		hiredFromFilter,
+		hiredToFilter,
+		hiredMonthFilter,
+		yearsServiceFilter,
+		liveNow,
+	]);
+
+	const exportSourceEmployees = useMemo(() => {
+		return employees.filter((e) => {
+			const status = normalizeStatus(e.status);
+			return status !== "REASSIGN" && status !== "RETIRED" && status !== "RESIGNED" && status !== "APPLICANT";
+		});
+	}, [employees]);
 
 	const exportCandidates = useMemo(() => {
-		return filtered.filter((e) => {
+		return exportSourceEmployees.filter((e) => {
 			if (exportMonth !== "ALL" || exportWeek !== "ALL") {
 				if (!e.date_hired_fsai) return false;
 				const hired = new Date(e.date_hired_fsai);
@@ -591,10 +599,10 @@ liveNow,
 
 			return true;
 		});
-	}, [filtered, exportMonth, exportWeek]);
+	}, [exportSourceEmployees, exportMonth, exportWeek]);
 
 	const exportExpiringRows = useMemo(() => {
-		const items = filtered
+		const items = exportSourceEmployees
 			.map((e) => {
 				const next = expiringSummaryByApplicantId[e.applicant_id] ?? licensureByApplicantId[e.applicant_id] ?? { nextYmd: null, nextDays: null };
 				if (!next.nextYmd) return null;
@@ -616,11 +624,11 @@ liveNow,
 		});
 
 		return items.slice(0, 200);
-	}, [filtered, expiringSummaryByApplicantId, licensureByApplicantId, showNameColumn, showPositionColumn, showDetachmentColumn]);
+	}, [exportSourceEmployees, expiringSummaryByApplicantId, licensureByApplicantId, showNameColumn, showPositionColumn, showDetachmentColumn]);
 
 	const exportServiceRows = useMemo(() => {
 			const now = liveNow;
-		const items = filtered
+		const items = exportSourceEmployees
 			.map((e) => {
 				const years = serviceYearsExact(e.date_hired_fsai, now);
 				if (years == null || years < 1) return null;
@@ -656,7 +664,7 @@ liveNow,
 			.sort((a, b) => b.years - a.years);
 
 		return items.slice(0, 300);
-	}, [filtered, showNameColumn, showPositionColumn, showDetachmentColumn, liveNow]);
+	}, [exportSourceEmployees, showNameColumn, showPositionColumn, showDetachmentColumn, liveNow]);
 
 	const exportServiceRowsFiltered = useMemo(() => {
 		if (serviceExportMonth === "ALL") return exportServiceRows;
@@ -679,6 +687,19 @@ liveNow,
 		};
 	}, [employees]);
 
+	const yearsServiceOptions = useMemo(() => {
+		let maxYears = 0;
+		for (const employee of employees) {
+			const completedYears = serviceYearsCompleted(employee.date_hired_fsai, liveNow);
+			if (completedYears != null) {
+				maxYears = Math.max(maxYears, completedYears);
+			}
+		}
+
+		const optionCount = Math.max(10, maxYears);
+		return Array.from({ length: optionCount }, (_, index) => String(index + 1));
+	}, [employees, liveNow]);
+
 	// Expiring list is handled in the top navigation dropdown (Main_Modules layout).
 
 	function clearFilters() {
@@ -687,9 +708,10 @@ liveNow,
 		setDetachmentFilter("ALL");
 		setPositionFilter("ALL");
 		setHasPhotoFilter("ALL");
-		setHasPhotoFilter("ALL");
-        setHiredMonthFilter("ALL");
-        setYearsServiceFilter("ALL");
+		setHiredFromFilter("");
+		setHiredToFilter("");
+		setHiredMonthFilter("ALL");
+		setYearsServiceFilter("ALL");
 	}
 
 	function openCreate() {
@@ -776,7 +798,6 @@ liveNow,
 	async function confirmArchive() {
 		if (!archiveEmployee) return;
 		setError("");
-		const normalizedStatus = normalizeStatus(archiveEmployee.status);
 
 		const { error: updateError } = await supabase
 			.from("applicants")
@@ -1148,7 +1169,7 @@ liveNow,
 									) : null}
 									<div className="min-w-0">
 										{showNameColumn ? <div className="text-sm font-bold text-gray-900 truncate">{name}</div> : null}
-										<div className="text-xs text-gray-500 truncate">{shortCode(e.applicant_id)}</div>
+										<div className="text-xs text-gray-500 truncate">{(e.custom_id ?? "").trim() || shortCode(e.applicant_id)}</div>
 										{showPositionColumn ? (
 											<div className="mt-1 text-xs text-gray-500 truncate">
 												<span className="text-gray-500">Job Title:</span>{" "}
@@ -1159,12 +1180,6 @@ liveNow,
 											<div className="text-xs text-gray-500 truncate">
 												<span className="text-gray-500">Detachment:</span>{" "}
 												{e.detachment ?? "—"}
-											</div>
-										) : null}
-										{showYearsWithCompanyColumn ? (
-											<div className="text-xs text-gray-500 truncate">
-												<span className="text-gray-500">Years w/ Company:</span>{" "}
-												{formatServiceLengthShort(e.date_hired_fsai)}
 											</div>
 										) : null}
 									</div>
@@ -1243,13 +1258,8 @@ liveNow,
 					{showPhotoColumn ? <th className="px-4 py-3 text-left font-semibold text-black first:rounded-l-xl">Photo</th> : null}
 					{showNameColumn ? <th className="px-4 py-3 text-left font-semibold text-black">Name</th> : null}
 					{showPositionColumn ? <th className="px-4 py-3 text-left font-semibold text-black">Position</th> : null}
-					{showGenderColumn ? <th className="px-4 py-3 text-left font-semibold text-black">Gender</th> : null}
-					{showBirthDateColumn ? <th className="px-4 py-3 text-left font-semibold text-black">Birth Date</th> : null}
-					{showAgeColumn ? <th className="px-4 py-3 text-left font-semibold text-black">Age</th> : null}
 					{showHiredDateColumn ? <th className="px-4 py-3 text-left font-semibold text-black">Hired Date</th> : null}
-					{showYearsWithCompanyColumn ? <th className="px-4 py-3 text-left font-semibold text-black">Years w/ Company</th> : null}
 					{showDetachmentColumn ? <th className="px-4 py-3 text-left font-semibold text-black">Detachment</th> : null}
-					<th className="px-4 py-3 text-left font-semibold text-black">Next License Expiry</th>
 					{showStatusColumn ? <th className="px-4 py-3 text-left font-semibold text-black">Status</th> : null}
 					{canAccessEmployees ? (
 						<th className="px-4 py-3 text-center font-semibold text-black last:rounded-r-xl">Actions</th>
@@ -1259,7 +1269,6 @@ liveNow,
 			<tbody>
 				{filtered.map((e) => {
 					const profileUrl = getProfileUrl(e.profile_image_path);
-					const next = licensureByApplicantId[e.applicant_id] || { nextYmd: null, nextDays: null };
 					const canClick = canAccessEmployees;
 					const detailsHref = `/Main_Modules/Employees/details/?id=${encodeURIComponent(
 						e.applicant_id
@@ -1295,26 +1304,10 @@ liveNow,
 
 							{showNameColumn ? <td className="px-4 py-3 font-semibold">{getFullName(e)}</td> : null}
 							{showPositionColumn ? <td className="px-4 py-3">{e.client_position ?? "—"}</td> : null}
-							{showGenderColumn ? <td className="px-4 py-3">{e.gender ?? "—"}</td> : null}
-							{showBirthDateColumn ? <td className="px-4 py-3">{e.birth_date ?? "—"}</td> : null}
-							{showAgeColumn ? <td className="px-4 py-3">{e.age ?? "—"}</td> : null}
 							{showHiredDateColumn ? (
 								<td className="px-4 py-3">{e.date_hired_fsai ? new Date(e.date_hired_fsai).toLocaleDateString() : "—"}</td>
 							) : null}
-							{showYearsWithCompanyColumn ? <td className="px-4 py-3">{formatServiceLengthShort(e.date_hired_fsai)}</td> : null}
 							{showDetachmentColumn ? <td className="px-4 py-3">{e.detachment ?? "—"}</td> : null}
-							<td className="px-4 py-3">
-								{next.nextYmd ? (
-									<div className="leading-tight">
-										<div>{next.nextYmd}</div>
-										<div className="text-xs text-gray-500">
-											{next.nextDays == null ? "—" : `${next.nextDays} day(s)`}
-										</div>
-									</div>
-								) : (
-									"—"
-								)}
-							</td>
 							{showStatusColumn ? (
 								<td className="px-4 py-3">
 									{canEditEmployees ? (
@@ -1666,6 +1659,45 @@ liveNow,
 									</select>
 								</label>
 
+								<label className="text-sm text-black">
+									<div className="text-gray-600 mb-1">Hired From</div>
+									<input
+										type="date"
+										value={hiredFromFilter}
+										onChange={(e) => setHiredFromFilter(e.target.value)}
+										max={hiredToFilter || undefined}
+										className="w-full border rounded-xl px-3 py-2 bg-white"
+									/>
+								</label>
+
+								<label className="text-sm text-black">
+									<div className="text-gray-600 mb-1">Hired To</div>
+									<input
+										type="date"
+										value={hiredToFilter}
+										onChange={(e) => setHiredToFilter(e.target.value)}
+										min={hiredFromFilter || undefined}
+										className="w-full border rounded-xl px-3 py-2 bg-white"
+									/>
+								</label>
+
+								<label className="text-sm text-black">
+									<div className="text-gray-600 mb-1">Years of Service</div>
+									<select
+										value={yearsServiceFilter}
+										onChange={(e) => setYearsServiceFilter(e.target.value)}
+										className="w-full border rounded-xl px-3 py-2 bg-white"
+									>
+										<option value="ALL">All</option>
+										<option value="LT1">Less than 1 year</option>
+										{yearsServiceOptions.map((option) => (
+											<option key={option} value={option}>
+												{option} year{option === "1" ? "" : "s"}
+											</option>
+										))}
+									</select>
+								</label>
+
 
 								<label className="text-sm text-black">
                                   <div className="text-gray-600 mb-1">Hired Month</div>
@@ -1674,24 +1706,16 @@ liveNow,
   onChange={(e) => setHiredMonthFilter(e.target.value)}
   className="w-full border rounded-xl px-3 py-2 bg-white"
 >
-  <option value="ALL">All</option>
-  <option value="01">January</option>
-  <option value="02">February</option>
-  <option value="03">March</option>
-  <option value="04">April</option>
-  <option value="05">May</option>
-  <option value="06">June</option>
-  <option value="07">July</option>
-  <option value="08">August</option>
-  <option value="09">September</option>
-  <option value="10">October</option>
-  <option value="11">November</option>
-  <option value="12">December</option>
+  {HIRE_MONTH_OPTIONS.map((option) => (
+    <option key={option.value} value={option.value}>
+      {option.label}
+    </option>
+  ))}
 </select>
 
                                  </label>
 
-                                <label className="text-sm text-black">
+                                <label className="hidden">
                                   <div className="text-gray-600 mb-1">Years of Service</div>
                                     <select
                                         value={yearsServiceFilter}

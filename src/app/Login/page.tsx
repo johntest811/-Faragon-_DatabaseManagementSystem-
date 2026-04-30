@@ -6,6 +6,35 @@ import { usePathname, useRouter } from 'next/navigation';
 import { supabase } from '../Client/SupabaseClients';
 import { ArrowRight, Activity, BadgeCheck, ShieldCheck, Sparkles } from 'lucide-react';
 
+function isMissingLoginHistoryTableError(error: unknown) {
+  const text = String((error as { message?: unknown })?.message ?? error ?? '').toLowerCase();
+  return (
+    text.includes('admin_login_history') &&
+    (text.includes('does not exist') ||
+      text.includes('schema cache') ||
+      text.includes('relation') ||
+      text.includes('could not find the table'))
+  );
+}
+
+function isLoginHistoryPermissionError(error: unknown) {
+  const code = String((error as { code?: unknown })?.code ?? '').trim();
+  const text = String((error as { message?: unknown })?.message ?? error ?? '').toLowerCase();
+  return code === '42501' || text.includes('row-level security policy');
+}
+
+type LoginElectronApi = {
+  admin?: {
+    recordLoginHistory?: (payload: {
+      admin_id: string;
+      username: string;
+      full_name: string | null;
+      role: string | null;
+      logged_in_at: string;
+    }) => Promise<{ success?: boolean; missingTable?: boolean; unavailable?: boolean; error?: string }>;
+  };
+};
+
 export default function Login() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -14,6 +43,7 @@ export default function Login() {
   const router = useRouter();
   const pathname = usePathname() ?? '';
   const usernameRef = useRef<HTMLInputElement | null>(null);
+  const electronAPI = (globalThis as { electronAPI?: LoginElectronApi }).electronAPI;
 
   useEffect(() => {
     if (!pathname.startsWith('/Login')) return;
@@ -98,17 +128,51 @@ export default function Login() {
         return;
       }
 
+      const loginAtIso = new Date().toISOString();
+
       await supabase
         .from('admins')
-        .update({ last_login: new Date().toISOString() })
+        .update({ last_login: loginAtIso })
         .eq('id', admin.id);
+
+      if (electronAPI?.admin?.recordLoginHistory) {
+        try {
+          const loginHistoryResult = await electronAPI.admin.recordLoginHistory({
+            admin_id: String(admin.id),
+            username: admin.username,
+            full_name: admin.full_name ?? null,
+            role: admin.role ?? null,
+            logged_in_at: loginAtIso,
+          });
+          if (loginHistoryResult?.error && !loginHistoryResult.missingTable) {
+            console.warn('[login] failed to write admin login history:', loginHistoryResult.error);
+          }
+        } catch (historyError) {
+          console.warn('[login] failed to write admin login history:', historyError);
+        }
+      } else {
+        const loginHistoryRes = await supabase.from('admin_login_history').insert({
+          admin_id: admin.id,
+          username: admin.username,
+          full_name: admin.full_name ?? null,
+          role: admin.role ?? null,
+          logged_in_at: loginAtIso,
+        });
+        if (
+          loginHistoryRes.error &&
+          !isMissingLoginHistoryTableError(loginHistoryRes.error) &&
+          !isLoginHistoryPermissionError(loginHistoryRes.error)
+        ) {
+          console.warn('[login] failed to write admin login history:', loginHistoryRes.error);
+        }
+      }
 
       const sessionData = {
         id: String(admin.id),
         username: admin.username,
         full_name: admin.full_name ?? null,
         role: String(admin.role ?? "").trim().toLowerCase(),
-        loginTime: new Date().toISOString(),
+        loginTime: loginAtIso,
       };
       localStorage.setItem('adminSession', JSON.stringify(sessionData));
 
@@ -149,7 +213,10 @@ export default function Login() {
                   <Image src="/Logo.png" alt="Faragon Security Agency logo" width={96} height={96} className="h-full w-full object-contain" priority />
                 </div>
                 <div className="max-w-md">
-                  <h1 className="text-4xl font-semibold tracking-tight text-white sm:text-5xl">Faragon</h1>
+                  <h1 className="font-brand-serif text-4xl font-semibold tracking-tight text-white sm:text-5xl">Faragon</h1>
+                  <p className="font-brand-serif mt-2 text-sm uppercase tracking-[0.18em] text-white/72">
+                    Faragon Security Agency, Inc.
+                  </p>
                   <p className="mt-3 text-sm leading-6 text-white/80">
                     A focused workspace for employee records, inventory, requests, and notification workflows.
                   </p>

@@ -286,10 +286,24 @@ export default function AdminAccountsPage() {
 
 		const ok = window.confirm(`Permanently delete ${a.username}?`);
 		if (!ok) return;
+
+		const { error: clearRequesterErr } = await supabase
+			.from("access_requests")
+			.update({ requester_admin_id: null })
+			.eq("requester_admin_id", a.id);
+		if (clearRequesterErr) return setError(clearRequesterErr.message);
+
+		const { error: clearApproverErr } = await supabase
+			.from("access_requests")
+			.update({ approver_admin_id: null })
+			.eq("approver_admin_id", a.id);
+		if (clearApproverErr) return setError(clearApproverErr.message);
+
 		const { error: delErr } = await supabase.from("admins").delete().eq("id", a.id);
 		if (delErr) return setError(delErr.message);
 		setSuccess("Account deleted.");
 		logAudit("ADMIN_DELETE_ACCOUNT", { id: a.id, username: a.username });
+		void loadAccounts();
 	}
 
 	const accessDenied = role !== null && role !== "superadmin";

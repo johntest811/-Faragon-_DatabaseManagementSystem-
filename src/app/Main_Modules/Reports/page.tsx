@@ -302,11 +302,11 @@ export default function LogisticsReportsPage() {
           <div className="text-xs text-gray-500 mt-1">Total: {contractsSummary.total}</div>
           {contractsState.error ? <div className="text-xs text-red-600 mt-2">{contractsState.error}</div> : null}
         </div>
-        <div className="glass-panel animate-scale-in rounded-2xl border-none p-4">
+        {/* <div className="glass-panel animate-scale-in rounded-2xl border-none p-4">
           <div className="text-xs text-gray-500">Deployed Guards</div>
           <div className="text-2xl font-bold text-black mt-1">{contractsSummary.totalDeployed}</div>
           <div className="text-xs text-gray-500 mt-1">Contracted: {contractsSummary.totalManpower}</div>
-        </div>
+        </div> */}
         <div className="glass-panel animate-scale-in rounded-2xl border-none p-4">
           <div className="text-xs text-gray-500">Inventory Value</div>
           <div className="text-2xl font-bold text-black mt-1">₱ {moneyPhp(inventorySummary.totalValue)}</div>

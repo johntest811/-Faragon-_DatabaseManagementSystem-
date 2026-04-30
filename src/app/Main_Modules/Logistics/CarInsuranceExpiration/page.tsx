@@ -71,6 +71,14 @@ type CarInsuranceImportRow = {
   remarks: string;
 };
 
+type NotificationRecipientRow = {
+  id: number;
+  email: string;
+  is_active: boolean;
+  notes: string | null;
+  created_at: string;
+};
+
 type TableField = {
   key:
     | "recordNo"
@@ -233,22 +241,6 @@ function getPolicyExpirationDays(row: CarInsuranceRow) {
 
 function getCarRegistrationExpirationDays(row: CarInsuranceRow) {
   return daysUntil(row.car_registration_to_date);
-}
-
-function nextExpirationForRow(row: CarInsuranceRow) {
-  const options = [
-    { label: "Policy Term", from: row.policy_from_date, to: row.expires_on, days: getPolicyExpirationDays(row) },
-    {
-      label: "Car Registration Date",
-      from: row.car_registration_from_date,
-      to: row.car_registration_to_date,
-      days: getCarRegistrationExpirationDays(row),
-    },
-  ].filter((item) => item.days !== null) as Array<{ label: string; from: string | null; to: string | null; days: number }>;
-
-  if (!options.length) return null;
-  options.sort((a, b) => a.days - b.days);
-  return options[0];
 }
 
 function renderDateGroup(label: string, fromLabel: string, fromValue: string | null, toLabel: string, toValue: string | null) {
@@ -478,6 +470,15 @@ export default function CarInsuranceExpirationPage() {
   const [form, setForm] = useState<CarInsuranceForm>(emptyForm());
   const [formOpen, setFormOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  const [recipientRows, setRecipientRows] = useState<NotificationRecipientRow[]>([]);
+  const [recipientSaving, setRecipientSaving] = useState(false);
+  const [addRecipientOpen, setAddRecipientOpen] = useState(false);
+  const [recipientEmail, setRecipientEmail] = useState("");
+  const [recipientNotes, setRecipientNotes] = useState("");
+  const [editingRecipientId, setEditingRecipientId] = useState<number | null>(null);
+  const [editRecipientEmail, setEditRecipientEmail] = useState("");
+  const [editRecipientNotes, setEditRecipientNotes] = useState("");
+  const [editRecipientActive, setEditRecipientActive] = useState(true);
 
   const nextRecordNo = useMemo(() => getNextRecordNo(rows), [rows]);
 
@@ -490,7 +491,7 @@ export default function CarInsuranceExpirationPage() {
   }, [editingId, form.recordNo, nextRecordNo]);
 
   useEffect(() => {
-    if (!formOpen && !importOpen) return;
+    if (!formOpen && !importOpen && !addRecipientOpen && editingRecipientId === null) return;
 
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
@@ -498,7 +499,7 @@ export default function CarInsuranceExpirationPage() {
     return () => {
       document.body.style.overflow = previousOverflow;
     };
-  }, [formOpen, importOpen]);
+  }, [formOpen, importOpen, addRecipientOpen, editingRecipientId]);
 
   async function loadRows(options?: { showSpinner?: boolean }) {
     const showSpinner = options?.showSpinner !== false;
@@ -551,6 +552,20 @@ export default function CarInsuranceExpirationPage() {
     }
   }
 
+  async function loadRecipientRows() {
+    try {
+      const res = await supabase
+        .from("car_insurance_notification_recipients")
+        .select("id, email, is_active, notes, created_at")
+        .order("created_at", { ascending: true });
+      if (res.error) throw res.error;
+      setRecipientRows((res.data as NotificationRecipientRow[]) ?? []);
+    } catch (e: unknown) {
+      setRecipientRows([]);
+      setError(getErrorMessage(e, "Failed to load car insurance notification recipients."));
+    }
+  }
+
   useEffect(() => {
     if (accessLoading) return;
     if (!canAccess) {
@@ -558,7 +573,7 @@ export default function CarInsuranceExpirationPage() {
       return;
     }
     void loadRows();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    void loadRecipientRows();
   }, [accessLoading, canAccess]);
 
   const filteredRows = useMemo(() => {
@@ -636,6 +651,105 @@ export default function CarInsuranceExpirationPage() {
     setError("");
     setSuccess("");
     setFormOpen(false);
+  }
+
+  function resetRecipientForm() {
+    setRecipientEmail("");
+    setRecipientNotes("");
+    setAddRecipientOpen(false);
+  }
+
+  function openRecipientEditor(row: NotificationRecipientRow) {
+    setEditingRecipientId(row.id);
+    setEditRecipientEmail(row.email);
+    setEditRecipientNotes(row.notes ?? "");
+    setEditRecipientActive(Boolean(row.is_active));
+    setError("");
+    setSuccess("");
+  }
+
+  function closeRecipientEditor() {
+    setEditingRecipientId(null);
+    setEditRecipientEmail("");
+    setEditRecipientNotes("");
+    setEditRecipientActive(true);
+  }
+
+  async function addRecipient() {
+    setRecipientSaving(true);
+    setError("");
+    setSuccess("");
+    try {
+      const email = cleanText(recipientEmail).toLowerCase();
+      if (!email) throw new Error("Recipient email is required.");
+      const ins = await supabase.from("car_insurance_notification_recipients").insert({
+        email,
+        notes: cleanText(recipientNotes) || null,
+        is_active: true,
+      });
+      if (ins.error) throw ins.error;
+      resetRecipientForm();
+      setSuccess("Car insurance recipient added.");
+      await loadRecipientRows();
+    } catch (e: unknown) {
+      setError(getErrorMessage(e, "Failed to add car insurance recipient."));
+    } finally {
+      setRecipientSaving(false);
+    }
+  }
+
+  async function saveRecipientEdit() {
+    if (!editingRecipientId) return;
+    setRecipientSaving(true);
+    setError("");
+    setSuccess("");
+    try {
+      const email = cleanText(editRecipientEmail).toLowerCase();
+      if (!email) throw new Error("Recipient email is required.");
+      const upd = await supabase
+        .from("car_insurance_notification_recipients")
+        .update({
+          email,
+          notes: cleanText(editRecipientNotes) || null,
+          is_active: Boolean(editRecipientActive),
+        })
+        .eq("id", editingRecipientId);
+      if (upd.error) throw upd.error;
+      closeRecipientEditor();
+      setSuccess("Car insurance recipient updated.");
+      await loadRecipientRows();
+    } catch (e: unknown) {
+      setError(getErrorMessage(e, "Failed to update car insurance recipient."));
+    } finally {
+      setRecipientSaving(false);
+    }
+  }
+
+  async function toggleRecipient(id: number, isActive: boolean) {
+    try {
+      const upd = await supabase
+        .from("car_insurance_notification_recipients")
+        .update({ is_active: isActive })
+        .eq("id", id);
+      if (upd.error) throw upd.error;
+      await loadRecipientRows();
+    } catch (e: unknown) {
+      setError(getErrorMessage(e, "Failed to update recipient status."));
+    }
+  }
+
+  async function removeRecipient(id: number) {
+    try {
+      const ok = window.confirm("Remove this car insurance recipient?");
+      if (!ok) return;
+      const del = await supabase.from("car_insurance_notification_recipients").delete().eq("id", id);
+      if (del.error) throw del.error;
+      if (editingRecipientId === id) closeRecipientEditor();
+      setSuccess("Car insurance recipient removed.");
+      await loadRecipientRows();
+    } catch (e: unknown) {
+      setError(getErrorMessage(e, "Failed to remove recipient."));
+    }
   }
 
   async function saveRecord() {
@@ -994,7 +1108,7 @@ export default function CarInsuranceExpirationPage() {
             <div className="text-2xl font-semibold text-black">{PAGE_TITLE}</div>
             <div className="mt-1 max-w-4xl text-sm text-gray-500">
               Track patrol vehicles, insurance providers, policy term dates, and car registration dates. Reminder emails use
-              the shared Gmail sender and the Days Before Expiry value on each record.
+              the shared Gmail sender, this page&apos;s own recipient list, and the Days Before Expiry value on each record.
             </div>
           </div>
 
@@ -1060,8 +1174,95 @@ export default function CarInsuranceExpirationPage() {
         ) : null}
 
         <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
-          The reminders for this page use the same Gmail delivery pipeline as the rest of the expiration system.
+          The reminders for this page use the same Gmail delivery pipeline as the rest of the expiration system, but they send to a separate Car Insurance recipient list.
         </div>
+
+        <section className="rounded-2xl border border-white/70 bg-white/90 p-4 shadow-sm space-y-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <div className="text-lg font-semibold text-black">Car insurance notification recipients</div>
+              <div className="text-sm text-gray-500">
+                Separate from the Settings page recipient list. Policy Term and Car Registration reminders for this module send to these inboxes.
+              </div>
+            </div>
+
+            {canEditRecords ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setAddRecipientOpen(true);
+                  setError("");
+                  setSuccess("");
+                }}
+                className="inline-flex items-center gap-2 rounded-xl bg-[#FFDA03] px-4 py-2 text-sm font-semibold text-black hover:brightness-95"
+              >
+                <Plus className="h-4 w-4" />
+                Add recipient
+              </button>
+            ) : null}
+          </div>
+
+          <div className="overflow-auto rounded-2xl border border-gray-100">
+            <table className="min-w-[640px] w-full text-sm text-black">
+              <thead className="bg-[#FFDA03]">
+                <tr>
+                  <th className="border-b border-[#E2C100] px-3 py-3 text-left text-xs font-semibold uppercase tracking-wide text-black">Email</th>
+                  <th className="border-b border-[#E2C100] px-3 py-3 text-left text-xs font-semibold uppercase tracking-wide text-black">Active</th>
+                  <th className="border-b border-[#E2C100] px-3 py-3 text-left text-xs font-semibold uppercase tracking-wide text-black">Notes</th>
+                  <th className="border-b border-[#E2C100] px-3 py-3 text-left text-xs font-semibold uppercase tracking-wide text-black">Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {recipientRows.length ? (
+                  recipientRows.map((row, index) => (
+                    <tr key={row.id} className={index % 2 === 0 ? "bg-white" : "bg-gray-50/60"}>
+                      <td className="border-b border-gray-100 px-3 py-3">{row.email}</td>
+                      <td className="border-b border-gray-100 px-3 py-3">
+                        <input
+                          type="checkbox"
+                          checked={row.is_active}
+                          disabled={!canEditRecords}
+                          onChange={(e) => void toggleRecipient(row.id, e.target.checked)}
+                        />
+                      </td>
+                      <td className="border-b border-gray-100 px-3 py-3 text-gray-700">{row.notes || "—"}</td>
+                      <td className="border-b border-gray-100 px-3 py-3">
+                        <div className="flex items-center gap-2">
+                          {canEditRecords ? (
+                            <button
+                              type="button"
+                              onClick={() => openRecipientEditor(row)}
+                              className="inline-flex items-center gap-1 rounded-xl border bg-white px-3 py-2 text-xs font-medium text-black hover:bg-white"
+                            >
+                              <PencilLine className="h-3.5 w-3.5" />
+                              Edit
+                            </button>
+                          ) : null}
+                          {canEditRecords ? (
+                            <button
+                              type="button"
+                              onClick={() => void removeRecipient(row.id)}
+                              className="inline-flex items-center gap-1 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-medium text-red-700 hover:bg-red-100"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                              Remove
+                            </button>
+                          ) : null}
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan={4} className="px-3 py-8 text-center text-sm text-gray-500">
+                      No car insurance recipient emails configured yet.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </section>
 
         <section className="rounded-2xl border border-white/70 bg-white/90 p-4 shadow-sm space-y-4">
           <div className="flex flex-wrap items-start justify-between gap-3">
@@ -1133,7 +1334,7 @@ export default function CarInsuranceExpirationPage() {
           </div>
 
           <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
-            Reminder emails use the shared Gmail sender and the notification recipients configured in Settings.
+            Reminder emails use the shared Gmail sender and this page&apos;s separate Car Insurance recipient list.
           </div>
         </section>
 
@@ -1375,6 +1576,117 @@ export default function CarInsuranceExpirationPage() {
             "Car Registration Date - Expiration",
           ]}
         />
+
+        {addRecipientOpen ? (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={resetRecipientForm}>
+            <div className="w-full max-w-lg rounded-3xl border border-white/60 bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-start justify-between gap-3 border-b px-6 py-4">
+                <div>
+                  <div className="text-lg font-semibold text-black">Add recipient</div>
+                  <div className="text-sm text-gray-500">Add an inbox that should receive Car Insurance reminders.</div>
+                </div>
+                <button type="button" onClick={resetRecipientForm} className="rounded-xl border bg-white px-4 py-2 text-sm font-medium text-black hover:bg-white">
+                  Close
+                </button>
+              </div>
+
+              <div className="space-y-4 px-6 py-6">
+                <label className="block space-y-1">
+                  <span className="text-sm font-medium text-black">Recipient email</span>
+                  <input
+                    value={recipientEmail}
+                    onChange={(e) => setRecipientEmail(e.target.value)}
+                    placeholder="name@example.com"
+                    className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-black"
+                  />
+                </label>
+
+                <label className="block space-y-1">
+                  <span className="text-sm font-medium text-black">Notes</span>
+                  <textarea
+                    rows={3}
+                    value={recipientNotes}
+                    onChange={(e) => setRecipientNotes(e.target.value)}
+                    placeholder="Optional notes"
+                    className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-black"
+                  />
+                </label>
+
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-xs text-gray-500">This recipient list is separate from Settings.</div>
+                  <button
+                    type="button"
+                    onClick={() => void addRecipient()}
+                    disabled={recipientSaving}
+                    className="inline-flex items-center gap-2 rounded-xl bg-[#FFDA03] px-4 py-2 text-sm font-semibold text-black disabled:opacity-50 hover:brightness-95"
+                  >
+                    {recipientSaving ? "Saving..." : "Add recipient"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {editingRecipientId !== null ? (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={closeRecipientEditor}>
+            <div className="w-full max-w-lg rounded-3xl border border-white/60 bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-start justify-between gap-3 border-b px-6 py-4">
+                <div>
+                  <div className="text-lg font-semibold text-black">Edit recipient</div>
+                  <div className="text-sm text-gray-500">Update this Car Insurance notification inbox.</div>
+                </div>
+                <button type="button" onClick={closeRecipientEditor} className="rounded-xl border bg-white px-4 py-2 text-sm font-medium text-black hover:bg-white">
+                  Close
+                </button>
+              </div>
+
+              <div className="space-y-4 px-6 py-6">
+                <label className="block space-y-1">
+                  <span className="text-sm font-medium text-black">Recipient email</span>
+                  <input
+                    value={editRecipientEmail}
+                    onChange={(e) => setEditRecipientEmail(e.target.value)}
+                    placeholder="name@example.com"
+                    className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-black"
+                  />
+                </label>
+
+                <label className="block space-y-1">
+                  <span className="text-sm font-medium text-black">Notes</span>
+                  <textarea
+                    rows={3}
+                    value={editRecipientNotes}
+                    onChange={(e) => setEditRecipientNotes(e.target.value)}
+                    placeholder="Optional notes"
+                    className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-black"
+                  />
+                </label>
+
+                <label className="inline-flex items-center gap-2 text-sm text-black">
+                  <input
+                    type="checkbox"
+                    checked={editRecipientActive}
+                    onChange={(e) => setEditRecipientActive(e.target.checked)}
+                  />
+                  Active
+                </label>
+
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-xs text-gray-500">Only active recipients receive Car Insurance reminders.</div>
+                  <button
+                    type="button"
+                    onClick={() => void saveRecipientEdit()}
+                    disabled={recipientSaving}
+                    className="inline-flex items-center gap-2 rounded-xl bg-[#FFDA03] px-4 py-2 text-sm font-semibold text-black disabled:opacity-50 hover:brightness-95"
+                  >
+                    {recipientSaving ? "Saving..." : "Save recipient"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : null}
       </section>
     </TableZoomWrapper>
   );

@@ -11,6 +11,7 @@ import { formatPermissionColumnLabel } from "../../Components/permissionCatalog"
 
 type ApplicantOption = {
   applicant_id: string;
+  custom_id: string | null;
   first_name: string | null;
   middle_name: string | null;
   last_name: string | null;
@@ -72,7 +73,7 @@ function moduleKeysForRequest(moduleKey: string): string[] {
   const key = String(moduleKey ?? "").trim().toLowerCase();
   if (!key) return [];
   if (key === "logistics") {
-    return ["client", "inventory", "paraphernalia", "reports", "car_insurance_expiration", "logistics"];
+    return ["inventory", "paraphernalia", "reports", "car_insurance_expiration", "logistics"];
   }
   return [key];
 }
@@ -152,7 +153,8 @@ const PENDING_REQUEST_COLUMNS = [
 function applicantLabel(a: ApplicantOption) {
   const parts = [a.first_name, a.middle_name, a.last_name].filter(Boolean);
   const name = parts.length ? parts.join(" ") : "(No name)";
-  return `${name} — ${a.applicant_id.slice(0, 8).toUpperCase()}`;
+  const customId = String(a.custom_id ?? "").trim();
+  return `${name} — ${customId || a.applicant_id.slice(0, 8).toUpperCase()}`;
 }
 
 function requestColumnKeys(row: AccessRequestRow) {
@@ -217,7 +219,7 @@ export default function RequestsQueuePage() {
     try {
       const { data, error: fetchErr } = await supabase
         .from("applicants")
-        .select("applicant_id, first_name, middle_name, last_name")
+        .select("applicant_id, custom_id, first_name, middle_name, last_name")
         .eq("is_archived", false)
         .eq("is_trashed", false)
         .order("last_name", { ascending: true })

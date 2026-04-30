@@ -8,7 +8,7 @@ import { useAuthRole, useMyModuleDeleteAccess } from "../../Client/useRbac";
 import LoadingCircle from "../../Components/LoadingCircle";
 import TableZoomWrapper from "@/app/Components/TableZoomWrapper";
 import EmployeeStatusMenu from "../Components/EmployeeStatusMenu";
-import { buildEmployeeStatusUpdatePatch, loadLicensureMap } from "../employeeListData";
+import { buildEmployeeStatusUpdatePatch } from "../employeeListData";
 import { useLiveNow } from "../../Client/useLiveNow";
 
 type Applicant = {
@@ -112,9 +112,6 @@ export default function ArchivePage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>("");
   const [items, setItems] = useState<Applicant[]>([]);
-  const [licensureByApplicantId, setLicensureByApplicantId] = useState<
-    Record<string, { nextYmd: string | null; nextDays: number | null }>
-  >({});
   const fetchRunIdRef = useRef(0);
   const [search, setSearch] = useState("");
   const [sortBy, setSortBy] = useState<"name" | "last_name" | "letter" | "created_at" | "category" | "service">("name");
@@ -179,25 +176,9 @@ export default function ArchivePage() {
         console.error(fetchError);
         setError(fetchError.message || "Failed to load archive");
         setItems([]);
-        setLicensureByApplicantId({});
       } else {
         const list = (data as Applicant[]) || [];
         setItems(list);
-
-        setLoading(false);
-
-        void (async () => {
-          try {
-            const ids = list.map((x) => x.applicant_id).filter(Boolean);
-            const map = await loadLicensureMap(ids);
-            if (fetchRunIdRef.current !== fetchRunId) return;
-            setLicensureByApplicantId(map);
-          } catch {
-            if (fetchRunIdRef.current === fetchRunId) {
-              setLicensureByApplicantId({});
-            }
-          }
-        })();
       }
       if (fetchRunIdRef.current === fetchRunId) setLoading(false);
     };
@@ -471,12 +452,8 @@ export default function ArchivePage() {
             <th className="px-4 py-3 text-left font-semibold text-black first:rounded-l-xl">Photo</th>
             <th className="px-4 py-3 text-left font-semibold text-black">Name</th>
             <th className="px-4 py-3 text-left font-semibold text-black">Position</th>
-            <th className="px-4 py-3 text-left font-semibold text-black">Gender</th>
-            <th className="px-4 py-3 text-left font-semibold text-black">Birth Date</th>
-            <th className="px-4 py-3 text-left font-semibold text-black">Age</th>
             <th className="px-4 py-3 text-left font-semibold text-black">Hired Date</th>
             <th className="px-4 py-3 text-left font-semibold text-black">Detachment</th>
-            <th className="px-4 py-3 text-left font-semibold text-black">Next License Expiry</th>
             <th className="px-4 py-3 text-left font-semibold text-black">Status</th>
             <th className="px-4 py-3 text-center font-semibold text-black last:rounded-r-xl">Actions</th>
           </tr>
@@ -484,7 +461,6 @@ export default function ArchivePage() {
         <tbody>
           {filtered.map((e) => {
             const profileUrl = getProfileUrl(e.profile_image_path);
-            const next = licensureByApplicantId[e.applicant_id] || { nextYmd: null, nextDays: null };
             const detailsHref = `/Main_Modules/Employees/details/?id=${encodeURIComponent(
               e.applicant_id
             )}&from=${encodeURIComponent("/Main_Modules/Archive/")}`;
@@ -510,9 +486,6 @@ export default function ArchivePage() {
                 </td>
                 <td className="px-4 py-3 font-semibold">{getFullName(e)}</td>
                 <td className="px-4 py-3">{e.client_position ?? "—"}</td>
-                <td className="px-4 py-3">{e.gender ?? "—"}</td>
-                <td className="px-4 py-3">{e.birth_date ?? "—"}</td>
-                <td className="px-4 py-3">{e.age ?? "—"}</td>
                 <td className="px-4 py-3">
                   {e.date_hired_fsai ? (
                     <div className="leading-tight">{new Date(e.date_hired_fsai).toLocaleDateString()}</div>
@@ -521,16 +494,6 @@ export default function ArchivePage() {
                   )}
                 </td>
                 <td className="px-4 py-3">{e.detachment ?? "—"}</td>
-                <td className="px-4 py-3">
-                  {next.nextYmd ? (
-                    <div className="leading-tight">
-                      <div>{next.nextYmd}</div>
-                      <div className="text-xs text-gray-500">{next.nextDays == null ? "—" : `${next.nextDays} day(s)`}</div>
-                    </div>
-                  ) : (
-                    "—"
-                  )}
-                </td>
                 <td className="px-4 py-3">
                   {sessionRole !== "employee" ? (
                     <EmployeeStatusMenu value={normalizeStatus(e.status)} onChange={(nextStatus) => void updateEmployeeStatus(e, nextStatus)} />

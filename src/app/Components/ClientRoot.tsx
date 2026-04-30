@@ -26,6 +26,7 @@ const APP_REFRESH_TABLES = [
   "notification_preferences",
   "notification_email_settings",
   "notification_recipients",
+  "car_insurance_notification_recipients",
   "other_expiration_items",
   "licensure",
   "audit_log",

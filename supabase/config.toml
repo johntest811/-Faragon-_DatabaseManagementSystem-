@@ -1,0 +1,2 @@
+[functions.notification-worker]
+verify_jwt = false

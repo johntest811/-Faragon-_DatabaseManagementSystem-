@@ -11,6 +11,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     createUser: (payload) => ipcRenderer.invoke('admin:createUser', payload),
     deleteUserPermanently: (payload) => ipcRenderer.invoke('admin:deleteUserPermanently', payload),
     exportDatabaseExcel: () => ipcRenderer.invoke('admin:exportDatabaseExcel'),
+    recordLoginHistory: (payload) => ipcRenderer.invoke('admin:recordLoginHistory', payload),
+    getLoginHistory: (payload) => ipcRenderer.invoke('admin:getLoginHistory', payload),
   },
 
   settings: {
@@ -23,11 +25,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 
   notifications: {
-    previewExpiring: (payload) => ipcRenderer.invoke('notifications:previewExpiring', payload),
     getExpiringSummary: (payload) => ipcRenderer.invoke('notifications:getExpiringSummary', payload),
     resendLicensureNotice: (payload) => ipcRenderer.invoke('notifications:resendLicensureNotice', payload),
     resendAllExpiring: (payload) => ipcRenderer.invoke('notifications:resendAllExpiring', payload),
     getLog: (payload) => ipcRenderer.invoke('notifications:getLog', payload),
+    loadLogRetentionConfig: () => ipcRenderer.invoke('notifications:loadLogRetentionConfig'),
+    saveLogRetentionConfig: (payload) => ipcRenderer.invoke('notifications:saveLogRetentionConfig', payload),
+    clearLog: () => ipcRenderer.invoke('notifications:clearLog'),
     sendTestEmail: (payload) => ipcRenderer.invoke('notifications:sendTestEmail', payload),
     runNow: () => ipcRenderer.invoke('notifications:runNow'),
   },

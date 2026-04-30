@@ -1569,7 +1569,6 @@ export default function ClientsPage() {
           <thead className="sticky top-0 z-10">
             <tr className="bg-[#FFDA03]">
               {[
-                "Contract No.",
                 "Contract No Date",
                 "Client Name",
                 "Project Name",
@@ -1596,7 +1595,7 @@ export default function ClientsPage() {
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan={13} className="px-4 py-8 text-center text-gray-500">
+                <td colSpan={12} className="px-4 py-8 text-center text-gray-500">
                   <LoadingCircle label="Loading contracts..." className="py-2" />
                 </td>
               </tr>
@@ -1607,8 +1606,7 @@ export default function ClientsPage() {
                   onClick={() => void openDetails(row)}
                   className="animated-row border-b border-gray-100 transition hover:shadow-md cursor-pointer"
                 >
-                  <td className="px-4 py-3 rounded-l-xl">{fmt(row.contract_no)}</td>
-                  <td className="px-4 py-3">{fmt(row.contract_no_date)}</td>
+                  <td className="px-4 py-3 rounded-l-xl">{fmt(row.contract_no_date)}</td>
                   <td className="px-4 py-3">{fmt(row.client_name)}</td>
                   <td className="px-4 py-3">{fmt(row.project_name)}</td>
                   <td className="px-4 py-3">{fmt(row.specific_area)}</td>
@@ -1624,7 +1622,7 @@ export default function ClientsPage() {
               ))
             ) : (
               <tr>
-                <td colSpan={13} className="px-4 py-8 text-center text-gray-500">No contracts found.</td>
+                <td colSpan={12} className="px-4 py-8 text-center text-gray-500">No contracts found.</td>
               </tr>
             )}
           </tbody>

@@ -18,6 +18,10 @@ let adminSupabaseClientKey = null;
 let cachedTransporter = null;
 let cachedTransporterKey = null;
 const throttledWarnings = new Map();
+const PARALLEL_SUPABASE_QUERY_CONCURRENCY = 4;
+const SMTP_POOL_CONNECTIONS = 3;
+const SMTP_SEND_CONCURRENCY = 3;
+const NOTIFICATION_TIMER_INTERVAL_MS = 15 * 1000;
 
 function collectMainEnvCandidates() {
   const out = [];
@@ -144,6 +148,35 @@ function clampInt(n, { min, max, fallback }) {
   if (i < min) return min;
   if (i > max) return max;
   return i;
+}
+
+function chunkArray(values, chunkSize) {
+  const size = Math.max(1, Number(chunkSize) || 1);
+  const out = [];
+  for (let i = 0; i < values.length; i += size) {
+    out.push(values.slice(i, i + size));
+  }
+  return out;
+}
+
+async function mapWithConcurrency(items, worker, concurrency = 1) {
+  const list = Array.isArray(items) ? items : [];
+  if (!list.length) return [];
+
+  const results = new Array(list.length);
+  const workerCount = Math.max(1, Math.min(Number(concurrency) || 1, list.length));
+  let cursor = 0;
+
+  async function runWorker() {
+    while (true) {
+      const index = cursor++;
+      if (index >= list.length) return;
+      results[index] = await worker(list[index], index);
+    }
+  }
+
+  await Promise.all(Array.from({ length: workerCount }, () => runWorker()));
+  return results;
 }
 
 function extractErrorMessageText(err) {
@@ -504,15 +537,14 @@ async function insertAuditEvent(admin, payload) {
   }
 }
 
-async function fetchAuditLogRows(admin, { limit = 10, page = null, pageSize = null, sinceIso = '' } = {}) {
+async function fetchAuditLogRows(admin, { limit = 10, page = null, pageSize = null, sinceIso = '', withCount = true } = {}) {
   const selectWithActorName = 'id, created_at, actor_email, actor_user_id, actor_name, action, page, entity, details';
   const selectWithoutActorName = 'id, created_at, actor_email, actor_user_id, action, page, entity, details';
 
   const buildQuery = (selectClause) => {
-    let q = admin
-      .from('audit_log')
-      .select(selectClause, { count: 'exact' })
-      .order('created_at', { ascending: false });
+    let q = admin.from('audit_log');
+    q = withCount ? q.select(selectClause, { count: 'exact' }) : q.select(selectClause);
+    q = q.order('created_at', { ascending: false });
 
     if (sinceIso) q = q.gte('created_at', sinceIso);
 
@@ -533,6 +565,66 @@ async function fetchAuditLogRows(admin, { limit = 10, page = null, pageSize = nu
   }
 
   return res;
+}
+
+function normalizeAuditSearchTerm(value) {
+  return safeText(value).toLowerCase().replace(/\s+/g, ' ');
+}
+
+function auditDetailsToSearchText(details) {
+  if (details == null) return '';
+  if (typeof details === 'string') return safeText(details);
+  try {
+    return safeText(JSON.stringify(details));
+  } catch {
+    return '';
+  }
+}
+
+function auditRowMatchesSearch(row, searchTerm) {
+  if (!searchTerm) return true;
+  const haystack = [
+    row?.created_at,
+    row?.actor_name,
+    row?.actor_email,
+    row?.actor_user_id,
+    row?.action,
+    row?.page,
+    row?.entity,
+    auditDetailsToSearchText(row?.details),
+  ]
+    .map((value) => safeText(value).toLowerCase())
+    .join(' ');
+  return haystack.includes(searchTerm);
+}
+
+async function fetchAllAuditLogRows(admin, { batchSize = 1000 } = {}) {
+  const rows = [];
+  let totalCount = null;
+  let page = 1;
+
+  while (true) {
+    const res = await fetchAuditLogRows(admin, {
+      page,
+      pageSize: batchSize,
+      withCount: page === 1,
+    });
+    if (res.error) return res;
+
+    const nextRows = Array.isArray(res.data) ? res.data : [];
+    rows.push(...nextRows);
+
+    if (page === 1) {
+      const firstCount = Number(res.count);
+      totalCount = Number.isFinite(firstCount) ? firstCount : null;
+    }
+
+    if (!nextRows.length || nextRows.length < batchSize || (totalCount != null && rows.length >= totalCount)) {
+      return { data: rows, count: totalCount ?? rows.length, error: null };
+    }
+
+    page += 1;
+  }
 }
 
 function readEncryptedJson(filePath) {
@@ -569,14 +661,31 @@ function loadLocalNotificationPrefs() {
     // Backwards-compatible local fallback for DBs missing `send_to_employees`.
     // Default: true.
     sendToEmployees: raw.sendToEmployees === false ? false : true,
+    notificationLogRetentionDays: clampInt(raw.notificationLogRetentionDays, { min: 7, max: 365, fallback: 30 }),
   };
 }
 
 function saveLocalNotificationPrefs(payload) {
+  const current = loadLocalNotificationPrefs();
   const next = {
-    includeExpired: Boolean(payload?.includeExpired),
-    expiredWithinDays: clampInt(payload?.expiredWithinDays, { min: 1, max: 365, fallback: 7 }),
-    sendToEmployees: payload?.sendToEmployees === false ? false : true,
+    includeExpired:
+      typeof payload?.includeExpired === 'boolean' ? payload.includeExpired : Boolean(current.includeExpired),
+    expiredWithinDays: clampInt(payload?.expiredWithinDays, {
+      min: 1,
+      max: 365,
+      fallback: current.expiredWithinDays,
+    }),
+    sendToEmployees:
+      typeof payload?.sendToEmployees === 'boolean'
+        ? payload.sendToEmployees
+        : current.sendToEmployees === false
+          ? false
+          : true,
+    notificationLogRetentionDays: clampInt(payload?.notificationLogRetentionDays, {
+      min: 7,
+      max: 365,
+      fallback: current.notificationLogRetentionDays,
+    }),
   };
 
   writeEncryptedJson(getLocalNotificationPrefsFilePath(), next);
@@ -606,10 +715,10 @@ function daysUntil(dateYmd) {
   return Math.round((target.getTime() - today.getTime()) / (24 * 60 * 60 * 1000));
 }
 
-async function loadConfiguredRecipientEmails(admin) {
+async function loadRecipientEmailsFromTable(admin, tableName, throttleScope) {
   try {
     const res = await admin
-      .from('notification_recipients')
+      .from(tableName)
       .select('email')
       .eq('is_active', true)
       .order('created_at', { ascending: true })
@@ -621,19 +730,35 @@ async function loadConfiguredRecipientEmails(admin) {
     return Array.from(new Set(emails));
   } catch (e) {
     const msg = extractErrorMessageText(e);
-    if (isMissingTableMessage(msg, 'notification_recipients')) {
+    if (isMissingTableMessage(msg, tableName)) {
       // Backward compatibility: older DBs may not have this table yet.
       return [];
     }
 
     if (isTransientNetworkError(e)) {
-      warnThrottled('notifications.loadConfiguredRecipientEmails', e, 180000);
+      warnThrottled(throttleScope, e, 180000);
       return [];
     }
 
-    console.warn('[notifications] loadConfiguredRecipientEmails skipped:', e?.message ?? e);
+    console.warn(`[notifications] ${throttleScope} skipped:`, e?.message ?? e);
     return [];
   }
+}
+
+async function loadConfiguredRecipientEmails(admin) {
+  return await loadRecipientEmailsFromTable(
+    admin,
+    'notification_recipients',
+    'notifications.loadConfiguredRecipientEmails'
+  );
+}
+
+async function loadCarInsuranceRecipientEmails(admin) {
+  return await loadRecipientEmailsFromTable(
+    admin,
+    'car_insurance_notification_recipients',
+    'notifications.loadCarInsuranceRecipientEmails'
+  );
 }
 
 async function loadNotificationConfig(admin) {
@@ -655,7 +780,7 @@ async function loadNotificationConfig(admin) {
   let prefRes = await admin
     .from('notification_preferences')
     .select(
-      'id, is_enabled, send_to_employees, days_before_expiry, include_driver_license, include_security_license, include_insurance, use_scheduled_send, send_time_local, timezone'
+      'id, is_enabled, send_to_employees, use_supabase_email_sender, include_expired, expired_within_days, days_before_expiry, include_driver_license, include_security_license, include_insurance, use_scheduled_send, send_time_local, timezone'
     )
     .order('updated_at', { ascending: false })
     .limit(1)
@@ -663,7 +788,12 @@ async function loadNotificationConfig(admin) {
 
   if (prefRes.error) {
     const msg = safeText(prefRes.error?.message || prefRes.error);
-    if (isMissingColumnMessage(msg, 'send_to_employees')) {
+    if (
+      isMissingColumnMessage(msg, 'send_to_employees') ||
+      isMissingColumnMessage(msg, 'use_supabase_email_sender') ||
+      isMissingColumnMessage(msg, 'include_expired') ||
+      isMissingColumnMessage(msg, 'expired_within_days')
+    ) {
       prefRes = await admin
         .from('notification_preferences')
         .select(
@@ -684,9 +814,21 @@ async function loadNotificationConfig(admin) {
     if (typeof prefRow.send_to_employees === 'undefined') {
       prefRow = { ...prefRow, send_to_employees: localPrefs.sendToEmployees };
     }
+    prefRow = { ...prefRow, use_supabase_email_sender: false };
+    if (typeof prefRow.include_expired === 'undefined') {
+      prefRow = { ...prefRow, include_expired: localPrefs.includeExpired };
+    }
+    if (typeof prefRow.expired_within_days === 'undefined') {
+      prefRow = { ...prefRow, expired_within_days: localPrefs.expiredWithinDays };
+    }
   } else {
     // If preferences row is missing entirely, still provide a minimal object.
-    prefRow = { send_to_employees: localPrefs.sendToEmployees };
+    prefRow = {
+      send_to_employees: localPrefs.sendToEmployees,
+      use_supabase_email_sender: false,
+      include_expired: localPrefs.includeExpired,
+      expired_within_days: localPrefs.expiredWithinDays,
+    };
   }
 
   return {
@@ -723,8 +865,9 @@ function buildTransport(emailSettingsRow) {
   const nodemailer = require('nodemailer');
 
   // App-password auth only (no Google OAuth in this app).
-  const user = safeText(process.env.GMAIL_USER) || safeText(emailSettingsRow?.gmail_user);
-  const pass = safeText(process.env.GMAIL_PASS) || safeText(emailSettingsRow?.gmail_app_password);
+  // Prefer the Settings/DB values so packaged installs don't get pinned to stale build-time env values.
+  const user = safeText(emailSettingsRow?.gmail_user) || safeText(process.env.GMAIL_USER);
+  const pass = safeText(emailSettingsRow?.gmail_app_password) || safeText(process.env.GMAIL_PASS);
   const from = user;
   const cacheKey = `${user}::${pass}`;
   if (cachedTransporter && cachedTransporterKey === cacheKey) {
@@ -742,8 +885,8 @@ function buildTransport(emailSettingsRow) {
   const transporter = nodemailer.createTransport({
     service: 'gmail',
     pool: true,
-    maxConnections: 1,
-    maxMessages: 50,
+    maxConnections: SMTP_POOL_CONNECTIONS,
+    maxMessages: 100,
     auth: { user, pass },
   });
 
@@ -894,6 +1037,8 @@ ipcMain.handle('admin:exportDatabaseExcel', async () => {
     'notification_email_settings',
     'notification_preferences',
     'notification_recipients',
+    'car_insurance_notification_recipients',
+    'notification_log_retention_settings',
     'other_expiration_items',
     'licensure_notification_log',
     'other_expiration_notification_log',
@@ -1048,6 +1193,11 @@ function prettyExpirationType(value) {
   return raw;
 }
 
+function isCarInsuranceOtherExpirationType(value) {
+  const raw = safeText(value).toUpperCase();
+  return raw === 'CAR_INSURANCE' || raw.startsWith('CAR_INSURANCE_');
+}
+
 let cachedBrandLogoPath = null;
 let cachedBrandLogoPathResolved = false;
 
@@ -1058,9 +1208,13 @@ function resolveBrandLogoPath() {
     path.join(__dirname, '..', 'public', 'Logo.png'),
     path.join(__dirname, '..', 'out', 'Logo.png'),
     path.join(process.resourcesPath || '', 'app.asar', 'out', 'Logo.png'),
+    path.join(process.resourcesPath || '', 'app.asar.unpacked', 'out', 'Logo.png'),
+    path.join(process.resourcesPath || '', 'out', 'Logo.png'),
     path.join(__dirname, '..', 'public', 'Logo.ico'),
     path.join(__dirname, '..', 'out', 'Logo.ico'),
     path.join(process.resourcesPath || '', 'app.asar', 'out', 'Logo.ico'),
+    path.join(process.resourcesPath || '', 'app.asar.unpacked', 'out', 'Logo.ico'),
+    path.join(process.resourcesPath || '', 'out', 'Logo.ico'),
   ];
 
   for (const candidate of candidates) {
@@ -1084,13 +1238,24 @@ function buildEmailBrandingAssets() {
   const logoPath = resolveBrandLogoPath();
   if (!logoPath) return { logoCid: null, attachments: [] };
 
+  let content = null;
+  try {
+    content = fs.readFileSync(logoPath);
+  } catch (e) {
+    console.warn('[notifications] failed to read brand logo for email attachment:', e?.message ?? e);
+    return { logoCid: null, attachments: [] };
+  }
+
   const logoCid = 'faragon-logo';
+  const ext = path.extname(logoPath).toLowerCase();
+  const contentType = ext === '.ico' ? 'image/x-icon' : 'image/png';
   return {
     logoCid,
     attachments: [
       {
         filename: path.basename(logoPath),
-        path: logoPath,
+        content,
+        contentType,
         cid: logoCid,
         contentDisposition: 'inline',
       },
@@ -1271,15 +1436,22 @@ async function fetchExpiringRows(admin, preferences, localPrefs, limit) {
   const ids = Array.from(new Set(licRows.map((r) => r.applicant_id).filter(Boolean)));
 
   const applicantsById = new Map();
-  const chunkSize = 500;
-  for (let i = 0; i < ids.length; i += chunkSize) {
-    const chunk = ids.slice(i, i + chunkSize);
-    const aRes = await admin
-      .from('applicants')
-      .select('applicant_id, first_name, middle_name, last_name, extn_name, client_email, client_contact_num, status, is_archived')
-      .in('applicant_id', chunk);
-    if (aRes.error) throw aRes.error;
-    for (const a of aRes.data ?? []) {
+  const applicantChunks = chunkArray(ids, 500);
+  const applicantRowsByChunk = await mapWithConcurrency(
+    applicantChunks,
+    async (chunk) => {
+      const aRes = await admin
+        .from('applicants')
+        .select('applicant_id, first_name, middle_name, last_name, extn_name, client_email, client_contact_num, status, is_archived')
+        .in('applicant_id', chunk);
+      if (aRes.error) throw aRes.error;
+      return aRes.data ?? [];
+    },
+    PARALLEL_SUPABASE_QUERY_CONCURRENCY
+  );
+
+  for (const rows of applicantRowsByChunk) {
+    for (const a of rows ?? []) {
       applicantsById.set(a.applicant_id, a);
     }
   }
@@ -1407,6 +1579,7 @@ async function fetchOtherExpiringRows(admin, preferences, localPrefs, limit) {
           days_until_expiry: du,
           days_before_expiry: daysBefore,
           recipient_email: safeText(row.recipient_email).toLowerCase() || null,
+          recipient_group: isCarInsuranceOtherExpirationType(candidate.expiration_type) ? 'car_insurance' : 'general',
         });
       }
     }
@@ -1464,30 +1637,185 @@ function isDueToSendNow(expiresOnYmd, daysBefore, sendTimeLocal) {
   return true;
 }
 
-const NOTIFICATION_LOG_RETENTION_DAYS = 30;
 const NOTIFICATION_LOG_RETENTION_MIN_INTERVAL_MS = 6 * 60 * 60 * 1000;
 let lastNotificationLogRetentionRunAtMs = 0;
 
-async function purgeOldLicensureNotificationLogs(admin, { force = false } = {}) {
+function normalizeNotificationLogRetentionDays(value) {
+  const days = clampInt(value, { min: 7, max: 365, fallback: 30 });
+  if (days <= 7) return 7;
+  if (days <= 30) return 30;
+  return 365;
+}
+
+function formatNotificationLogRetentionLabel(days) {
+  const normalized = normalizeNotificationLogRetentionDays(days);
+  if (normalized === 7) return '1 week';
+  if (normalized === 30) return '1 month';
+  return '1 year';
+}
+
+async function loadNotificationLogRetentionConfig(admin) {
+  const localPrefs = loadLocalNotificationPrefs();
+  const fallbackDays = normalizeNotificationLogRetentionDays(localPrefs.notificationLogRetentionDays);
+
+  try {
+    const res = await admin
+      .from('notification_log_retention_settings')
+      .select('id, retention_days')
+      .eq('id', 'default')
+      .maybeSingle();
+
+    if (res.error) throw res.error;
+
+    const retentionDays = normalizeNotificationLogRetentionDays(res.data?.retention_days ?? fallbackDays);
+    if (retentionDays !== fallbackDays) {
+      saveLocalNotificationPrefs({ notificationLogRetentionDays: retentionDays });
+    }
+
+    return {
+      retentionDays,
+      retentionLabel: formatNotificationLogRetentionLabel(retentionDays),
+      missingTable: false,
+    };
+  } catch (e) {
+    const msg = extractErrorMessageText(e);
+    if (isMissingTableMessage(msg, 'notification_log_retention_settings')) {
+      return {
+        retentionDays: fallbackDays,
+        retentionLabel: formatNotificationLogRetentionLabel(fallbackDays),
+        missingTable: true,
+      };
+    }
+
+    if (isTransientNetworkError(e)) {
+      return {
+        retentionDays: fallbackDays,
+        retentionLabel: formatNotificationLogRetentionLabel(fallbackDays),
+        missingTable: false,
+        unavailable: true,
+        error: extractErrorMessageText(e) || 'Supabase is temporarily unreachable.',
+      };
+    }
+
+    throw e;
+  }
+}
+
+async function saveNotificationLogRetentionConfig(admin, value) {
+  const retentionDays = normalizeNotificationLogRetentionDays(value);
+  const localPrefs = saveLocalNotificationPrefs({ notificationLogRetentionDays: retentionDays });
+
+  try {
+    const res = await admin.from('notification_log_retention_settings').upsert(
+      {
+        id: 'default',
+        retention_days: retentionDays,
+      },
+      { onConflict: 'id' }
+    );
+    if (res.error) throw res.error;
+
+    return {
+      retentionDays,
+      retentionLabel: formatNotificationLogRetentionLabel(retentionDays),
+      missingTable: false,
+      localPrefs,
+    };
+  } catch (e) {
+    const msg = extractErrorMessageText(e);
+    if (isMissingTableMessage(msg, 'notification_log_retention_settings')) {
+      return {
+        retentionDays,
+        retentionLabel: formatNotificationLogRetentionLabel(retentionDays),
+        missingTable: true,
+        localPrefs,
+      };
+    }
+
+    if (isTransientNetworkError(e)) {
+      return {
+        retentionDays,
+        retentionLabel: formatNotificationLogRetentionLabel(retentionDays),
+        missingTable: false,
+        unavailable: true,
+        error: extractErrorMessageText(e) || 'Supabase is temporarily unreachable.',
+        localPrefs,
+      };
+    }
+
+    throw e;
+  }
+}
+
+async function deleteNotificationLogTableRows(admin, tableName, cutoffIso = null) {
+  let query = admin.from(tableName).delete({ count: 'exact' });
+  if (cutoffIso) {
+    query = query.lt('created_at', cutoffIso);
+  } else {
+    query = query.not('id', 'is', null);
+  }
+
+  const result = await query;
+  if (result.error) throw result.error;
+  return Number(result.count ?? 0);
+}
+
+async function purgeOldLicensureNotificationLogs(admin, { force = false, clearAll = false } = {}) {
   const nowMs = Date.now();
   if (!force && nowMs - lastNotificationLogRetentionRunAtMs < NOTIFICATION_LOG_RETENTION_MIN_INTERVAL_MS) {
     return { deleted: 0, skipped: true };
   }
 
-  const cutoffIso = new Date(
-    nowMs - NOTIFICATION_LOG_RETENTION_DAYS * 24 * 60 * 60 * 1000
-  ).toISOString();
-
   try {
-    const result = await admin
-      .from('licensure_notification_log')
-      .delete({ count: 'exact' })
-      .lt('created_at', cutoffIso);
+    const retentionConfig = clearAll
+      ? {
+          retentionDays: null,
+          retentionLabel: 'all entries',
+          missingTable: false,
+        }
+      : await loadNotificationLogRetentionConfig(admin);
+    const cutoffIso = clearAll
+      ? null
+      : new Date(
+          nowMs - normalizeNotificationLogRetentionDays(retentionConfig.retentionDays) * 24 * 60 * 60 * 1000
+        ).toISOString();
+    let deleted = 0;
+    let missingLicensureTable = false;
+    let missingOtherTable = false;
 
-    if (result.error) throw result.error;
+    try {
+      deleted += await deleteNotificationLogTableRows(admin, 'licensure_notification_log', cutoffIso);
+    } catch (e) {
+      const msg = safeText(e?.message || e);
+      if (isMissingTableMessage(msg, 'licensure_notification_log')) {
+        missingLicensureTable = true;
+      } else {
+        throw e;
+      }
+    }
+
+    try {
+      deleted += await deleteNotificationLogTableRows(admin, 'other_expiration_notification_log', cutoffIso);
+    } catch (e) {
+      const msg = safeText(e?.message || e);
+      if (isMissingTableMessage(msg, 'other_expiration_notification_log')) {
+        missingOtherTable = true;
+      } else {
+        throw e;
+      }
+    }
 
     lastNotificationLogRetentionRunAtMs = nowMs;
-    return { deleted: Number(result.count ?? 0), skipped: false };
+    return {
+      deleted,
+      skipped: false,
+      retentionDays: retentionConfig.retentionDays,
+      retentionLabel: retentionConfig.retentionLabel,
+      missingTable: missingLicensureTable && missingOtherTable,
+      missingLicensureTable,
+      missingOtherTable,
+      clearedAll: Boolean(clearAll),
+    };
   } catch (e) {
     const msg = safeText(e?.message || e);
     if (isMissingTableMessage(msg, 'licensure_notification_log')) {
@@ -1597,53 +1925,12 @@ async function maybeAutoPurgeAuditLogs() {
   }
 }
 
-async function hasSentLicensureNotice(admin, item, recipientEmail = null) {
+async function maybeAutoPurgeNotificationLogs() {
   try {
-    let q = admin
-      .from('licensure_notification_log')
-      .select('id')
-      .eq('status', 'SENT')
-      .eq('applicant_id', item.applicant_id)
-      .eq('license_type', item.license_type)
-      .eq('expires_on', item.expires_on);
-
-    if (safeText(recipientEmail)) {
-      q = q.eq('recipient_email', safeText(recipientEmail));
-    }
-
-    const res = await q.limit(1).maybeSingle();
-    if (res.error) throw res.error;
-    return Boolean(res.data?.id);
+    const admin = getAdminSupabase();
+    await purgeOldLicensureNotificationLogs(admin);
   } catch (e) {
-    // If log table is missing/misconfigured, fail open to avoid blocking sends.
-    console.warn('[notifications] hasSentLicensureNotice failed:', e?.message ?? e);
-    return false;
-  }
-}
-
-async function hasSentOtherExpirationNotice(admin, item, recipientEmail = null) {
-  try {
-    let q = admin
-      .from('other_expiration_notification_log')
-      .select('id')
-      .eq('status', 'SENT')
-      .eq('other_expiration_item_id', item.other_expiration_item_id)
-      .eq('expires_on', item.expires_on);
-
-    if (safeText(recipientEmail)) {
-      q = q.eq('recipient_email', safeText(recipientEmail));
-    }
-
-    const res = await q.limit(1).maybeSingle();
-    if (res.error) throw res.error;
-    return Boolean(res.data?.id);
-  } catch (e) {
-    const msg = extractErrorMessageText(e);
-    if (isMissingTableMessage(msg, 'other_expiration_notification_log')) {
-      return false;
-    }
-    console.warn('[notifications] hasSentOtherExpirationNotice failed:', e?.message ?? e);
-    return false;
+    warnThrottled('notifications.retention', e, 180000);
   }
 }
 
@@ -1723,10 +2010,240 @@ async function insertOtherExpirationNotificationLog(admin, payload) {
   }
 }
 
+function buildLicensureNoticeKey(item, recipientEmail = null) {
+  return [
+    safeText(item?.applicant_id),
+    safeText(item?.license_type),
+    safeText(item?.expires_on),
+    safeText(recipientEmail).toLowerCase(),
+  ].join('|');
+}
+
+function buildOtherExpirationNoticeKey(item, recipientEmail = null) {
+  return [
+    safeText(item?.other_expiration_item_id),
+    safeText(item?.expiration_type),
+    safeText(item?.expires_on),
+    safeText(recipientEmail).toLowerCase(),
+  ].join('|');
+}
+
+async function fetchPagedRows(buildQuery, { pageSize = 1000, maxRows = 50000 } = {}) {
+  const rows = [];
+  let offset = 0;
+
+  while (true) {
+    const res = await buildQuery().range(offset, offset + pageSize - 1);
+    if (res.error) throw res.error;
+
+    const batch = Array.isArray(res.data) ? res.data : [];
+    if (!batch.length) break;
+
+    rows.push(...batch);
+    offset += batch.length;
+
+    if (batch.length < pageSize) break;
+    if (offset >= maxRows) {
+      throw new Error(`Query exceeded ${maxRows} rows while loading notification log history.`);
+    }
+  }
+
+  return rows;
+}
+
+async function loadSentLicensureNoticeKeys(admin, items) {
+  const dueItems = Array.isArray(items) ? items : [];
+  const applicantIds = Array.from(new Set(dueItems.map((item) => safeText(item?.applicant_id)).filter(Boolean)));
+  if (!applicantIds.length) return new Set();
+
+  try {
+    const chunks = chunkArray(applicantIds, 200);
+    const rowsByChunk = await mapWithConcurrency(
+      chunks,
+      async (chunk) =>
+        fetchPagedRows(() =>
+          admin
+            .from('licensure_notification_log')
+            .select('applicant_id, license_type, expires_on, recipient_email')
+            .eq('status', 'SENT')
+            .in('applicant_id', chunk)
+        ),
+      PARALLEL_SUPABASE_QUERY_CONCURRENCY
+    );
+
+    const sentKeys = new Set();
+    for (const rows of rowsByChunk) {
+      for (const row of rows ?? []) {
+        sentKeys.add(
+          buildLicensureNoticeKey(
+            {
+              applicant_id: row.applicant_id,
+              license_type: row.license_type,
+              expires_on: row.expires_on,
+            },
+            row.recipient_email
+          )
+        );
+      }
+    }
+
+    return sentKeys;
+  } catch (e) {
+    const msg = extractErrorMessageText(e);
+    if (isMissingTableMessage(msg, 'licensure_notification_log')) {
+      return new Set();
+    }
+    if (isTransientNetworkError(e)) {
+      warnThrottled('notifications.loadSentLicensureNoticeKeys', e, 180000);
+      return new Set();
+    }
+    console.warn('[notifications] sent-licensure history lookup failed:', e?.message ?? e);
+    return new Set();
+  }
+}
+
+async function loadSentOtherExpirationNoticeKeys(admin, items) {
+  const dueItems = Array.isArray(items) ? items : [];
+  const itemIds = Array.from(
+    new Set(
+      dueItems
+        .map((item) => Number(item?.other_expiration_item_id))
+        .filter((value) => Number.isFinite(value))
+    )
+  );
+  if (!itemIds.length) return new Set();
+
+  try {
+    const chunks = chunkArray(itemIds, 200);
+    const rowsByChunk = await mapWithConcurrency(
+      chunks,
+      async (chunk) =>
+        fetchPagedRows(() =>
+          admin
+            .from('other_expiration_notification_log')
+            .select('other_expiration_item_id, expiration_type, expires_on, recipient_email')
+            .eq('status', 'SENT')
+            .in('other_expiration_item_id', chunk)
+        ),
+      PARALLEL_SUPABASE_QUERY_CONCURRENCY
+    );
+
+    const sentKeys = new Set();
+    for (const rows of rowsByChunk) {
+      for (const row of rows ?? []) {
+        sentKeys.add(
+          buildOtherExpirationNoticeKey(
+            {
+              other_expiration_item_id: row.other_expiration_item_id,
+              expiration_type: row.expiration_type,
+              expires_on: row.expires_on,
+            },
+            row.recipient_email
+          )
+        );
+      }
+    }
+
+    return sentKeys;
+  } catch (e) {
+    const msg = extractErrorMessageText(e);
+    if (isMissingTableMessage(msg, 'other_expiration_notification_log')) {
+      return new Set();
+    }
+    if (isTransientNetworkError(e)) {
+      warnThrottled('notifications.loadSentOtherExpirationNoticeKeys', e, 180000);
+      return new Set();
+    }
+    console.warn('[notifications] sent-other-expiration history lookup failed:', e?.message ?? e);
+    return new Set();
+  }
+}
+
+async function logQueuedNotificationStatus(admin, queued, recipientEmail, status, errorMessage = null) {
+  if (queued?.kind === 'other') {
+    return insertOtherExpirationNotificationLog(admin, {
+      other_expiration_item_id: queued.item.other_expiration_item_id,
+      item_name: queued.item.item_name,
+      expiration_type: queued.item.expiration_type,
+      expires_on: queued.item.expires_on,
+      recipient_email: recipientEmail,
+      status,
+      error_message: errorMessage,
+    });
+  }
+
+  return insertLicensureNotificationLog(admin, {
+    applicant_id: queued?.item?.applicant_id,
+    license_type: queued?.item?.license_type,
+    expires_on: queued?.item?.expires_on,
+    recipient_email: recipientEmail,
+    status,
+    error_message: errorMessage,
+  });
+}
+
+async function sendQueuedNotificationBuckets(admin, byRecipient, transporter, from, preferences, tpl, emailBranding) {
+  const recipientEntries = Array.from(byRecipient.entries()).filter(([, bucket]) => Array.isArray(bucket?.items) && bucket.items.length);
+  if (!recipientEntries.length) {
+    return { sent: 0, failed: 0 };
+  }
+
+  const results = await mapWithConcurrency(
+    recipientEntries,
+    async ([to, bucket]) => {
+      const queuedItems = bucket.items;
+      const mailRows = queuedItems.map((queued) => toMailRowFromQueuedItem(queued));
+      const subject = computeEmailSubject(tpl.subject, mailRows.length);
+      const html = renderEmailHtml({
+        subject,
+        recipientName: null,
+        items: mailRows,
+        daysBefore: preferences?.days_before_expiry,
+        bodyHtml: tpl.bodyHtml,
+        legacyMessage: tpl.legacyMessage,
+        brandLogoCid: emailBranding.logoCid,
+      });
+
+      try {
+        await transporter.sendMail({
+          from,
+          to,
+          subject,
+          html,
+          attachments: emailBranding.attachments,
+        });
+
+        await Promise.all(
+          queuedItems.map((queued) => logQueuedNotificationStatus(admin, queued, to, 'SENT', null))
+        );
+        return { sent: queuedItems.length, failed: 0 };
+      } catch (err) {
+        const errorMessage = safeText(err?.message || err);
+        await Promise.all(
+          queuedItems.map((queued) => logQueuedNotificationStatus(admin, queued, to, 'FAILED', errorMessage))
+        );
+        return { sent: 0, failed: queuedItems.length };
+      }
+    },
+    SMTP_SEND_CONCURRENCY
+  );
+
+  return results.reduce(
+    (acc, entry) => ({
+      sent: acc.sent + Number(entry?.sent ?? 0),
+      failed: acc.failed + Number(entry?.failed ?? 0),
+    }),
+    { sent: 0, failed: 0 }
+  );
+}
+
 async function runNotificationSend(admin) {
   await purgeOldLicensureNotificationLogs(admin);
 
-  const { email, preferences, recipients } = await loadNotificationConfig(admin);
+  const [{ email, preferences, recipients }, carInsuranceRecipients] = await Promise.all([
+    loadNotificationConfig(admin),
+    loadCarInsuranceRecipientEmails(admin),
+  ]);
   if (!preferences?.is_enabled) {
     return { ok: true, summary: { sent: 0, failed: 0, skipped: 0 }, message: 'Notifications are disabled.' };
   }
@@ -1746,21 +2263,29 @@ async function runNotificationSend(admin) {
   const sendTimeLocal = useScheduledSend ? preferences.send_time_local : null;
   const sendToEmployees = preferences?.send_to_employees !== false;
   const configuredRecipients = Array.isArray(recipients) ? recipients.map((x) => safeText(x).toLowerCase()).filter(Boolean) : [];
+  const configuredCarInsuranceRecipients = Array.isArray(carInsuranceRecipients)
+    ? carInsuranceRecipients.map((x) => safeText(x).toLowerCase()).filter(Boolean)
+    : [];
   const useConfiguredRecipients = configuredRecipients.length > 0;
   const tpl = parseEmailTemplateNotes(email?.notes);
   const emailBranding = buildEmailBrandingAssets();
+  const dueLicensure = expiring.filter((item) => isDueToSendNow(item.expires_on, daysBefore, sendTimeLocal));
+  const dueOtherExpiring = otherExpiring.filter((item) =>
+    isDueToSendNow(item.expires_on, item.days_before_expiry ?? daysBefore, sendTimeLocal)
+  );
+  const [sentLicensureKeys, sentOtherKeys] = await Promise.all([
+    loadSentLicensureNoticeKeys(admin, dueLicensure),
+    loadSentOtherExpirationNoticeKeys(admin, dueOtherExpiring),
+  ]);
 
   // Group email by recipient to reduce spam.
   const byRecipient = new Map();
   let skipped = 0;
 
-  for (const item of expiring) {
-    if (!isDueToSendNow(item.expires_on, daysBefore, sendTimeLocal)) continue;
-
+  for (const item of dueLicensure) {
     if (useConfiguredRecipients) {
       for (const to of configuredRecipients) {
-        const alreadySent = await hasSentLicensureNotice(admin, item, to);
-        if (alreadySent) continue;
+        if (sentLicensureKeys.has(buildLicensureNoticeKey(item, to))) continue;
         pushRecipientBucket(byRecipient, to, { kind: 'licensure', item });
       }
       continue;
@@ -1793,18 +2318,19 @@ async function runNotificationSend(admin) {
       continue;
     }
 
-    const alreadySent = await hasSentLicensureNotice(admin, item, to);
-    if (alreadySent) continue;
+    if (sentLicensureKeys.has(buildLicensureNoticeKey(item, to))) continue;
 
     pushRecipientBucket(byRecipient, to, { kind: 'licensure', item });
   }
 
-  for (const item of otherExpiring) {
-    if (!isDueToSendNow(item.expires_on, item.days_before_expiry ?? daysBefore, sendTimeLocal)) continue;
-
+  for (const item of dueOtherExpiring) {
     const targetEmails = new Set();
-    if (useConfiguredRecipients) {
-      for (const to of configuredRecipients) targetEmails.add(to);
+    const useCarInsuranceRecipients = isCarInsuranceOtherExpirationType(item.expiration_type);
+    const configuredRecipientSource = useCarInsuranceRecipients
+      ? configuredCarInsuranceRecipients
+      : configuredRecipients;
+    if (configuredRecipientSource.length) {
+      for (const to of configuredRecipientSource) targetEmails.add(to);
     }
     const itemRecipient = safeText(item.recipient_email).toLowerCase();
     if (itemRecipient) targetEmails.add(itemRecipient);
@@ -1817,96 +2343,29 @@ async function runNotificationSend(admin) {
         expires_on: item.expires_on,
         recipient_email: null,
         status: 'SKIPPED',
-        error_message: 'Missing recipient_email and no active notification recipient configured.',
+        error_message: useCarInsuranceRecipients
+          ? 'Missing recipient_email and no active car insurance notification recipient configured.'
+          : 'Missing recipient_email and no active notification recipient configured.',
       });
       skipped += 1;
       continue;
     }
 
     for (const to of targetEmails) {
-      const alreadySent = await hasSentOtherExpirationNotice(admin, item, to);
-      if (alreadySent) continue;
+      if (sentOtherKeys.has(buildOtherExpirationNoticeKey(item, to))) continue;
       pushRecipientBucket(byRecipient, to, { kind: 'other', item });
     }
   }
 
-  let sent = 0;
-  let failed = 0;
-
-  for (const [to, bucket] of byRecipient.entries()) {
-    const queuedItems = Array.isArray(bucket?.items) ? bucket.items : [];
-    if (!queuedItems.length) continue;
-
-    const mailRows = queuedItems.map((q) => toMailRowFromQueuedItem(q));
-    const subject = computeEmailSubject(tpl.subject, mailRows.length);
-    const html = renderEmailHtml({
-      subject,
-      recipientName: null,
-      items: mailRows,
-      daysBefore: preferences.days_before_expiry,
-      bodyHtml: tpl.bodyHtml,
-      legacyMessage: tpl.legacyMessage,
-      brandLogoCid: emailBranding.logoCid,
-    });
-
-    try {
-      await transporter.sendMail({
-        from,
-        to,
-        subject,
-        html,
-        attachments: emailBranding.attachments,
-      });
-
-      await Promise.all(
-        queuedItems.map((queued) =>
-          queued.kind === 'other'
-            ? insertOtherExpirationNotificationLog(admin, {
-                other_expiration_item_id: queued.item.other_expiration_item_id,
-                item_name: queued.item.item_name,
-                expiration_type: queued.item.expiration_type,
-                expires_on: queued.item.expires_on,
-                recipient_email: to,
-                status: 'SENT',
-                error_message: null,
-              })
-            : insertLicensureNotificationLog(admin, {
-                applicant_id: queued.item.applicant_id,
-                license_type: queued.item.license_type,
-                expires_on: queued.item.expires_on,
-                recipient_email: to,
-                status: 'SENT',
-                error_message: null,
-              })
-        )
-      );
-      sent += queuedItems.length;
-    } catch (err) {
-      await Promise.all(
-        queuedItems.map((queued) =>
-          queued.kind === 'other'
-            ? insertOtherExpirationNotificationLog(admin, {
-                other_expiration_item_id: queued.item.other_expiration_item_id,
-                item_name: queued.item.item_name,
-                expiration_type: queued.item.expiration_type,
-                expires_on: queued.item.expires_on,
-                recipient_email: to,
-                status: 'FAILED',
-                error_message: safeText(err?.message || err),
-              })
-            : insertLicensureNotificationLog(admin, {
-                applicant_id: queued.item.applicant_id,
-                license_type: queued.item.license_type,
-                expires_on: queued.item.expires_on,
-                recipient_email: to,
-                status: 'FAILED',
-                error_message: safeText(err?.message || err),
-              })
-        )
-      );
-      failed += queuedItems.length;
-    }
-  }
+  const { sent, failed } = await sendQueuedNotificationBuckets(
+    admin,
+    byRecipient,
+    transporter,
+    from,
+    preferences,
+    tpl,
+    emailBranding
+  );
 
   return { ok: true, summary: { sent, failed, skipped }, message: 'Run complete.' };
 }
@@ -1930,6 +2389,46 @@ async function ensureRoleId(admin, roleName) {
     .single();
   if (createErr) throw createErr;
   return created.role_id;
+}
+
+async function insertAdminLoginHistory(admin, payload) {
+  const row = {
+    admin_id: payload?.admin_id ? String(payload.admin_id).trim() : null,
+    username: safeText(payload?.username) || null,
+    full_name: safeText(payload?.full_name) || null,
+    role: safeText(payload?.role) || null,
+    logged_in_at: safeText(payload?.logged_in_at) || new Date().toISOString(),
+  };
+
+  const res = await admin.from('admin_login_history').insert(row);
+  if (res.error) {
+    const msg = extractErrorMessageText(res.error);
+    if (isMissingTableMessage(msg, 'admin_login_history')) {
+      return { success: false, missingTable: true };
+    }
+    throw res.error;
+  }
+
+  return { success: true, missingTable: false };
+}
+
+async function fetchAdminLoginHistory(admin, payload) {
+  const limit = Math.max(1, Math.min(5000, Number(payload?.limit ?? 2000)));
+  const res = await admin
+    .from('admin_login_history')
+    .select('id, admin_id, username, full_name, role, logged_in_at, created_at')
+    .order('logged_in_at', { ascending: false })
+    .limit(limit);
+
+  if (res.error) {
+    const msg = extractErrorMessageText(res.error);
+    if (isMissingTableMessage(msg, 'admin_login_history')) {
+      return { rows: [], missingTable: true };
+    }
+    throw res.error;
+  }
+
+  return { rows: res.data ?? [], missingTable: false };
 }
 
 ipcMain.handle('admin:createUser', async (_event, payload) => {
@@ -2012,6 +2511,42 @@ ipcMain.handle('admin:deleteUserPermanently', async (_event, payload) => {
   return { success: true };
 });
 
+ipcMain.handle('admin:recordLoginHistory', async (_event, payload) => {
+  const admin = getAdminSupabase();
+  try {
+    return await insertAdminLoginHistory(admin, payload);
+  } catch (e) {
+    if (isTransientNetworkError(e)) {
+      warnThrottled('admin.recordLoginHistory', e, 180000);
+      return {
+        success: false,
+        missingTable: false,
+        unavailable: true,
+        error: extractErrorMessageText(e) || 'Supabase is temporarily unreachable.',
+      };
+    }
+    throw e;
+  }
+});
+
+ipcMain.handle('admin:getLoginHistory', async (_event, payload) => {
+  const admin = getAdminSupabase();
+  try {
+    return await fetchAdminLoginHistory(admin, payload);
+  } catch (e) {
+    if (isTransientNetworkError(e)) {
+      warnThrottled('admin.getLoginHistory', e, 180000);
+      return {
+        rows: [],
+        missingTable: false,
+        unavailable: true,
+        error: extractErrorMessageText(e) || 'Supabase is temporarily unreachable.',
+      };
+    }
+    throw e;
+  }
+});
+
 // Notification settings + email sending (Electron main process)
 ipcMain.handle('settings:loadNotificationConfig', async () => {
   const admin = getAdminSupabase();
@@ -2086,7 +2621,7 @@ ipcMain.handle('settings:saveNotificationConfig', async (_event, payload) => {
   const email = payload?.email ?? {};
   const preferences = payload?.preferences ?? {};
 
-  const senderEmail = safeText(process.env.GMAIL_USER) || safeText(email.gmail_user);
+  const senderEmail = safeText(email.gmail_user) || safeText(process.env.GMAIL_USER);
   if (!senderEmail) {
     throw new Error('Missing Gmail sender email. Set GMAIL_USER in .env.local or input Gmail User in Settings.');
   }
@@ -2132,6 +2667,9 @@ ipcMain.handle('settings:saveNotificationConfig', async (_event, payload) => {
   const prefPayload = {
     is_enabled: Boolean(preferences.is_enabled ?? true),
     send_to_employees: Boolean(preferences.send_to_employees ?? true),
+    use_supabase_email_sender: false,
+    include_expired: Boolean(preferences.include_expired ?? false),
+    expired_within_days: clampInt(preferences.expired_within_days, { min: 1, max: 365, fallback: 7 }),
     days_before_expiry: daysBefore,
     include_driver_license: Boolean(preferences.include_driver_license ?? false),
     include_security_license: Boolean(preferences.include_security_license ?? true),
@@ -2151,9 +2689,17 @@ ipcMain.handle('settings:saveNotificationConfig', async (_event, payload) => {
   let prefWrite = await writePrefs(prefPayload);
   if (prefWrite.error) {
     const msg = safeText(prefWrite.error?.message || prefWrite.error);
-    if (isMissingColumnMessage(msg, 'send_to_employees')) {
+    if (
+      isMissingColumnMessage(msg, 'send_to_employees') ||
+      isMissingColumnMessage(msg, 'use_supabase_email_sender') ||
+      isMissingColumnMessage(msg, 'include_expired') ||
+      isMissingColumnMessage(msg, 'expired_within_days')
+    ) {
       const compat = { ...prefPayload };
       delete compat.send_to_employees;
+      delete compat.use_supabase_email_sender;
+      delete compat.include_expired;
+      delete compat.expired_within_days;
       prefWrite = await writePrefs(compat);
     }
   }
@@ -2172,6 +2718,9 @@ ipcMain.handle('settings:saveNotificationConfig', async (_event, payload) => {
       include_security_license: Boolean(prefPayload.include_security_license),
       include_insurance: Boolean(prefPayload.include_insurance),
       send_to_employees: Boolean(prefPayload.send_to_employees),
+      use_supabase_email_sender: false,
+      include_expired: Boolean(prefPayload.include_expired),
+      expired_within_days: Number(prefPayload.expired_within_days ?? 7),
     },
   });
 
@@ -2181,42 +2730,28 @@ ipcMain.handle('settings:saveNotificationConfig', async (_event, payload) => {
   return { success: true };
 });
 
-ipcMain.handle('notifications:previewExpiring', async (_event, payload) => {
-  const admin = getAdminSupabase();
-  try {
-    const { preferences } = await loadNotificationConfig(admin);
-    const localPrefs = loadLocalNotificationPrefs();
-    const limit = Number(payload?.limit ?? 25);
-    const rows = await fetchExpiringRows(admin, preferences ?? {}, localPrefs, limit);
-    return { rows };
-  } catch (e) {
-    if (isTransientNetworkError(e)) {
-      warnThrottled('notifications.previewExpiring', e, 180000);
-      return {
-        rows: [],
-        unavailable: true,
-        error: extractErrorMessageText(e) || 'Supabase is temporarily unreachable.',
-      };
-    }
-    throw e;
-  }
-});
-
 ipcMain.handle('notifications:getExpiringSummary', async (_event, payload) => {
   const admin = getAdminSupabase();
   try {
     const { preferences } = await loadNotificationConfig(admin);
     const localPrefs = loadLocalNotificationPrefs();
-    const limit = Math.max(1, Math.min(50, Number(payload?.limit ?? 8)));
-    const licensureRows = await fetchExpiringRows(admin, preferences ?? {}, localPrefs);
-    const otherRowsRaw = await fetchOtherExpiringRows(admin, preferences ?? {}, localPrefs);
+    const limit = Math.max(1, Math.min(200, Number(payload?.limit ?? 8)));
+    const [licensureRows, otherRowsRaw, carInsuranceRecipients] = await Promise.all([
+      fetchExpiringRows(admin, preferences ?? {}, localPrefs),
+      fetchOtherExpiringRows(admin, preferences ?? {}, localPrefs),
+      loadCarInsuranceRecipientEmails(admin),
+    ]);
+    const defaultCarInsuranceRecipient = safeText(carInsuranceRecipients?.[0]).toLowerCase() || null;
 
     const otherRows = otherRowsRaw.map((r) => ({
       applicant_id: `other:${r.other_expiration_item_id}`,
       first_name: null,
       last_name: null,
       record_name: safeText(r.item_name) || 'Other Record',
-      recipient_email: safeText(r.recipient_email) || null,
+      recipient_email:
+        safeText(r.recipient_email) ||
+        (isCarInsuranceOtherExpirationType(r.expiration_type) ? defaultCarInsuranceRecipient : '') ||
+        null,
       source_kind: 'other',
       license_type: safeText(r.license_type) || `OTHER: ${prettyExpirationType(r.expiration_type)}`,
       expires_on: r.expires_on,
@@ -2513,11 +3048,21 @@ ipcMain.handle('audit:getPage', async (_event, payload) => {
   const admin = getAdminSupabase();
   const pageSize = Math.max(5, Math.min(100, Number(payload?.pageSize ?? 25)));
   const page = Math.max(1, Number(payload?.page ?? 1));
-  const from = (page - 1) * pageSize;
-  const to = from + pageSize - 1;
+  const search = normalizeAuditSearchTerm(payload?.search);
 
   try {
     await purgeOldAuditLogs(admin);
+
+    if (search) {
+      const res = await fetchAllAuditLogRows(admin);
+      if (res.error) throw res.error;
+
+      const filteredRows = (res.data ?? []).filter((row) => auditRowMatchesSearch(row, search));
+      const from = (page - 1) * pageSize;
+      const to = from + pageSize;
+
+      return { rows: filteredRows.slice(from, to), count: filteredRows.length, missingTable: false };
+    }
 
     const res = await fetchAuditLogRows(admin, { page, pageSize });
     if (res.error) throw res.error;
@@ -2646,6 +3191,45 @@ ipcMain.handle('notifications:getLog', async (_event, payload) => {
   }
 });
 
+ipcMain.handle('notifications:loadLogRetentionConfig', async () => {
+  const admin = getAdminSupabase();
+  try {
+    return await loadNotificationLogRetentionConfig(admin);
+  } catch (e) {
+    if (isTransientNetworkError(e)) {
+      warnThrottled('notifications.loadLogRetentionConfig', e, 180000);
+      const fallbackDays = normalizeNotificationLogRetentionDays(
+        loadLocalNotificationPrefs().notificationLogRetentionDays
+      );
+      return {
+        retentionDays: fallbackDays,
+        retentionLabel: formatNotificationLogRetentionLabel(fallbackDays),
+        missingTable: false,
+        unavailable: true,
+        error: extractErrorMessageText(e) || 'Supabase is temporarily unreachable.',
+      };
+    }
+    throw e;
+  }
+});
+
+ipcMain.handle('notifications:saveLogRetentionConfig', async (_event, payload) => {
+  const admin = getAdminSupabase();
+  const result = await saveNotificationLogRetentionConfig(admin, payload?.retentionDays);
+  await purgeOldLicensureNotificationLogs(admin, { force: true });
+  return { success: true, ...result };
+});
+
+ipcMain.handle('notifications:clearLog', async () => {
+  const admin = getAdminSupabase();
+  const result = await purgeOldLicensureNotificationLogs(admin, { force: true, clearAll: true });
+  return {
+    success: true,
+    deleted: Number(result?.deleted ?? 0),
+    clearedAll: true,
+  };
+});
+
 ipcMain.handle('notifications:sendTestEmail', async (_event, payload) => {
   const admin = getAdminSupabase();
   const { email, preferences } = await loadNotificationConfig(admin);
@@ -2685,9 +3269,12 @@ ipcMain.handle('notifications:runNow', async () => {
 
 ipcMain.handle('notifications:resendAllExpiring', async (_event, payload) => {
   const admin = getAdminSupabase();
-  await purgeOldLicensureNotificationLogs(admin);
+  const [{ email, preferences, recipients }, carInsuranceRecipients] = await Promise.all([
+    loadNotificationConfig(admin),
+    loadCarInsuranceRecipientEmails(admin),
+  ]);
 
-  const { email, preferences, recipients } = await loadNotificationConfig(admin);
+  await purgeOldLicensureNotificationLogs(admin);
 
   if (!preferences?.is_enabled) throw new Error('Notifications are disabled.');
   if (email && !email.is_active) throw new Error('Gmail sender is not active.');
@@ -2698,6 +3285,9 @@ ipcMain.handle('notifications:resendAllExpiring', async (_event, payload) => {
     fetchOtherExpiringRows(admin, preferences ?? {}, localPrefs),
   ]);
   const configuredRecipients = Array.isArray(recipients) ? recipients.map((x) => safeText(x).toLowerCase()).filter(Boolean) : [];
+  const configuredCarInsuranceRecipients = Array.isArray(carInsuranceRecipients)
+    ? carInsuranceRecipients.map((x) => safeText(x).toLowerCase()).filter(Boolean)
+    : [];
   const useConfiguredRecipients = configuredRecipients.length > 0;
   const sendToEmployees = preferences?.send_to_employees !== false;
 
@@ -2757,8 +3347,12 @@ ipcMain.handle('notifications:resendAllExpiring', async (_event, payload) => {
 
   for (const item of otherExpiring) {
     const targetEmails = new Set();
-    if (useConfiguredRecipients) {
-      for (const to of configuredRecipients) targetEmails.add(to);
+    const useCarInsuranceRecipients = isCarInsuranceOtherExpirationType(item.expiration_type);
+    const configuredRecipientSource = useCarInsuranceRecipients
+      ? configuredCarInsuranceRecipients
+      : configuredRecipients;
+    if (configuredRecipientSource.length) {
+      for (const to of configuredRecipientSource) targetEmails.add(to);
     }
     const itemRecipient = safeText(item.recipient_email).toLowerCase();
     if (itemRecipient) targetEmails.add(itemRecipient);
@@ -2771,7 +3365,9 @@ ipcMain.handle('notifications:resendAllExpiring', async (_event, payload) => {
         expires_on: item.expires_on,
         recipient_email: null,
         status: 'SKIPPED',
-        error_message: 'Missing recipient_email and no active notification recipient configured.',
+        error_message: useCarInsuranceRecipients
+          ? 'Missing recipient_email and no active car insurance notification recipient configured.'
+          : 'Missing recipient_email and no active notification recipient configured.',
       });
       skipped += 1;
       continue;
@@ -2782,76 +3378,15 @@ ipcMain.handle('notifications:resendAllExpiring', async (_event, payload) => {
     }
   }
 
-  let sent = 0;
-  let failed = 0;
-
-  for (const [to, bucket] of byRecipient.entries()) {
-    const queuedItems = Array.isArray(bucket?.items) ? bucket.items : [];
-    if (!queuedItems.length) continue;
-
-    const mailRows = queuedItems.map((q) => toMailRowFromQueuedItem(q));
-    const subject = computeEmailSubject(tpl.subject, mailRows.length);
-    const html = renderEmailHtml({
-      subject,
-      recipientName: null,
-      items: mailRows,
-      daysBefore: preferences?.days_before_expiry ?? 30,
-      bodyHtml: tpl.bodyHtml,
-      legacyMessage: tpl.legacyMessage,
-      brandLogoCid: emailBranding.logoCid,
-    });
-
-    try {
-      await transporter.sendMail({ from, to, subject, html, attachments: emailBranding.attachments });
-      await Promise.all(
-        queuedItems.map((queued) =>
-          queued.kind === 'other'
-            ? insertOtherExpirationNotificationLog(admin, {
-                other_expiration_item_id: queued.item.other_expiration_item_id,
-                item_name: queued.item.item_name,
-                expiration_type: queued.item.expiration_type,
-                expires_on: queued.item.expires_on,
-                recipient_email: to,
-                status: 'SENT',
-                error_message: null,
-              })
-            : insertLicensureNotificationLog(admin, {
-                applicant_id: queued.item.applicant_id,
-                license_type: queued.item.license_type,
-                expires_on: queued.item.expires_on,
-                recipient_email: to,
-                status: 'SENT',
-                error_message: null,
-              })
-        )
-      );
-      sent += queuedItems.length;
-    } catch (err) {
-      await Promise.all(
-        queuedItems.map((queued) =>
-          queued.kind === 'other'
-            ? insertOtherExpirationNotificationLog(admin, {
-                other_expiration_item_id: queued.item.other_expiration_item_id,
-                item_name: queued.item.item_name,
-                expiration_type: queued.item.expiration_type,
-                expires_on: queued.item.expires_on,
-                recipient_email: to,
-                status: 'FAILED',
-                error_message: safeText(err?.message || err),
-              })
-            : insertLicensureNotificationLog(admin, {
-                applicant_id: queued.item.applicant_id,
-                license_type: queued.item.license_type,
-                expires_on: queued.item.expires_on,
-                recipient_email: to,
-                status: 'FAILED',
-                error_message: safeText(err?.message || err),
-              })
-        )
-      );
-      failed += queuedItems.length;
-    }
-  }
+  const { sent, failed } = await sendQueuedNotificationBuckets(
+    admin,
+    byRecipient,
+    transporter,
+    from,
+    preferences,
+    tpl,
+    emailBranding
+  );
 
   return {
     ok: true,
@@ -2927,6 +3462,7 @@ function createWindow(url) {
   }
 
   mainWindow = win;
+
   win.on('closed', () => {
     if (mainWindow === win) mainWindow = null;
   });
@@ -3094,10 +3630,41 @@ function computeAutoRunKey(todayKey, email, preferences) {
   return [todayKey, sendTime, String(daysBefore), flags, safeText(email?.gmail_user)].join('|');
 }
 
+function buildAutoSendPendingFingerprint({
+  dueLicensure,
+  dueOtherExpiring,
+  configuredRecipients,
+  configuredCarInsuranceRecipients,
+}) {
+  const licensureKeys = (Array.isArray(dueLicensure) ? dueLicensure : [])
+    .map((item) => `${safeText(item?.applicant_id)}:${safeText(item?.license_type)}:${safeText(item?.expires_on)}`)
+    .filter(Boolean);
+
+  const otherKeys = (Array.isArray(dueOtherExpiring) ? dueOtherExpiring : [])
+    .map((item) => {
+      const scope = isCarInsuranceOtherExpirationType(item?.expiration_type) ? 'car' : 'other';
+      return `${scope}:${safeText(item?.other_expiration_item_id)}:${safeText(item?.expiration_type)}:${safeText(item?.expires_on)}`;
+    })
+    .filter(Boolean);
+
+  const recipientKeys = [
+    ...(Array.isArray(configuredRecipients) ? configuredRecipients : []),
+    '|car|',
+    ...(Array.isArray(configuredCarInsuranceRecipients) ? configuredCarInsuranceRecipients : []),
+  ]
+    .map((value) => safeText(value).toLowerCase())
+    .filter(Boolean);
+
+  return [...licensureKeys, ...otherKeys, '|recipients|', ...recipientKeys].join(',');
+}
+
 async function maybeAutoSendNotifications() {
   try {
     const admin = getAdminSupabase();
-    const { email, preferences } = await loadNotificationConfig(admin);
+    const [{ email, preferences, recipients }, carInsuranceRecipients] = await Promise.all([
+      loadNotificationConfig(admin),
+      loadCarInsuranceRecipientEmails(admin),
+    ]);
     if (!preferences?.is_enabled) return;
     if (email && !email.is_active) return;
 
@@ -3105,10 +3672,8 @@ async function maybeAutoSendNotifications() {
     const todayKey = ymd(now);
     if (!todayKey) return;
 
-    const runKey = computeAutoRunKey(todayKey, email, preferences);
-    if (lastAutoRunKey === runKey) return;
-
     const useScheduledSend = preferences?.use_scheduled_send !== false;
+    const sendTimeLocal = useScheduledSend ? preferences?.send_time_local : null;
     if (useScheduledSend) {
       const sendTime = safeText(preferences.send_time_local).slice(0, 5) || '08:00';
       const [hhRaw, mmRaw] = sendTime.split(':');
@@ -3118,8 +3683,30 @@ async function maybeAutoSendNotifications() {
       if (now.getTime() < due.getTime()) return;
     }
 
+    const localPrefs = loadLocalNotificationPrefs();
+    const [expiring, otherExpiring] = await Promise.all([
+      fetchExpiringRows(admin, preferences ?? {}, localPrefs),
+      fetchOtherExpiringRows(admin, preferences ?? {}, localPrefs),
+    ]);
+    const dueLicensure = expiring.filter((item) => isDueToSendNow(item.expires_on, preferences?.days_before_expiry ?? 30, sendTimeLocal));
+    const dueOtherExpiring = otherExpiring.filter((item) =>
+      isDueToSendNow(item.expires_on, item.days_before_expiry ?? preferences?.days_before_expiry ?? 30, sendTimeLocal)
+    );
+    const configuredRecipients = Array.isArray(recipients) ? recipients.map((x) => safeText(x).toLowerCase()).filter(Boolean) : [];
+    const configuredCarInsuranceRecipients = Array.isArray(carInsuranceRecipients)
+      ? carInsuranceRecipients.map((x) => safeText(x).toLowerCase()).filter(Boolean)
+      : [];
+    const pendingFingerprint = buildAutoSendPendingFingerprint({
+      dueLicensure,
+      dueOtherExpiring,
+      configuredRecipients,
+      configuredCarInsuranceRecipients,
+    });
+    const runKey = [computeAutoRunKey(todayKey, email, preferences), pendingFingerprint].join('|');
+    if (lastAutoRunKey === runKey) return;
+
     const result = await runNotificationSend(admin);
-    if (result?.ok) {
+    if (result?.ok && Number(result?.summary?.failed ?? 0) === 0) {
       lastAutoRunKey = runKey;
       console.log('[notifications] auto-run:', result?.summary ?? {});
     }
@@ -3137,25 +3724,36 @@ if (gotSingleInstanceLock) {
     focusMainWindow();
   });
 
-  app.whenReady().then(startApp);
-
-  app.whenReady().then(() => {
-    // Scheduler: checks once per minute while app is open.
-    if (notificationTimer) clearInterval(notificationTimer);
-    notificationTimer = setInterval(() => {
-      void maybeAutoSendNotifications();
-      void maybeAutoPurgeAuditLogs();
-    }, 60 * 1000);
-    void maybeAutoSendNotifications();
-    void maybeAutoPurgeAuditLogs();
-  });
-
-  app.on('window-all-closed', () => {
+  app.on('before-quit', () => {
+    try {
+      if (notificationTimer) clearInterval(notificationTimer);
+    } catch {
+      // ignore
+    }
+    notificationTimer = null;
     try {
       adminSupabaseDispatcher?.close?.();
     } catch {
       // ignore
     }
+  });
+
+  app.whenReady().then(startApp);
+
+  app.whenReady().then(() => {
+    // Scheduler: checks frequently while the app is open so due emails send promptly.
+    if (notificationTimer) clearInterval(notificationTimer);
+    notificationTimer = setInterval(() => {
+      void maybeAutoSendNotifications();
+      void maybeAutoPurgeNotificationLogs();
+      void maybeAutoPurgeAuditLogs();
+    }, NOTIFICATION_TIMER_INTERVAL_MS);
+    void maybeAutoSendNotifications();
+    void maybeAutoPurgeNotificationLogs();
+    void maybeAutoPurgeAuditLogs();
+  });
+
+  app.on('window-all-closed', () => {
     app.quit();
   });
 }

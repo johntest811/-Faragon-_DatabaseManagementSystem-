@@ -25,6 +25,8 @@ type PreferencesRow = {
 	include_security_license: boolean;
 	include_insurance: boolean;
 	send_to_employees?: boolean;
+	include_expired?: boolean;
+	expired_within_days?: number;
 	use_scheduled_send: boolean;
 	send_time_local: string | null;
 	timezone: string | null;
@@ -33,6 +35,7 @@ type PreferencesRow = {
 type LocalNotificationPrefs = {
 	includeExpired: boolean;
 	expiredWithinDays: number;
+	notificationLogRetentionDays?: number;
 };
 
 type RecipientRow = {
@@ -59,18 +62,6 @@ type OtherExpirationRow = {
 	created_at: string;
 };
 
-type ExpiringRow = {
-	applicant_id: string;
-	last_name: string | null;
-	first_name: string | null;
-	middle_name: string | null;
-	client_email: string | null;
-	client_contact_num: string | null;
-	expires_on: string;
-	license_type: string;
-	days_until_expiry: number;
-};
-
 type LogRow = {
 	id: string;
 	created_at: string;
@@ -82,33 +73,23 @@ type LogRow = {
 	error_message: string | null;
 };
 
-type LicensureJoinRow = {
-	applicant_id: string;
-	driver_expiration: string | null;
-	security_expiration: string | null;
-	insurance_expiration: string | null;
-	applicants?: {
-		applicant_id: string;
-		first_name: string | null;
-		middle_name: string | null;
-		last_name: string | null;
-		client_email: string | null;
-		client_contact_num: string | null;
-	} | null;
-};
-
-type ApplicantMiniRow = {
-	applicant_id: string;
-	first_name: string | null;
-	middle_name: string | null;
-	last_name: string | null;
-	client_email: string | null;
-	client_contact_num: string | null;
-};
-
 type RunNowResult = {
 	message?: string;
 	summary?: { sent?: number; failed?: number; skipped?: number };
+};
+
+type NotificationLogRetentionConfig = {
+	retentionDays: number;
+	retentionLabel?: string;
+	missingTable?: boolean;
+	unavailable?: boolean;
+	error?: string | null;
+};
+
+type NotificationLogClearResult = {
+	success?: boolean;
+	deleted?: number;
+	clearedAll?: boolean;
 };
 
 type LegacyAdminSession = {
@@ -226,8 +207,10 @@ function getElectronAPI() {
 				removeGmailSender?: () => Promise<unknown>;
 			};
 			notifications?: {
-				previewExpiring?: (payload?: unknown) => Promise<{ rows: ExpiringRow[] }>;
 				getLog?: (payload?: unknown) => Promise<{ rows: LogRow[] }>;
+				loadLogRetentionConfig?: () => Promise<NotificationLogRetentionConfig>;
+				saveLogRetentionConfig?: (payload: { retentionDays: number }) => Promise<NotificationLogRetentionConfig>;
+				clearLog?: () => Promise<NotificationLogClearResult>;
 				sendTestEmail?: (payload: unknown) => Promise<unknown>;
 				resendAllExpiring?: (payload?: unknown) => Promise<unknown>;
 				runNow?: () => Promise<unknown>;
@@ -295,6 +278,23 @@ function buildTemplateNotes(subject: string, bodyHtml: string) {
 
 const DEFAULT_NOTICE_SUBJECT = "NOTICE: LICENSE EXPIRATION ALERT ({count})";
 const DEFAULT_NOTICE_BODY = `<div><b>To all concerned,</b></div><div>This serves as a formal notice that the records listed below are nearing expiration.</div><div>Please review each item and coordinate the appropriate renewal action before the listed date.</div><div>If renewal has already been completed, you may disregard this message.</div>`;
+const LOG_RETENTION_OPTIONS = [
+	{ value: 7, label: "1 week" },
+	{ value: 30, label: "1 month" },
+	{ value: 365, label: "1 year" },
+] as const;
+
+function normalizeLogRetentionDays(value: unknown) {
+	const n = Number(value);
+	if (!Number.isFinite(n)) return 30;
+	if (n <= 7) return 7;
+	if (n <= 30) return 30;
+	return 365;
+}
+
+function labelForLogRetentionDays(value: unknown) {
+	return LOG_RETENTION_OPTIONS.find((option) => option.value === normalizeLogRetentionDays(value))?.label ?? "1 month";
+}
 
 function errorMessage(e: unknown) {
 	if (e instanceof Error) return e.message;
@@ -308,11 +308,6 @@ function errorMessage(e: unknown) {
 		if (parts.length) return parts.join(" — ");
 	}
 	return "Failed to save settings";
-}
-
-function fullName(r: Pick<ExpiringRow, "first_name" | "middle_name" | "last_name">) {
-	const parts = [r.first_name, r.middle_name, r.last_name].filter(Boolean);
-	return parts.length ? parts.join(" ") : "(No name)";
 }
 
 function RichTextEditor({ value, onChange }: { value: string; onChange: (next: string) => void }) {
@@ -562,14 +557,13 @@ export default function SettingsPage() {
 
 	const daysBeforeNum = useMemo(() => Number(daysBeforeInput), [daysBeforeInput]);
 
-	// Preview
-	const [preview, setPreview] = useState<ExpiringRow[]>([]);
-	const [previewLoading, setPreviewLoading] = useState(false);
-
 	// Logs / send
 	const [logStatus, setLogStatus] = useState<string>("SENT");
 	const [logs, setLogs] = useState<LogRow[]>([]);
 	const [logsLoading, setLogsLoading] = useState(false);
+	const [logRetentionDays, setLogRetentionDays] = useState("30");
+	const [logRetentionSaving, setLogRetentionSaving] = useState(false);
+	const [logClearing, setLogClearing] = useState(false);
 	const [runSending, setRunSending] = useState(false);
 	const [runSummary, setRunSummary] = useState<string>("");
 	const [envHasGmailUser, setEnvHasGmailUser] = useState<boolean | null>(null);
@@ -605,10 +599,6 @@ export default function SettingsPage() {
 	const [includeExpired, setIncludeExpired] = useState(false);
 	const [expiredWithinDays, setExpiredWithinDays] = useState(7);
 
-	const canPreview = useMemo(
-		() => enabled && Number.isFinite(daysBeforeNum) && daysBeforeNum >= 1 && daysBeforeNum <= 365,
-		[enabled, daysBeforeNum]
-	);
 	const profileDisplayLabel = useMemo(
 		() => safeText(profileDisplayName) || safeText(profileUsername) || "Admin",
 		[profileDisplayName, profileUsername]
@@ -650,8 +640,9 @@ export default function SettingsPage() {
 
 		setEnvHasGmailUser(Boolean(env?.hasGmailUser));
 		setEnvHasGmailPass(Boolean(env?.hasGmailPass));
-		setIncludeExpired(Boolean(localPrefs?.includeExpired));
-		setExpiredWithinDays(Number(localPrefs?.expiredWithinDays ?? 7));
+		setIncludeExpired(Boolean((loaded.preferences as PreferencesRow | null)?.include_expired ?? localPrefs?.includeExpired));
+		setExpiredWithinDays(Number((loaded.preferences as PreferencesRow | null)?.expired_within_days ?? localPrefs?.expiredWithinDays ?? 7));
+		setLogRetentionDays(String(normalizeLogRetentionDays(localPrefs?.notificationLogRetentionDays ?? 30)));
 
 		const email = loaded.email ?? null;
 		if (email) {
@@ -677,6 +668,8 @@ export default function SettingsPage() {
 		if (pref) {
 			setEnabled(Boolean(pref.is_enabled));
 			setSendToEmployees(pref.send_to_employees !== false);
+			setIncludeExpired(Boolean(pref.include_expired));
+			setExpiredWithinDays(Number(pref.expired_within_days ?? 7));
 			setDaysBeforeInput(String(pref.days_before_expiry ?? 30));
 			setIncludeDriver(Boolean(pref.include_driver_license));
 			setIncludeSecurity(Boolean(pref.include_security_license));
@@ -881,6 +874,49 @@ export default function SettingsPage() {
 			setLogs(res?.rows ?? []);
 		} finally {
 			setLogsLoading(false);
+		}
+	}
+
+	async function saveNotificationLogRetention(nextValue?: number) {
+		if (!electronAPI?.notifications?.saveLogRetentionConfig) {
+			throw new Error("Notification log retention is only available in the Electron desktop app.");
+		}
+
+		const retentionDays = normalizeLogRetentionDays(nextValue ?? logRetentionDays);
+		setLogRetentionSaving(true);
+		setError("");
+		setSuccess("");
+		try {
+			const res = await electronAPI.notifications.saveLogRetentionConfig({ retentionDays });
+			setLogRetentionDays(String(normalizeLogRetentionDays(res?.retentionDays ?? retentionDays)));
+			setSuccess(`Sent Gmail log retention saved (${res?.retentionLabel ?? labelForLogRetentionDays(retentionDays)}).`);
+			await refreshLogs();
+		} catch (e: unknown) {
+			setError(errorMessage(e));
+		} finally {
+			setLogRetentionSaving(false);
+		}
+	}
+
+	async function clearNotificationLog() {
+		if (!electronAPI?.notifications?.clearLog) {
+			throw new Error("Clearing the Sent Gmail log is only available in the Electron desktop app.");
+		}
+
+		setLogClearing(true);
+		setError("");
+		setSuccess("");
+		try {
+			const ok = window.confirm("Clear all Sent Gmail log entries now?");
+			if (!ok) return;
+			const res = await electronAPI.notifications.clearLog();
+			setLogs([]);
+			setSuccess(`Cleared ${Number(res?.deleted ?? 0)} Sent Gmail log entr${Number(res?.deleted ?? 0) === 1 ? "y" : "ies"}.`);
+			await refreshLogs();
+		} catch (e: unknown) {
+			setError(errorMessage(e));
+		} finally {
+			setLogClearing(false);
 		}
 	}
 
@@ -1212,13 +1248,13 @@ export default function SettingsPage() {
 							const wide = await supabase
 								.from("notification_preferences")
 								.select(
-									"id, is_enabled, send_to_employees, days_before_expiry, include_driver_license, include_security_license, include_insurance, use_scheduled_send, send_time_local, timezone"
+									"id, is_enabled, send_to_employees, include_expired, expired_within_days, days_before_expiry, include_driver_license, include_security_license, include_insurance, use_scheduled_send, send_time_local, timezone"
 								)
 								.limit(1)
 								.maybeSingle();
 							if (!wide.error) return wide;
 							const msg = errorTextWithMessageFallback(wide.error);
-							if (!/send_to_employees/i.test(msg)) return wide;
+							if (!/send_to_employees|include_expired|expired_within_days/i.test(msg)) return wide;
 							return await supabase
 								.from("notification_preferences")
 								.select(
@@ -1281,187 +1317,20 @@ export default function SettingsPage() {
 	}, [electronAPI]);
 
 	useEffect(() => {
-		void loadMyProfile();
-		void loadRecipientRows();
-		void loadOtherExpirationRows();
-	}, []);
-
-	async function loadPreview() {
-		function daysUntilYmd(ymdValue: string) {
-			if (!ymdValue) return null;
-			const [y, m, d] = ymdValue.split("-").map((n) => Number(n));
-			const target = new Date(y, m - 1, d, 0, 0, 0, 0);
-			const today = new Date();
-			const t0 = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 0, 0, 0, 0);
-			return Math.round((target.getTime() - t0.getTime()) / (24 * 60 * 60 * 1000));
-		}
-
-		async function loadOtherPreviewRows(daysBeforeExpiry: number, allowExpired: boolean, expiredWindow: number) {
-			const out: ExpiringRow[] = [];
-			const res = await supabase
-				.from("other_expiration_items")
-				.select("id, item_name, expiration_type, expires_on, days_before_expiry, recipient_email, is_active")
-				.eq("is_active", true)
-				.limit(300);
-
-			let rows: Array<{ id: number; item_name: string; expiration_type: string; expires_on: string; days_before_expiry?: number | null; recipient_email: string | null }> = [];
-			if (res.error) {
-				const msg = errorTextWithMessageFallback(res.error);
-				if (!/days_before_expiry/i.test(msg)) throw res.error;
-				const fallback = await supabase
-					.from("other_expiration_items")
-					.select("id, item_name, expiration_type, expires_on, recipient_email, is_active")
-					.eq("is_active", true)
-					.limit(300);
-				if (fallback.error) throw fallback.error;
-				rows = ((fallback.data as Array<{ id: number; item_name: string; expiration_type: string; expires_on: string; recipient_email: string | null }>) ?? []).map((row) => ({
-					...row,
-					days_before_expiry: null,
-				}));
-			} else {
-				rows = (res.data as Array<{ id: number; item_name: string; expiration_type: string; expires_on: string; days_before_expiry?: number | null; recipient_email: string | null }>) ?? [];
-			}
-
-			for (const row of rows) {
-				const exp = safeText(row.expires_on);
-				const du = daysUntilYmd(exp);
-				const perItemDaysBefore = Math.max(
-					1,
-					Math.min(365, Number(row.days_before_expiry ?? daysBeforeExpiry) || daysBeforeExpiry)
-				);
-				if (
-					exp &&
-					du !== null &&
-					((du >= 0 && du <= perItemDaysBefore) || (allowExpired && du < 0 && Math.abs(du) <= expiredWindow))
-				) {
-					out.push({
-						applicant_id: `other:${row.id}`,
-						last_name: null,
-						first_name: row.item_name,
-						middle_name: null,
-						client_email: row.recipient_email,
-						client_contact_num: null,
-						expires_on: exp,
-						license_type: row.expiration_type,
-						days_until_expiry: du,
-					});
+		void (async () => {
+			await loadMyProfile();
+			await loadRecipientRows();
+			await loadOtherExpirationRows();
+			if (isDesktop && electronAPI?.notifications?.loadLogRetentionConfig) {
+				try {
+					const res = await electronAPI.notifications.loadLogRetentionConfig();
+					setLogRetentionDays(String(normalizeLogRetentionDays(res?.retentionDays ?? 30)));
+				} catch (e: unknown) {
+					setError(errorMessage(e));
 				}
 			}
-
-			return out;
-		}
-
-		setPreviewLoading(true);
-		setError("");
-		try {
-			const daysBeforeExpiry = Number(daysBeforeNum);
-			if (!Number.isFinite(daysBeforeExpiry)) throw new Error("Days before expiry must be a number.");
-			const allowExpired = Boolean(includeExpired);
-			const expiredWindow = Math.max(1, Math.min(365, Number(expiredWithinDays || 7)));
-			const otherRows = await loadOtherPreviewRows(daysBeforeExpiry, allowExpired, expiredWindow);
-
-			if (electronAPI?.notifications?.previewExpiring) {
-				const r = await electronAPI.notifications.previewExpiring({ limit: 25 });
-				const merged = [
-					...((r?.rows as ExpiringRow[]) ?? []),
-					...otherRows,
-				].sort((a, b) => a.days_until_expiry - b.days_until_expiry);
-				setPreview(merged.slice(0, 25));
-				return;
-			}
-
-			// Web fallback (compute from base tables; avoids needing v_expiring_licensures view)
-			const lic = await supabase
-				.from("licensure")
-				.select("applicant_id, driver_expiration, security_expiration, insurance_expiration")
-				.limit(10000);
-			if (lic.error) throw lic.error;
-
-			const licRows = ((lic.data as unknown) as LicensureJoinRow[]) ?? [];
-			const ids = Array.from(new Set(licRows.map((r) => r.applicant_id).filter(Boolean)));
-
-			const applicantsById = new Map<string, ApplicantMiniRow>();
-			const chunkSize = 500;
-			for (let i = 0; i < ids.length; i += chunkSize) {
-				const chunk = ids.slice(i, i + chunkSize);
-				const aRes = await supabase
-					.from("applicants")
-						.select("applicant_id, first_name, middle_name, last_name, client_email, client_contact_num")
-					.in("applicant_id", chunk);
-				if (aRes.error) throw aRes.error;
-				for (const a of ((aRes.data as unknown) as ApplicantMiniRow[]) ?? []) {
-					applicantsById.set(a.applicant_id, a);
-				}
-			}
-
-
-			const include = {
-				driver: Boolean(includeDriver),
-				security: Boolean(includeSecurity),
-				insurance: Boolean(includeInsurance),
-			};
-
-			function toYmd(v: unknown) {
-				const s = safeText(v);
-				if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
-				return "";
-			}
-
-			const out: ExpiringRow[] = [];
-			for (const row of licRows) {
-				const a = applicantsById.get(row.applicant_id);
-				const base = {
-					applicant_id: String(row.applicant_id),
-					last_name: a?.last_name ?? null,
-					first_name: a?.first_name ?? null,
-					middle_name: a?.middle_name ?? null,
-					client_email: a?.client_email ?? null,
-					client_contact_num: a?.client_contact_num ?? null,
-				};
-
-				if (include.driver) {
-					const exp = toYmd(row.driver_expiration);
-					const du = exp ? daysUntilYmd(exp) : null;
-					if (
-						exp &&
-						du !== null &&
-						((du >= 0 && du <= daysBeforeExpiry) || (allowExpired && du < 0 && Math.abs(du) <= expiredWindow))
-					) {
-						out.push({ ...base, expires_on: exp, license_type: "DRIVER_LICENSE", days_until_expiry: du });
-					}
-				}
-				if (include.security) {
-					const exp = toYmd(row.security_expiration);
-					const du = exp ? daysUntilYmd(exp) : null;
-					if (
-						exp &&
-						du !== null &&
-						((du >= 0 && du <= daysBeforeExpiry) || (allowExpired && du < 0 && Math.abs(du) <= expiredWindow))
-					) {
-						out.push({ ...base, expires_on: exp, license_type: "SECURITY_LICENSE", days_until_expiry: du });
-					}
-				}
-				if (include.insurance) {
-					const exp = toYmd(row.insurance_expiration);
-					const du = exp ? daysUntilYmd(exp) : null;
-					if (
-						exp &&
-						du !== null &&
-						((du >= 0 && du <= daysBeforeExpiry) || (allowExpired && du < 0 && Math.abs(du) <= expiredWindow))
-					) {
-						out.push({ ...base, expires_on: exp, license_type: "INSURANCE", days_until_expiry: du });
-					}
-				}
-			}
-
-			const merged = [...out, ...otherRows].sort((a, b) => a.days_until_expiry - b.days_until_expiry);
-			setPreview(merged.slice(0, 25));
-		} catch (e: unknown) {
-			setError(errorMessage(e));
-		} finally {
-			setPreviewLoading(false);
-		}
-	}
+		})();
+	}, [electronAPI, isDesktop]);
 
 	async function saveAll() {
 		setSaving(true);
@@ -1500,7 +1369,10 @@ export default function SettingsPage() {
 					},
 					preferences: {
 						is_enabled: Boolean(enabled),
-							send_to_employees: Boolean(sendToEmployees),
+						send_to_employees: Boolean(sendToEmployees),
+						use_supabase_email_sender: false,
+						include_expired: Boolean(includeExpired),
+						expired_within_days: Math.max(1, Math.min(365, Number(expiredWithinDays || 7))),
 						days_before_expiry: daysBeforeValue,
 						include_driver_license: Boolean(includeDriver),
 						include_security_license: Boolean(includeSecurity),
@@ -1518,6 +1390,7 @@ export default function SettingsPage() {
 						includeExpired: Boolean(includeExpired),
 						expiredWithinDays: Math.max(1, Math.min(365, Number(expiredWithinDays || 7))),
 						sendToEmployees: Boolean(sendToEmployees),
+						notificationLogRetentionDays: normalizeLogRetentionDays(logRetentionDays),
 					});
 				}
 			} else {
@@ -1534,7 +1407,10 @@ export default function SettingsPage() {
 						.from("notification_preferences")
 						.update({
 							is_enabled: Boolean(enabled),
-								send_to_employees: Boolean(sendToEmployees),
+							send_to_employees: Boolean(sendToEmployees),
+							use_supabase_email_sender: false,
+							include_expired: Boolean(includeExpired),
+							expired_within_days: Math.max(1, Math.min(365, Number(expiredWithinDays || 7))),
 							days_before_expiry: daysBeforeValue,
 							include_driver_license: Boolean(includeDriver),
 							include_security_license: Boolean(includeSecurity),
@@ -1548,7 +1424,10 @@ export default function SettingsPage() {
 				} else {
 					const ins = await supabase.from("notification_preferences").insert({
 						is_enabled: Boolean(enabled),
-							send_to_employees: Boolean(sendToEmployees),
+						send_to_employees: Boolean(sendToEmployees),
+						use_supabase_email_sender: false,
+						include_expired: Boolean(includeExpired),
+						expired_within_days: Math.max(1, Math.min(365, Number(expiredWithinDays || 7))),
 						days_before_expiry: daysBeforeValue,
 						include_driver_license: Boolean(includeDriver),
 						include_security_license: Boolean(includeSecurity),
@@ -1582,8 +1461,7 @@ export default function SettingsPage() {
 				}
 			}
 
-			// Refresh preview and logs immediately.
-			void loadPreview();
+			// Refresh logs immediately.
 			void refreshLogs();
 
 			// Do NOT auto-send on Save; sending remains a manual action via "Run now".
@@ -1676,7 +1554,7 @@ export default function SettingsPage() {
 					</div>
 				) : (
 					<div className="text-xs text-gray-500">
-						Desktop email sending is only available in the Electron app.
+						Sender setup is managed in the Electron app. Automatic emails only run while the desktop app is open.
 					</div>
 				)}
 			</div>
@@ -1796,8 +1674,7 @@ export default function SettingsPage() {
 						<div className="glass-panel animate-scale-in rounded-2xl border-none p-4">
 							<div className="font-semibold mb-2 text-black">Gmail Sender</div>
 							<div className="text-xs text-gray-500 mb-4">
-								Used to send notification emails. This app uses Gmail App Password auth only.
-								The sender address is read from <span className="font-mono">GMAIL_USER</span> in <span className="font-mono">.env.local</span>.
+								Used to send notification emails. The desktop app sends them with Gmail App Password auth while the app is open.
 							</div>
 
 							{isDesktop ? (
@@ -2134,7 +2011,7 @@ export default function SettingsPage() {
 								</div>
 								{!isDesktop ? (
 									<div className="text-xs text-gray-500 mt-2">
-										This setting affects Preview only on the web; sending runs in the desktop app.
+										This setting affects Preview on the web. Actual sending runs in the desktop app.
 									</div>
 								) : null}
 							</div>
@@ -2191,13 +2068,6 @@ export default function SettingsPage() {
 							className="animated-btn px-4 py-2 rounded-xl bg-[#8B1C1C] text-white disabled:opacity-50 hover:bg-red-800"
 						>
 							{runSending ? "Resending…" : "Resend all records"}
-						</button>
-						<button
-							onClick={() => void loadPreview()}
-							disabled={previewLoading || !canPreview}
-							className="animated-btn px-4 py-2 rounded-xl bg-white border disabled:opacity-50 text-black hover:bg-white"
-						>
-							{previewLoading ? "Loading preview…" : "Preview expiring records"}
 						</button>
 						{runSummary ? <div className="text-xs text-gray-600">Last run: {runSummary}</div> : null}
 					</div>
@@ -2336,37 +2206,61 @@ export default function SettingsPage() {
 						</div>
 
 						<div className="glass-panel animate-scale-in rounded-2xl border-none p-4">
-							<div className="font-semibold mb-2 text-black">Sent Gmail log</div>
-							<div className="text-xs text-gray-500 mb-3">
-								Shows recent emails sent for expiring licenses and other expiration records.
+							<div className="flex flex-wrap items-start justify-between gap-3">
+								<div>
+									<div className="font-semibold mb-2 text-black">Sent Gmail log</div>
+									<div className="text-xs text-gray-500">
+										Shows recent emails sent for expiring licenses and other expiration records.
+									</div>
+								</div>
+								<div className="flex flex-wrap items-center gap-2">
+									<select
+										value={logRetentionDays}
+										onChange={(e) => setLogRetentionDays(String(normalizeLogRetentionDays(e.target.value)))}
+										disabled={!isDesktop || logRetentionSaving || logClearing}
+										className="rounded-xl border px-3 py-2 text-sm text-black bg-white disabled:opacity-50"
+									>
+										{LOG_RETENTION_OPTIONS.map((option) => (
+											<option key={option.value} value={option.value} className="text-black">
+												Auto clear in {option.label}
+											</option>
+										))}
+									</select>
+									<button
+										type="button"
+										onClick={() => void saveNotificationLogRetention()}
+										disabled={!isDesktop || logRetentionSaving || logClearing}
+										className="animated-btn px-3 py-2 rounded-xl bg-white border disabled:opacity-50 text-black hover:bg-white"
+									>
+										{logRetentionSaving ? "Saving..." : "Save retention"}
+									</button>
+									<button
+										type="button"
+										onClick={() => void clearNotificationLog()}
+										disabled={!isDesktop || logsLoading || logRetentionSaving || logClearing}
+										className="animated-btn px-3 py-2 rounded-xl bg-white border disabled:opacity-50 text-black hover:bg-white"
+									>
+										{logClearing ? "Clearing..." : "Clear log"}
+									</button>
+									<button
+										type="button"
+										onClick={() => void refreshLogs()}
+										disabled={!isDesktop || logsLoading || logRetentionSaving || logClearing}
+										className="animated-btn px-3 py-2 rounded-xl bg-white border disabled:opacity-50 text-black hover:bg-white"
+									>
+										{logsLoading ? "Loading..." : "Refresh log"}
+									</button>
+								</div>
 							</div>
-							<button
-								onClick={async () => {
-								setLogsLoading(true);
-								setError("");
-								try {
-									if (!electronAPI?.notifications?.getLog) {
-										throw new Error("Logs are only available in the Electron desktop app.");
-									}
-									const res = await electronAPI.notifications.getLog({ status: logStatus, limit: 25 });
-									setLogs(res?.rows ?? []);
-								} catch (e: unknown) {
-									setError(errorMessage(e));
-								} finally {
-									setLogsLoading(false);
-								}
-							}}
-								disabled={!isDesktop || logsLoading}
-								className="animated-btn px-3 py-2 rounded-xl bg-white border disabled:opacity-50 text-black hover:bg-white"
-							>
-								{logsLoading ? "Loading…" : "Refresh log"}
-							</button>
-							<div className="mt-3 overflow-auto">
+							<div className="mt-3 text-xs text-gray-500">
+								Current automatic clear schedule: {labelForLogRetentionDays(logRetentionDays)}.
+							</div>
+							<div className="mt-3 max-h-[420px] overflow-auto rounded-xl border">
 								{logs.length === 0 ? (
-									<div className="text-sm text-gray-600">No log entries loaded yet.</div>
+									<div className="px-3 py-4 text-sm text-gray-600">No log entries loaded yet.</div>
 								) : (
 									<table className="w-full text-sm text-black">
-										<thead>
+										<thead className="sticky top-0 bg-white">
 											<tr className="text-left border-b">
 												<th className="py-2 pr-3 text-black">When</th>
 												<th className="py-2 pr-3 text-black">Status</th>
@@ -2712,37 +2606,6 @@ export default function SettingsPage() {
 							: null}
 					</div>
 
-					<div className="glass-panel animate-scale-in rounded-2xl border-none p-4">
-						<div className="font-semibold mb-2 text-black">Preview (next 25)</div>
-						{preview.length === 0 ? (
-							<div className="text-sm text-gray-600">No preview loaded yet.</div>
-						) : (
-							<div className="overflow-auto">
-								<table className="w-full text-sm">
-									<thead>
-										<tr className="text-left border-b">
-											<th className="py-2 pr-3 text-black">Employee</th>
-											<th className="py-2 pr-3 text-black">Type</th>
-											<th className="py-2 pr-3 text-black">Expires</th>
-											<th className="py-2 pr-3 text-black">Days</th>
-											<th className="py-2 pr-3 text-black">Email</th>
-										</tr>
-									</thead>
-									<tbody>
-										{preview.map((r) => (
-											<tr key={`${r.applicant_id}:${r.license_type}:${r.expires_on}`} className="animated-row border-b border-gray-100">
-												<td className="py-2 pr-3 whitespace-nowrap">{fullName(r)}</td>
-												<td className="py-2 pr-3 whitespace-nowrap">{r.license_type}</td>
-												<td className="py-2 pr-3 whitespace-nowrap">{r.expires_on}</td>
-												<td className="py-2 pr-3 whitespace-nowrap">{r.days_until_expiry}</td>
-												<td className="py-2 pr-3 whitespace-nowrap">{r.client_email ?? ""}</td>
-											</tr>
-										))}
-									</tbody>
-								</table>
-							</div>
-						)}
-					</div>
 				</div>
 			)}
 		</section>

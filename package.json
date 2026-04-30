@@ -6,7 +6,7 @@
   "author": "JOHN",
   "private": true,
   "scripts": {
-    "dev": "node ./scripts/clean-next-dev-lock.mjs && concurrently \"cross-env NEXT_DEV_PORT=3001 NODE_ENV=development next dev -p 3001\" \"wait-on http://localhost:3001 && cross-env NEXT_DEV_PORT=3001 ELECTRON_DEV=1 NODE_ENV=development electron .\"",
+    "dev": "node ./scripts/clean-next-dev-lock.mjs && concurrently \"cross-env NEXT_DEV_PORT=3001 NODE_ENV=development next dev -p 3001\" \"wait-on http://localhost:3001 && cross-env NEXT_DEV_PORT=3001 ELECTRON_DEV=1 NODE_ENV=development node ./scripts/start-electron-dev.cjs\"",
     "build": "node ./node_modules/next/dist/bin/next build",
     "start": "node ./node_modules/next/dist/bin/next start",
     "lint": "eslint",
@@ -15,7 +15,7 @@
   "dependencies": {
     "@supabase/supabase-js": "^2.90.1",
     "dotenv": "^16.4.5",
-    "exceljs": "^4.4.0",
+    "exceljs": "^3.4.0",
     "google-auth-library": "^10.5.0",
     "jspdf": "^4.2.1",
     "jspdf-autotable": "^5.0.7",
@@ -38,6 +38,7 @@
     "electron-builder": "^26.8.2",
     "eslint": "^9.39.3",
     "eslint-config-next": "^16.2.3",
+    "supabase": "^2.95.6",
     "tailwindcss": "^4",
     "typescript": "^5.9.3",
     "wait-on": "*"

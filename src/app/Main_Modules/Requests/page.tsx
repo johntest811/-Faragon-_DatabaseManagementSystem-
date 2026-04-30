@@ -9,6 +9,7 @@ import LoadingCircle from "../../Components/LoadingCircle";
 import TableZoomWrapper from "@/app/Components/TableZoomWrapper";
 import { useToast } from "../../Components/ToastProvider";
 import {
+  MODULE_CATALOG,
   formatPermissionColumnLabel,
   normalizeModuleKey,
   visibleColumnsForModule,
@@ -18,6 +19,7 @@ type ModuleRow = { module_key: string; display_name: string; path: string };
 
 type ApplicantOption = {
   applicant_id: string;
+  custom_id: string | null;
   first_name: string | null;
   middle_name: string | null;
   last_name: string | null;
@@ -182,7 +184,7 @@ function moduleKeysForRequest(moduleKey: string): string[] {
   const key = normalizeModuleKey(moduleKey);
   if (!key) return [];
   if (key === "logistics") {
-    return ["client", "inventory", "paraphernalia", "reports", "car_insurance_expiration", "logistics"];
+    return ["inventory", "paraphernalia", "reports", "car_insurance_expiration", "logistics"];
   }
   return [key];
 }
@@ -350,7 +352,8 @@ function requestBelongsToIdentity(row: AccessRequestRow, identity: RequestIdenti
 function applicantLabel(a: ApplicantOption) {
   const parts = [a.first_name, a.middle_name, a.last_name].filter(Boolean);
   const name = parts.length ? parts.join(" ") : "(No name)";
-  return `${name} — ${a.applicant_id.slice(0, 8).toUpperCase()}`;
+  const customId = String(a.custom_id ?? "").trim();
+  return `${name} — ${customId || a.applicant_id.slice(0, 8).toUpperCase()}`;
 }
 
 function requestColumnKeys(row: AccessRequestRow) {
@@ -473,7 +476,7 @@ function RequestsPageContent() {
     try {
       const { data, error: fetchErr } = await supabase
         .from("applicants")
-        .select("applicant_id, first_name, middle_name, last_name")
+        .select("applicant_id, custom_id, first_name, middle_name, last_name")
         .eq("is_archived", false)
         .eq("is_trashed", false)
         .order("last_name", { ascending: true })
@@ -780,10 +783,21 @@ function RequestsPageContent() {
   }, [loadMyRequests, toast]);
 
   const selectableModules = useMemo(() => {
-    return modules.map((m) => ({
-      ...m,
-      module_key: normalizeModuleKey(m.module_key),
-    }));
+    const orderMap = new Map(
+      MODULE_CATALOG.map((item, index) => [normalizeModuleKey(item.moduleKey), index])
+    );
+
+    return modules
+      .map((m) => ({
+        ...m,
+        module_key: normalizeModuleKey(m.module_key),
+      }))
+      .sort((a, b) => {
+        const aOrder = orderMap.get(normalizeModuleKey(a.module_key)) ?? Number.MAX_SAFE_INTEGER;
+        const bOrder = orderMap.get(normalizeModuleKey(b.module_key)) ?? Number.MAX_SAFE_INTEGER;
+        if (aOrder !== bOrder) return aOrder - bOrder;
+        return a.display_name.localeCompare(b.display_name);
+      });
   }, [modules]);
 
   const myModuleKeySet = useMemo(() => {
@@ -1597,7 +1611,7 @@ function RequestsPageContent() {
                   </label>
                 </div>
                 <div className="mt-2 text-xs text-black">
-                  Approvers will grant the page's Edit and Delete buttons when these are checked.
+                  Approvers will grant the page&apos;s Edit and Delete buttons when these are checked.
                 </div>
               </div>
 

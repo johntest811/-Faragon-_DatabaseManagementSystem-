@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, ClipboardList, RefreshCw, Clock3, Save } from "lucide-react";
+import { AlertTriangle, ClipboardList, RefreshCw, Clock3, Save, Search } from "lucide-react";
 import LoadingCircle from "../../Components/LoadingCircle";
 
 type AuditRetentionResponse = {
@@ -22,7 +22,7 @@ type AuditPageResponse = {
 
 type ElectronApi = {
   audit?: {
-    getPage?: (payload: { page: number; pageSize: number }) => Promise<AuditPageResponse>;
+    getPage?: (payload: { page: number; pageSize: number; search?: string }) => Promise<AuditPageResponse>;
     loadRetentionConfig?: () => Promise<AuditRetentionResponse>;
     saveRetentionConfig?: (payload: { retentionDays: number }) => Promise<AuditRetentionResponse & { success?: boolean | null }>;
   };
@@ -80,6 +80,8 @@ export default function AuditPage() {
   const [count, setCount] = useState(0);
   const [page, setPage] = useState(1);
   const [pageSize] = useState(25);
+  const [searchInput, setSearchInput] = useState("");
+  const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>("");
   const [missingTable, setMissingTable] = useState(false);
@@ -94,9 +96,25 @@ export default function AuditPage() {
     return Math.max(1, Math.ceil(count / pageSize));
   }, [count, pageSize]);
 
+  useEffect(() => {
+    if (page > totalPages) {
+      setPage(totalPages);
+    }
+  }, [page, totalPages]);
+
   const retentionLabel = useMemo(() => {
     return RETENTION_OPTIONS.find((option) => option.value === normalizeRetentionDays(retentionDays))?.label ?? "1 month";
   }, [retentionDays]);
+
+  useEffect(() => {
+    const timeout = globalThis.setTimeout(() => {
+      setSearch(safeText(searchInput));
+    }, 250);
+
+    return () => {
+      globalThis.clearTimeout(timeout);
+    };
+  }, [searchInput]);
 
   useEffect(() => {
     let cancelled = false;
@@ -113,7 +131,7 @@ export default function AuditPage() {
           return;
         }
 
-        const res = await api.audit.getPage({ page, pageSize });
+        const res = await api.audit.getPage({ page, pageSize, search });
         if (cancelled) return;
 
         if (Boolean(res?.unavailable)) {
@@ -135,7 +153,11 @@ export default function AuditPage() {
     return () => {
       cancelled = true;
     };
-  }, [api, page, pageSize]);
+  }, [api, page, pageSize, search]);
+
+  useEffect(() => {
+    setExpandedId(null);
+  }, [page, search]);
 
   useEffect(() => {
     let cancelled = false;
@@ -198,7 +220,7 @@ export default function AuditPage() {
         setCount(0);
         return;
       }
-      const res = await api.audit.getPage({ page, pageSize });
+      const res = await api.audit.getPage({ page, pageSize, search });
       if (Boolean(res?.unavailable)) {
         setError(safeText(res?.error) || "Supabase is temporarily unreachable. Try again shortly.");
       }
@@ -256,14 +278,29 @@ export default function AuditPage() {
             </div>
           </div>
 
-          <button
-            type="button"
-            onClick={refreshCurrentPage}
-            className="animated-btn inline-flex items-center gap-2 px-4 py-2 rounded-xl border bg-white text-sm text-gray-800 hover:bg-white"
-          >
-            <RefreshCw className="w-4 h-4" />
-            Refresh
-          </button>
+          <div className="flex w-full flex-col gap-3 sm:w-auto sm:flex-row sm:items-center">
+            <div className="relative w-full sm:w-[360px]">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-500" />
+              <input
+                value={searchInput}
+                onChange={(event) => {
+                  setSearchInput(event.target.value);
+                  setPage(1);
+                }}
+                placeholder="Search actor, action, page, entity, or details"
+                className="w-full rounded-full border bg-white py-2 pl-10 pr-4 text-sm text-black shadow-sm"
+              />
+            </div>
+
+            <button
+              type="button"
+              onClick={refreshCurrentPage}
+              className="animated-btn inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl border bg-white text-sm text-gray-800 hover:bg-white"
+            >
+              <RefreshCw className="w-4 h-4" />
+              Refresh
+            </button>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 mt-5">
@@ -406,7 +443,7 @@ export default function AuditPage() {
             ) : (
               <tr>
                 <td colSpan={6} className="px-4 py-10 text-center text-gray-500">
-                  No audit events yet.
+                  {search ? "No audit events matched your search." : "No audit events yet."}
                 </td>
               </tr>
             )}

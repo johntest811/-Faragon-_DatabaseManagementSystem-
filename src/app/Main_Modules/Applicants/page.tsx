@@ -191,6 +191,7 @@ export default function ApplicantsPage() {
 
 			const haystack = [
 				row.applicant_id,
+				(row.custom_id ?? "").trim(),
 				shortCode(row.applicant_id),
 				getFullName(row),
 				row.client_position,
@@ -211,6 +212,11 @@ export default function ApplicantsPage() {
 
 		return list.sort((a, b) => String(b.created_at ?? "").localeCompare(String(a.created_at ?? "")));
 	}, [applicants, search, statusFilter]);
+
+	const exportApplicants = useMemo(
+		() => [...applicants].sort((a, b) => String(b.created_at ?? "").localeCompare(String(a.created_at ?? ""))),
+		[applicants]
+	);
 
 	const totalLoading = loading || accessLoading || editLoading || columnLoading;
 	const canOpenApplicantDetails = canAccessApplicants;
@@ -260,10 +266,10 @@ export default function ApplicantsPage() {
 
 	async function exportApplicantsXlsx() {
 		if (!canExportApplicants) return;
-			const exportRows = await buildPersonnelDetailExportRows(filteredApplicants, {
-				codePrefix: "APP",
-				codeLabel: "Applicant Code",
-			});
+		const exportRows = await buildPersonnelDetailExportRows(exportApplicants, {
+			codePrefix: "APP",
+			codeLabel: "Applicant Code",
+		});
 		if (!exportRows.length) {
 			setError("No rows available for export.");
 			return;
@@ -285,7 +291,7 @@ export default function ApplicantsPage() {
 
 	async function exportApplicantsPdf() {
 		if (!canExportApplicants) return;
-		const exportRows = await buildPersonnelDetailExportRows(filteredApplicants, {
+		const exportRows = await buildPersonnelDetailExportRows(exportApplicants, {
 			codePrefix: "APP",
 			codeLabel: "Applicant Code",
 		});
@@ -477,7 +483,7 @@ export default function ApplicantsPage() {
 									</div>
 									<div className="min-w-0">
 										<div className="text-sm font-bold text-gray-900 truncate">{name}</div>
-										<div className="text-xs text-gray-500 truncate">{shortCode(row.applicant_id)}</div>
+										<div className="text-xs text-gray-500 truncate">{(row.custom_id ?? "").trim() || shortCode(row.applicant_id)}</div>
 										<div className="mt-1 text-xs text-gray-500 truncate">
 											<span className="text-gray-500">Position:</span> {row.client_position ?? "—"}
 										</div>

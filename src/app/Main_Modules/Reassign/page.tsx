@@ -9,16 +9,15 @@ import EmployeeEditorModal from "../../Components/EmployeeEditorModal";
 import LoadingCircle from "../../Components/LoadingCircle";
 import TableZoomWrapper from "@/app/Components/TableZoomWrapper";
 import EmployeeStatusMenu from "../Components/EmployeeStatusMenu";
-import { buildEmployeeStatusUpdatePatch, loadLicensureMap } from "../employeeListData";
-import * as XLSX from "xlsx";
+import { buildEmployeeStatusUpdatePatch } from "../employeeListData";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
-import { addBrandedPdfHeader, buildBrandedAoa, buildBrandedWorkbookBuffer } from "../Components/exportBranding";
-import { useLiveNow } from "../../Client/useLiveNow";
+import { addBrandedPdfHeader, buildBrandedWorkbookBuffer } from "../Components/exportBranding";
 
 type Applicant = {
   applicant_id: string;
   created_at: string;
+  custom_id: string | null;
   first_name: string | null;
   middle_name: string | null;
   last_name: string | null;
@@ -34,13 +33,6 @@ type Applicant = {
   profile_image_path: string | null;
   is_archived: boolean | null;
   is_trashed?: boolean | null;
-};
-
-type LicensureRow = {
-  applicant_id: string;
-  driver_expiration: string | null;
-  security_expiration: string | null;
-  insurance_expiration: string | null;
 };
 
 const BUCKETS = {
@@ -130,32 +122,6 @@ function formatServiceLengthShort(fromIso: string | null, now = new Date()) {
   return `${diff.years}y ${diff.months}m ${diff.days}d`;
 }
 
-function ymd(d: string | null) {
-  if (!d) return null;
-  const dt = new Date(d);
-  if (Number.isNaN(dt.getTime())) return null;
-  return dt.toISOString().slice(0, 10);
-}
-
-function daysUntil(dateYmd: string | null) {
-  if (!dateYmd) return null;
-  const today = new Date();
-  const t = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-  const dt = new Date(dateYmd);
-  if (Number.isNaN(dt.getTime())) return null;
-  const diff = dt.getTime() - t.getTime();
-  return Math.ceil(diff / (24 * 60 * 60 * 1000));
-}
-
-function nextLicenseExpiryFromLicensureRow(r: LicensureRow | null) {
-  if (!r) return { ymd: null as string | null, days: null as number | null };
-  const cands = [ymd(r.driver_expiration), ymd(r.security_expiration), ymd(r.insurance_expiration)].filter(Boolean) as string[];
-  if (!cands.length) return { ymd: null, days: null };
-  const sorted = [...cands].sort((a, b) => a.localeCompare(b));
-  const next = sorted[0];
-  return { ymd: next, days: daysUntil(next) };
-}
-
 function downloadBlob(filename: string, blob: Blob) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -234,13 +200,9 @@ export default function ReassignPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>("");
   const [employees, setEmployees] = useState<Applicant[]>([]);
-  const [licensureByApplicantId, setLicensureByApplicantId] = useState<
-    Record<string, { nextYmd: string | null; nextDays: number | null }>
-  >({});
   const fetchRunIdRef = useRef(0);
   const [search, setSearch] = useState("");
   const [sortBy, setSortBy] = useState<"name" | "last_name" | "letter" | "created_at" | "category" | "service">("name");
-  const liveNow = useLiveNow();
 
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [genderFilter, setGenderFilter] = useState<string>("ALL");
@@ -266,7 +228,7 @@ export default function ReassignPage() {
       const { data, error: fetchError } = await supabase
         .from("applicants")
         .select(
-          "applicant_id, created_at, date_hired_fsai, first_name, middle_name, last_name, client_position, detachment, status, gender, birth_date, age, client_contact_num, client_email, profile_image_path, is_archived, is_trashed"
+          "applicant_id, created_at, custom_id, date_hired_fsai, first_name, middle_name, last_name, client_position, detachment, status, gender, birth_date, age, client_contact_num, client_email, profile_image_path, is_archived, is_trashed"
         )
         .eq("is_archived", false)
         .eq("is_trashed", false)
@@ -277,34 +239,23 @@ export default function ReassignPage() {
         console.error(fetchError);
         setError(fetchError.message || "Failed to load Reassign list");
         setEmployees([]);
-        setLicensureByApplicantId({});
       } else {
         const list = (data as Applicant[]) || [];
         setEmployees(list);
-
-        setLoading(false);
-
-        void (async () => {
-          try {
-            const ids = list.map((x) => x.applicant_id).filter(Boolean);
-            const map = await loadLicensureMap(ids);
-            if (fetchRunIdRef.current !== fetchRunId) return;
-            setLicensureByApplicantId(map);
-          } catch {
-            if (fetchRunIdRef.current === fetchRunId) {
-              setLicensureByApplicantId({});
-            }
-          }
-        })();
       }
     } finally {
       if (fetchRunIdRef.current === fetchRunId) setLoading(false);
     }
   }
 
+  const exportSourceEmployees = useMemo(
+    () => employees.filter((e) => normalizeStatus(e.status) === "REASSIGN"),
+    [employees]
+  );
+
   function getExportCandidates() {
     const now = new Date();
-    return filtered
+    return exportSourceEmployees
       .filter((e) => {
         const years = serviceYearsExact(e.date_hired_fsai, now);
         if (years == null || years < 1) return false;
@@ -484,6 +435,7 @@ export default function ReassignPage() {
       list = list.filter((e) => {
         const haystack = [
           e.applicant_id,
+          (e.custom_id ?? "").trim(),
           shortCode(e.applicant_id),
           getFullName(e),
           e.client_position,
@@ -663,13 +615,8 @@ export default function ReassignPage() {
             <th className="px-4 py-3 text-left font-semibold text-black first:rounded-l-xl">Photo</th>
             <th className="px-4 py-3 text-left font-semibold text-black">Name</th>
             <th className="px-4 py-3 text-left font-semibold text-black">Position</th>
-            <th className="px-4 py-3 text-left font-semibold text-black">Gender</th>
-            <th className="px-4 py-3 text-left font-semibold text-black">Birth Date</th>
-            <th className="px-4 py-3 text-left font-semibold text-black">Age</th>
             <th className="px-4 py-3 text-left font-semibold text-black">Hired Date</th>
-            <th className="px-4 py-3 text-left font-semibold text-black">Years w/ Company</th>
             <th className="px-4 py-3 text-left font-semibold text-black">Detachment</th>
-            <th className="px-4 py-3 text-left font-semibold text-black">Next License Expiry</th>
             <th className="px-4 py-3 text-left font-semibold text-black">Status</th>
             {sessionRole !== "employee" ? (
               <th className="px-4 py-3 text-center font-semibold text-black last:rounded-r-xl">Actions</th>
@@ -679,7 +626,6 @@ export default function ReassignPage() {
         <tbody>
           {filtered.map((e) => {
             const profileUrl = getProfileUrl(e.profile_image_path);
-            const next = licensureByApplicantId[e.applicant_id] || { nextYmd: null, nextDays: null };
             const canClick = sessionRole !== "employee";
             const detailsHref = `/Main_Modules/Employees/details/?id=${encodeURIComponent(
               e.applicant_id
@@ -710,22 +656,8 @@ export default function ReassignPage() {
                 </td>
                 <td className="px-4 py-3 font-semibold">{getFullName(e)}</td>
                 <td className="px-4 py-3">{e.client_position ?? "—"}</td>
-                <td className="px-4 py-3">{e.gender ?? "—"}</td>
-                <td className="px-4 py-3">{e.birth_date ?? "—"}</td>
-                <td className="px-4 py-3">{e.age ?? "—"}</td>
                 <td className="px-4 py-3">{e.date_hired_fsai ? new Date(e.date_hired_fsai).toLocaleDateString() : "—"}</td>
-                <td className="px-4 py-3">{formatServiceLengthShort(e.date_hired_fsai)}</td>
                 <td className="px-4 py-3">{e.detachment ?? "—"}</td>
-                <td className="px-4 py-3">
-                  {next.nextYmd ? (
-                    <div className="leading-tight">
-                      <div>{next.nextYmd}</div>
-                      <div className="text-xs text-gray-500">{next.nextDays == null ? "—" : `${next.nextDays} day(s)`}</div>
-                    </div>
-                  ) : (
-                    "—"
-                  )}
-                </td>
                 <td className="px-4 py-3">
                   {sessionRole !== "employee" ? (
                     <EmployeeStatusMenu value={normalizeStatus(e.status)} onChange={(nextStatus) => void updateEmployeeStatus(e, nextStatus)} />
@@ -818,15 +750,12 @@ export default function ReassignPage() {
                   </div>
                   <div className="min-w-0">
                     <div className="text-sm font-bold text-gray-900 truncate">{name}</div>
-                    <div className="text-xs text-gray-500 truncate">{shortCode(e.applicant_id)}</div>
+                    <div className="text-xs text-gray-500 truncate">{(e.custom_id ?? "").trim() || shortCode(e.applicant_id)}</div>
                     <div className="mt-1 text-xs text-gray-500 truncate">
                       <span className="text-gray-500">Job Title:</span> {e.client_position ?? "—"}
                     </div>
                     <div className="text-xs text-gray-500 truncate">
                       <span className="text-gray-500">Detachment:</span> {e.detachment ?? "—"}
-                    </div>
-                    <div className="text-xs text-gray-500 truncate">
-                      <span className="text-gray-500">Years w/ Company:</span> {formatServiceLengthShort(e.date_hired_fsai)}
                     </div>
                   </div>
                 </div>

@@ -9,12 +9,13 @@ import EmployeeEditorModal from "../../Components/EmployeeEditorModal";
 import LoadingCircle from "../../Components/LoadingCircle";
 import TableZoomWrapper from "@/app/Components/TableZoomWrapper";
 import EmployeeStatusMenu from "../Components/EmployeeStatusMenu";
-import { buildEmployeeStatusUpdatePatch, loadLicensureMap } from "../employeeListData";
+import { buildEmployeeStatusUpdatePatch } from "../employeeListData";
 import { useLiveNow } from "../../Client/useLiveNow";
 
 type Applicant = {
   applicant_id: string;
   created_at: string;
+  custom_id: string | null;
   first_name: string | null;
   middle_name: string | null;
   last_name: string | null;
@@ -32,13 +33,6 @@ type Applicant = {
   is_trashed?: boolean | null;
   date_resigned: string | null;
   last_duty: string | null;
-};
-
-type LicensureRow = {
-  applicant_id: string;
-  driver_expiration: string | null;
-  security_expiration: string | null;
-  insurance_expiration: string | null;
 };
 
 const BUCKETS = {
@@ -120,13 +114,6 @@ function serviceYearsExact(fromIso: string | null, now = new Date()) {
   return diff.years + diff.months / 12 + diff.days / 365.25;
 }
 
-function ymd(d: string | null) {
-  if (!d) return null;
-  const dt = new Date(d);
-  if (Number.isNaN(dt.getTime())) return null;
-  return dt.toISOString().slice(0, 10);
-}
-
 function displayMaybeDate(value: string | null) {
   if (!value) return "—";
   const dt = new Date(value);
@@ -134,23 +121,11 @@ function displayMaybeDate(value: string | null) {
   return value;
 }
 
-function daysUntil(dateYmd: string | null) {
-  if (!dateYmd) return null;
-  const today = new Date();
-  const t = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-  const dt = new Date(dateYmd);
-  if (Number.isNaN(dt.getTime())) return null;
-  const diff = dt.getTime() - t.getTime();
-  return Math.ceil(diff / (24 * 60 * 60 * 1000));
-}
-
-function nextLicenseExpiryFromLicensureRow(r: LicensureRow | null) {
-  if (!r) return { ymd: null as string | null, days: null as number | null };
-  const cands = [ymd(r.driver_expiration), ymd(r.security_expiration), ymd(r.insurance_expiration)].filter(Boolean) as string[];
-  if (!cands.length) return { ymd: null, days: null };
-  const sorted = [...cands].sort((a, b) => a.localeCompare(b));
-  const next = sorted[0];
-  return { ymd: next, days: daysUntil(next) };
+function ymd(value: string | null) {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toISOString().slice(0, 10);
 }
 
 export default function ResignedPage() {
@@ -168,9 +143,6 @@ export default function ResignedPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>("");
   const [employees, setEmployees] = useState<Applicant[]>([]);
-  const [licensureByApplicantId, setLicensureByApplicantId] = useState<
-    Record<string, { nextYmd: string | null; nextDays: number | null }>
-  >({});
   const fetchRunIdRef = useRef(0);
   const [search, setSearch] = useState("");
   const [sortBy, setSortBy] = useState<"name" | "last_name" | "letter" | "created_at" | "category" | "service">("name");
@@ -195,7 +167,7 @@ export default function ResignedPage() {
       const { data, error: fetchError } = await supabase
         .from("applicants")
         .select(
-          "applicant_id, created_at, date_hired_fsai, first_name, middle_name, last_name, client_position, detachment, status, gender, birth_date, age, client_contact_num, client_email, profile_image_path, is_archived, is_trashed, date_resigned, last_duty"
+          "applicant_id, created_at, custom_id, date_hired_fsai, first_name, middle_name, last_name, client_position, detachment, status, gender, birth_date, age, client_contact_num, client_email, profile_image_path, is_archived, is_trashed, date_resigned, last_duty"
         )
         .eq("is_archived", false)
         .eq("is_trashed", false)
@@ -206,25 +178,9 @@ export default function ResignedPage() {
         console.error(fetchError);
         setError(fetchError.message || "Failed to load Resigned list");
         setEmployees([]);
-        setLicensureByApplicantId({});
       } else {
         const list = (data as Applicant[]) || [];
         setEmployees(list);
-
-        setLoading(false);
-
-        void (async () => {
-          try {
-            const ids = list.map((x) => x.applicant_id).filter(Boolean);
-            const map = await loadLicensureMap(ids);
-            if (fetchRunIdRef.current !== fetchRunId) return;
-            setLicensureByApplicantId(map);
-          } catch {
-            if (fetchRunIdRef.current === fetchRunId) {
-              setLicensureByApplicantId({});
-            }
-          }
-        })();
       }
     } finally {
       if (fetchRunIdRef.current === fetchRunId) setLoading(false);
@@ -308,8 +264,9 @@ export default function ResignedPage() {
         const name = getFullName(e).toLowerCase();
         const det = String(e.detachment ?? "").toLowerCase();
         const pos = String(e.client_position ?? "").toLowerCase();
+        const customId = String(e.custom_id ?? "").trim().toLowerCase();
         const code = shortCode(e.applicant_id).toLowerCase();
-        return name.includes(q) || det.includes(q) || pos.includes(q) || code.includes(q);
+        return name.includes(q) || det.includes(q) || pos.includes(q) || customId.includes(q) || code.includes(q);
       });
     }
 
@@ -505,7 +462,6 @@ export default function ResignedPage() {
                 <th className="px-4 py-3 text-left font-semibold text-black">Detachment</th>
                 <th className="px-4 py-3 text-left font-semibold text-black">Date Resigned</th>
                 <th className="px-4 py-3 text-left font-semibold text-black">Last Duty</th>
-                <th className="px-4 py-3 text-left font-semibold text-black">Next License Expiry</th>
                 <th className="px-4 py-3 text-left font-semibold text-black">Status</th>
                 {sessionRole !== "employee" ? (
                   <th className="px-4 py-3 text-center font-semibold text-black last:rounded-r-xl">Actions</th>
@@ -515,7 +471,6 @@ export default function ResignedPage() {
             <tbody>
               {filtered.map((e) => {
                 const profileUrl = getProfileUrl(e.profile_image_path);
-                const next = licensureByApplicantId[e.applicant_id] || { nextYmd: null, nextDays: null };
                 const canClick = sessionRole !== "employee";
                 const detailsHref = `/Main_Modules/Employees/details/?id=${encodeURIComponent(
                   e.applicant_id
@@ -549,16 +504,6 @@ export default function ResignedPage() {
                     <td className="px-4 py-3">{e.detachment ?? "—"}</td>
                     <td className="px-4 py-3">{e.date_resigned ? new Date(e.date_resigned).toLocaleDateString() : "—"}</td>
                     <td className="px-4 py-3">{displayMaybeDate(e.last_duty)}</td>
-                    <td className="px-4 py-3">
-                      {next.nextYmd ? (
-                        <div className="leading-tight">
-                          <div>{next.nextYmd}</div>
-                          <div className="text-xs text-gray-500">{next.nextDays == null ? "—" : `${next.nextDays} day(s)`}</div>
-                        </div>
-                      ) : (
-                        "—"
-                      )}
-                    </td>
                     <td className="px-4 py-3">
                       {sessionRole !== "employee" && canDeleteResigned ? (
                         <EmployeeStatusMenu value={normalizeStatus(e.status)} onChange={(nextStatus) => void updateEmployeeStatus(e, nextStatus)} />
@@ -651,7 +596,7 @@ export default function ResignedPage() {
                   </div>
                   <div className="min-w-0">
                     <div className="text-sm font-bold text-gray-900 truncate">{name}</div>
-                    <div className="text-xs text-gray-500 truncate">{shortCode(e.applicant_id)}</div>
+                    <div className="text-xs text-gray-500 truncate">{(e.custom_id ?? "").trim() || shortCode(e.applicant_id)}</div>
                     <div className="mt-1 text-xs text-gray-500 truncate">
                       <span className="text-gray-500">Job Title:</span> {e.client_position ?? "—"}
                     </div>

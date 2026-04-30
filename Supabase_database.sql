@@ -1,6 +1,29 @@
 -- WARNING: This schema is for context only and is not meant to be run.
 -- Table order and constraints may not be valid for execution.
 
+CREATE TABLE public.SalesForecast (
+  Date text,
+  Product_ID text,
+  Product_Name text,
+  Category text,
+  Selling_Price bigint,
+  Beginning_Stock bigint,
+  Units_Sold bigint,
+  Revenue bigint,
+  Ending_Stock bigint
+);
+CREATE TABLE public.about (
+  id integer NOT NULL DEFAULT nextval('about_id_seq'::regclass),
+  grand text NOT NULL,
+  description text NOT NULL,
+  mission text NOT NULL,
+  vision text NOT NULL,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  mission_image text,
+  vision_image text,
+  CONSTRAINT about_pkey PRIMARY KEY (id)
+);
 CREATE TABLE public.access_requests (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
   created_at timestamp with time zone NOT NULL DEFAULT now(),
@@ -26,92 +49,50 @@ CREATE TABLE public.access_requests (
   approver_admin_id uuid,
   approver_username text,
   approver_full_name text,
-  requested_applicant_id uuid,
-  requested_row_identifier_value text,
-  requested_can_write boolean NOT NULL DEFAULT false,
-  requested_can_edit boolean NOT NULL DEFAULT false,
   CONSTRAINT access_requests_pkey PRIMARY KEY (id),
   CONSTRAINT access_requests_module_fkey FOREIGN KEY (requested_module_key) REFERENCES public.modules(module_key),
-  CONSTRAINT access_requests_requester_admin_fkey FOREIGN KEY (requester_admin_id) REFERENCES public.admins(id),
-  CONSTRAINT access_requests_approver_admin_fkey FOREIGN KEY (approver_admin_id) REFERENCES public.admins(id),
-  CONSTRAINT access_requests_requested_applicant_fkey FOREIGN KEY (requested_applicant_id) REFERENCES public.applicants(applicant_id)
+  CONSTRAINT access_requests_approver_admin_fkey FOREIGN KEY (approver_admin_id) REFERENCES public.admins(id)
 );
-CREATE TABLE public.admin_applicant_access_overrides (
-  admin_id uuid NOT NULL,
-  module_key text NOT NULL,
-  applicant_id uuid NOT NULL,
-  can_read boolean NOT NULL DEFAULT true,
+CREATE TABLE public.activity_logs (
+  id bigint NOT NULL DEFAULT nextval('activity_logs_id_seq'::regclass),
+  admin_id text NOT NULL,
+  admin_name text NOT NULL,
+  action text NOT NULL,
+  entity_type text NOT NULL,
+  entity_id text,
+  details text NOT NULL,
   created_at timestamp with time zone NOT NULL DEFAULT now(),
-  updated_at timestamp with time zone NOT NULL DEFAULT now(),
-  created_by uuid,
-  CONSTRAINT admin_applicant_access_overrides_pkey PRIMARY KEY (admin_id, module_key, applicant_id)
+  page text,
+  metadata jsonb,
+  CONSTRAINT activity_logs_pkey PRIMARY KEY (id)
 );
-CREATE TABLE public.admin_applicant_column_access_overrides (
-  admin_id uuid NOT NULL,
-  module_key text NOT NULL,
-  applicant_id uuid NOT NULL,
-  column_key text NOT NULL,
-  can_read boolean NOT NULL DEFAULT true,
-  created_at timestamp with time zone NOT NULL DEFAULT now(),
-  updated_at timestamp with time zone NOT NULL DEFAULT now(),
-  created_by uuid,
-  CONSTRAINT admin_applicant_column_access_overrides_pkey PRIMARY KEY (admin_id, module_key, applicant_id, column_key)
-);
-CREATE TABLE public.admin_column_access_overrides (
-  admin_id uuid NOT NULL,
-  module_key text NOT NULL,
-  column_key text NOT NULL,
-  can_read boolean NOT NULL DEFAULT true,
-  created_at timestamp with time zone NOT NULL DEFAULT now(),
-  updated_at timestamp with time zone NOT NULL DEFAULT now(),
-  created_by uuid,
-  CONSTRAINT admin_column_access_overrides_pkey PRIMARY KEY (admin_id, module_key, column_key),
-  CONSTRAINT admin_column_access_overrides_admin_fkey FOREIGN KEY (admin_id) REFERENCES public.admins(id),
-  CONSTRAINT admin_column_access_overrides_module_fkey FOREIGN KEY (module_key) REFERENCES public.modules(module_key)
-);
-CREATE TABLE public.admin_module_access_overrides (
-  admin_id uuid NOT NULL,
-  module_key text NOT NULL,
-  can_read boolean NOT NULL DEFAULT true,
-  created_at timestamp with time zone NOT NULL DEFAULT now(),
-  updated_at timestamp with time zone NOT NULL DEFAULT now(),
-  created_by uuid,
-  can_write boolean NOT NULL DEFAULT false,
-  can_edit boolean NOT NULL DEFAULT false,
-  CONSTRAINT admin_module_access_overrides_pkey PRIMARY KEY (admin_id, module_key),
-  CONSTRAINT admin_module_access_overrides_admin_fkey FOREIGN KEY (admin_id) REFERENCES public.admins(id),
-  CONSTRAINT admin_module_access_overrides_module_fkey FOREIGN KEY (module_key) REFERENCES public.modules(module_key)
-);
-CREATE TABLE public.admin_role_memberships (
+CREATE TABLE public.addresses (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
   user_id uuid NOT NULL,
-  role_id uuid NOT NULL,
-  CONSTRAINT admin_role_memberships_pkey PRIMARY KEY (user_id, role_id),
-  CONSTRAINT admin_role_memberships_role_id_fkey FOREIGN KEY (role_id) REFERENCES public.app_roles(role_id)
-);
-CREATE TABLE public.admin_row_identifier_column_access_overrides (
-  admin_id uuid NOT NULL,
-  module_key text NOT NULL,
-  row_identifier_key text NOT NULL,
-  row_identifier_value text NOT NULL,
-  column_key text NOT NULL,
-  can_read boolean NOT NULL DEFAULT true,
-  created_at timestamp with time zone NOT NULL DEFAULT now(),
-  updated_at timestamp with time zone NOT NULL DEFAULT now(),
-  created_by uuid,
-  CONSTRAINT admin_row_identifier_column_access_overrides_pkey PRIMARY KEY (admin_id, module_key, row_identifier_key, row_identifier_value, column_key)
+  full_name text NOT NULL,
+  phone text NOT NULL,
+  address text NOT NULL,
+  is_default boolean NOT NULL DEFAULT false,
+  created_at timestamp with time zone DEFAULT now(),
+  first_name text,
+  last_name text,
+  branch text,
+  email text,
+  middle_name text,
+  CONSTRAINT addresses_pkey PRIMARY KEY (id)
 );
 CREATE TABLE public.admins (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
   username text NOT NULL UNIQUE,
-  role text NOT NULL,
+  role text NOT NULL CHECK (role = ANY (ARRAY['superadmin'::text, 'admin'::text, 'manager'::text, 'employee'::text])),
   created_at timestamp with time zone DEFAULT now(),
   last_login timestamp with time zone,
   employee_id integer,
   employee_number character varying,
   full_name text,
+  position text,
   is_active boolean DEFAULT true,
   password text NOT NULL DEFAULT 'admin123'::text,
-  profile_image_path text,
   CONSTRAINT admins_pkey PRIMARY KEY (id)
 );
 CREATE TABLE public.app_roles (
@@ -119,250 +100,236 @@ CREATE TABLE public.app_roles (
   role_name text NOT NULL UNIQUE,
   CONSTRAINT app_roles_pkey PRIMARY KEY (role_id)
 );
-CREATE TABLE public.applicant_other_documents (
-  document_id uuid NOT NULL DEFAULT gen_random_uuid(),
-  applicant_id uuid NOT NULL,
-  label text NOT NULL DEFAULT ''::text,
-  bucket text NOT NULL DEFAULT 'applicants'::text CHECK (bucket = ANY (ARRAY['applicants'::text, 'certificates'::text, 'licensure'::text])),
-  file_path text NOT NULL DEFAULT ''::text,
+CREATE TABLE public.ar_measurements (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL,
+  measurement_name character varying NOT NULL,
+  measurement_type character varying NOT NULL DEFAULT 'general'::character varying CHECK (measurement_type::text = ANY (ARRAY['door'::character varying, 'window'::character varying, 'railing'::character varying, 'wall'::character varying, 'ceiling'::character varying, 'floor'::character varying, 'general'::character varying]::text[])),
+  points jsonb NOT NULL,
+  distances jsonb NOT NULL,
+  total_measurements integer NOT NULL DEFAULT 0,
+  unit character varying NOT NULL DEFAULT 'cm'::character varying CHECK (unit::text = ANY (ARRAY['cm'::character varying, 'm'::character varying, 'ft'::character varying, 'in'::character varying]::text[])),
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  device_info jsonb,
+  notes text,
+  is_favorite boolean DEFAULT false,
+  CONSTRAINT ar_measurements_pkey PRIMARY KEY (id),
+  CONSTRAINT ar_measurements_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id)
+);
+CREATE TABLE public.blog_likes (
+  id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
+  blog_id uuid NOT NULL,
+  user_id uuid NOT NULL,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT blog_likes_pkey PRIMARY KEY (id),
+  CONSTRAINT blog_likes_blog_id_fkey FOREIGN KEY (blog_id) REFERENCES public.blogs(id),
+  CONSTRAINT blog_likes_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id)
+);
+CREATE TABLE public.blog_views (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  blog_id uuid NOT NULL,
+  user_id uuid,
+  visitor_id uuid,
+  user_agent text,
+  CONSTRAINT blog_views_pkey PRIMARY KEY (id),
+  CONSTRAINT blog_views_blog_id_fkey FOREIGN KEY (blog_id) REFERENCES public.blogs(id)
+);
+CREATE TABLE public.blogs (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  title text NOT NULL,
+  slug text NOT NULL UNIQUE,
+  excerpt text,
+  content_html text NOT NULL DEFAULT ''::text,
+  cover_image_url text,
+  author_name text,
+  is_published boolean NOT NULL DEFAULT false,
+  published_at timestamp with time zone,
+  created_by_admin_id text,
+  updated_by_admin_id text,
   created_at timestamp with time zone NOT NULL DEFAULT now(),
   updated_at timestamp with time zone NOT NULL DEFAULT now(),
-  CONSTRAINT applicant_other_documents_pkey PRIMARY KEY (document_id),
-  CONSTRAINT applicant_other_documents_applicant_id_fkey FOREIGN KEY (applicant_id) REFERENCES public.applicants(applicant_id)
+  CONSTRAINT blogs_pkey PRIMARY KEY (id)
 );
-CREATE TABLE public.applicants (
-  applicant_id uuid NOT NULL DEFAULT gen_random_uuid(),
+CREATE TABLE public.calendar_events (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  title text NOT NULL,
+  description text,
+  start timestamp with time zone NOT NULL,
+  end timestamp with time zone,
+  location text,
+  created_at timestamp without time zone DEFAULT now(),
+  created_by uuid,
+  CONSTRAINT calendar_events_pkey PRIMARY KEY (id),
+  CONSTRAINT calendar_events_created_by_fkey FOREIGN KEY (created_by) REFERENCES auth.users(id)
+);
+CREATE TABLE public.cart (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL,
+  product_id uuid NOT NULL,
+  quantity integer NOT NULL DEFAULT 1 CHECK (quantity > 0),
+  meta jsonb DEFAULT '{}'::jsonb,
   created_at timestamp with time zone NOT NULL DEFAULT now(),
-  last_name character varying,
-  first_name character varying,
-  middle_name character varying,
-  extn_name character varying,
-  birth_date date,
-  age integer,
-  gender character varying,
-  education_attainment character varying,
-  date_hired_fsai date,
-  client_position character varying,
-  detachment character varying,
-  security_licensed_num character varying,
-  sss_number character varying,
-  pagibig_number character varying,
-  philhealth_number character varying,
-  tin_number character varying,
-  client_contact_num character varying,
-  client_email character varying,
-  present_address character varying,
-  province_address character varying,
-  emergency_contact_person character varying,
-  emergency_contact_num character varying,
-  status character varying DEFAULT 'ACTIVE'::character varying CHECK (NULLIF(btrim(status::text), ''::text) IS NULL OR (upper(NULLIF(btrim(status::text), ''::text)) = ANY (ARRAY['ACTIVE'::text, 'APPLICANT'::text, 'INACTIVE'::text, 'REASSIGN'::text, 'RETIRED'::text, 'RESIGNED'::text]))),
-  profile_image_path text,
-  sss_certain_path text,
-  tin_id_path text,
-  pag_ibig_id_path text,
-  philhealth_id_path text,
-  security_license_path text,
-  is_archived boolean NOT NULL DEFAULT false,
-  archived_at timestamp with time zone,
-  archived_by uuid,
-  is_trashed boolean NOT NULL DEFAULT false,
-  trashed_at timestamp with time zone,
-  trashed_by uuid,
-  retired_date date,
-  retired_reason text,
-  retired_remarks text,
-  retired_at timestamp with time zone,
-  retired_by uuid,
-  custom_id text,
-  date_resigned date,
-  last_duty text,
-  CONSTRAINT applicants_pkey PRIMARY KEY (applicant_id),
-  CONSTRAINT applicants_archived_by_fkey FOREIGN KEY (archived_by) REFERENCES public.admins(id),
-  CONSTRAINT applicants_trashed_by_fkey FOREIGN KEY (trashed_by) REFERENCES public.admins(id),
-  CONSTRAINT applicants_retired_by_fkey FOREIGN KEY (retired_by) REFERENCES public.admins(id)
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT cart_pkey PRIMARY KEY (id),
+  CONSTRAINT cart_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id),
+  CONSTRAINT cart_product_id_fkey FOREIGN KEY (product_id) REFERENCES public.products(id)
 );
-CREATE TABLE public.audit_log (
+CREATE TABLE public.chat_messages (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
   created_at timestamp with time zone NOT NULL DEFAULT now(),
-  actor_user_id uuid,
-  actor_email text,
-  action text NOT NULL,
-  page text,
-  entity text,
-  details jsonb,
-  actor_name text,
-  CONSTRAINT audit_log_pkey PRIMARY KEY (id)
+  thread_id uuid NOT NULL,
+  sender_type text NOT NULL CHECK (sender_type = ANY (ARRAY['visitor'::text, 'user'::text, 'admin'::text])),
+  sender_name text,
+  sender_email text,
+  body text,
+  image_url text,
+  read_by_admin boolean NOT NULL DEFAULT false,
+  read_by_user boolean NOT NULL DEFAULT false,
+  CONSTRAINT chat_messages_pkey PRIMARY KEY (id),
+  CONSTRAINT chat_messages_thread_id_fkey FOREIGN KEY (thread_id) REFERENCES public.chat_threads(id)
 );
-CREATE TABLE public.audit_log_retention_settings (
-  id text NOT NULL DEFAULT 'default'::text,
+CREATE TABLE public.chat_threads (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  last_message_at timestamp with time zone NOT NULL DEFAULT now(),
+  status text NOT NULL DEFAULT 'pending'::text CHECK (status = ANY (ARRAY['pending'::text, 'active'::text, 'resolved'::text])),
+  visitor_name text,
+  visitor_email text,
+  user_id uuid,
+  access_token uuid NOT NULL DEFAULT gen_random_uuid() UNIQUE,
+  accepted_at timestamp with time zone,
+  resolved_at timestamp with time zone,
+  resolved_by text,
+  CONSTRAINT chat_threads_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.discount_codes (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  code text NOT NULL UNIQUE,
+  type text NOT NULL CHECK (type = ANY (ARRAY['percent'::text, 'amount'::text])),
+  value numeric NOT NULL,
+  min_subtotal numeric DEFAULT 0,
+  max_uses integer,
+  used_count integer DEFAULT 0,
+  active boolean DEFAULT true,
+  starts_at timestamp with time zone,
+  expires_at timestamp with time zone,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT discount_codes_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.downloads_content (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  slug text NOT NULL DEFAULT 'downloads'::text UNIQUE,
+  content jsonb NOT NULL DEFAULT '{}'::jsonb,
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT downloads_content_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.event_participants (
+  id bigint NOT NULL DEFAULT nextval('event_participants_id_seq'::regclass),
+  event_id bigint,
+  user_id uuid,
+  role text DEFAULT 'attendee'::text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT event_participants_pkey PRIMARY KEY (id),
+  CONSTRAINT event_participants_event_id_fkey FOREIGN KEY (event_id) REFERENCES public.events(id),
+  CONSTRAINT event_participants_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id)
+);
+CREATE TABLE public.events (
+  id bigint NOT NULL DEFAULT nextval('events_id_seq'::regclass),
+  title text NOT NULL,
+  description text,
+  category text DEFAULT 'Other'::text CHECK (category = ANY (ARRAY['Production'::text, 'Meeting'::text, 'Deadline'::text, 'Personal'::text, 'Other'::text])),
+  start_time timestamp with time zone NOT NULL,
+  end_time timestamp with time zone NOT NULL,
+  location text,
+  recurrence_rule text,
+  reminder_minutes integer DEFAULT 0,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT events_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.faq_categories (
+  id bigint NOT NULL DEFAULT nextval('faq_categories_id_seq'::regclass),
+  name text NOT NULL,
+  created_at timestamp without time zone DEFAULT now(),
+  CONSTRAINT faq_categories_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.faq_questions (
+  id bigint NOT NULL DEFAULT nextval('faq_questions_id_seq'::regclass),
+  category_id bigint,
+  question text NOT NULL,
+  answer text NOT NULL,
+  created_at timestamp without time zone DEFAULT now(),
+  CONSTRAINT faq_questions_pkey PRIMARY KEY (id),
+  CONSTRAINT faq_questions_category_id_fkey FOREIGN KEY (category_id) REFERENCES public.faq_categories(id)
+);
+CREATE TABLE public.faqs (
+  id bigint NOT NULL DEFAULT nextval('faqs_id_seq'::regclass),
+  category text NOT NULL,
+  question text NOT NULL,
+  answer text NOT NULL,
+  created_at timestamp without time zone DEFAULT now(),
+  CONSTRAINT faqs_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.featured_projects (
+  id bigint NOT NULL DEFAULT nextval('featured_projects_id_seq'::regclass),
+  title text NOT NULL,
+  description text,
+  created_at timestamp without time zone DEFAULT now(),
+  image_url text,
+  link_url text,
+  CONSTRAINT featured_projects_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.home_content (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  content jsonb NOT NULL,
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT home_content_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.inqruire_content (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  title text NOT NULL,
+  description text NOT NULL,
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  phone text,
+  email text,
+  facebook text,
+  CONSTRAINT inqruire_content_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.inquiries (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  user_id uuid,
+  first_name text NOT NULL,
+  last_name text NOT NULL,
+  email text,
+  phone text,
+  inquiry_type text NOT NULL CHECK (inquiry_type = ANY (ARRAY['Doors'::text, 'Windows'::text, 'Enclosure'::text, 'Casement'::text, 'Sliding'::text, 'Railings'::text, 'Canopy'::text, 'Curtain Wall'::text, 'Custom Design'::text])),
+  message text,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  middle_name text,
+  CONSTRAINT inquiries_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.invoices (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  user_item_id uuid NOT NULL UNIQUE,
+  user_id uuid NOT NULL,
+  invoice_number text NOT NULL UNIQUE,
+  currency text NOT NULL DEFAULT 'PHP'::text,
+  subtotal numeric NOT NULL DEFAULT 0,
+  addons_total numeric NOT NULL DEFAULT 0,
+  discount_value numeric NOT NULL DEFAULT 0,
+  reservation_fee numeric NOT NULL DEFAULT 0,
+  total_amount numeric NOT NULL DEFAULT 0,
+  payment_method text,
+  issued_at timestamp with time zone NOT NULL DEFAULT now(),
+  invoice_html text NOT NULL,
+  meta jsonb NOT NULL DEFAULT '{}'::jsonb,
+  email_sent_at timestamp with time zone,
   created_at timestamp with time zone NOT NULL DEFAULT now(),
   updated_at timestamp with time zone NOT NULL DEFAULT now(),
-  retention_days integer NOT NULL DEFAULT 30 CHECK (retention_days = ANY (ARRAY[7, 30, 365])),
-  CONSTRAINT audit_log_retention_settings_pkey PRIMARY KEY (id)
-);
-CREATE TABLE public.biodata (
-  applicant_id uuid NOT NULL,
-  applicant_form bytea,
-  applicant_form_path text,
-  CONSTRAINT biodata_pkey PRIMARY KEY (applicant_id),
-  CONSTRAINT biodata_applicant_id_fkey FOREIGN KEY (applicant_id) REFERENCES public.applicants(applicant_id)
-);
-CREATE TABLE public.certificates (
-  applicant_id uuid NOT NULL,
-  course_title_degree character varying,
-  training_path text,
-  seminar_path text,
-  highschool_diploma_path text,
-  college_diploma_path text,
-  vocational_path text,
-  training_when_where text,
-  seminar_when_where text,
-  highschool_when_where text,
-  college_when_where text,
-  vocational_when_where text,
-  course_when_where text,
-  gun_safety_certificate_path text,
-  CONSTRAINT certificates_pkey PRIMARY KEY (applicant_id),
-  CONSTRAINT certificates_applicant_id_fkey FOREIGN KEY (applicant_id) REFERENCES public.applicants(applicant_id)
-);
-CREATE TABLE public.contract_employees (
-  contract_id uuid NOT NULL,
-  applicant_id uuid NOT NULL,
-  created_at timestamp with time zone NOT NULL DEFAULT now(),
-  CONSTRAINT contract_employees_pkey PRIMARY KEY (contract_id, applicant_id),
-  CONSTRAINT contract_employees_contract_id_fkey FOREIGN KEY (contract_id) REFERENCES public.contracts(contract_id),
-  CONSTRAINT contract_employees_applicant_id_fkey FOREIGN KEY (applicant_id) REFERENCES public.applicants(applicant_id)
-);
-CREATE TABLE public.contracts (
-  contract_id uuid NOT NULL DEFAULT gen_random_uuid(),
-  applicant_id uuid,
-  contract_no text,
-  start_date date,
-  end_date date,
-  status text DEFAULT 'ACTIVE'::text,
-  created_at timestamp with time zone NOT NULL DEFAULT now(),
-  contract_no_date date,
-  cluster text,
-  client_name text,
-  specific_area text,
-  project_name text,
-  contract_start date,
-  contract_end date,
-  contracted_manpower integer,
-  deployed_guards integer,
-  remarks text,
-  CONSTRAINT contracts_pkey PRIMARY KEY (contract_id),
-  CONSTRAINT contracts_applicant_id_fkey FOREIGN KEY (applicant_id) REFERENCES public.applicants(applicant_id)
-);
-CREATE TABLE public.deployment_history (
-  history_id uuid NOT NULL DEFAULT gen_random_uuid(),
-  deployment_id uuid NOT NULL,
-  applicant_id uuid NOT NULL,
-  detachment character varying,
-  dp_status character varying,
-  change_date date NOT NULL DEFAULT CURRENT_DATE,
-  remarks text,
-  CONSTRAINT deployment_history_pkey PRIMARY KEY (history_id),
-  CONSTRAINT deployment_history_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployment_status(deployment_id),
-  CONSTRAINT deployment_history_applicant_id_fkey FOREIGN KEY (applicant_id) REFERENCES public.applicants(applicant_id)
-);
-CREATE TABLE public.deployment_status (
-  deployment_id uuid NOT NULL DEFAULT gen_random_uuid(),
-  applicant_id uuid NOT NULL,
-  detachment character varying,
-  client_position character varying,
-  shift character varying,
-  start_date date,
-  expected_end_date date,
-  deployment_status character varying NOT NULL DEFAULT 'ACTIVE'::character varying,
-  created_at timestamp with time zone NOT NULL DEFAULT now(),
-  CONSTRAINT deployment_status_pkey PRIMARY KEY (deployment_id),
-  CONSTRAINT deployment_status_applicant_id_fkey FOREIGN KEY (applicant_id) REFERENCES public.applicants(applicant_id)
-);
-CREATE TABLE public.employment_history (
-  employment_id uuid NOT NULL DEFAULT gen_random_uuid(),
-  applicant_id uuid NOT NULL,
-  company_name text,
-  position text,
-  telephone text,
-  inclusive_dates text,
-  leave_reason text,
-  created_at timestamp with time zone NOT NULL DEFAULT now(),
-  CONSTRAINT employment_history_pkey PRIMARY KEY (employment_id),
-  CONSTRAINT employment_history_applicant_id_fkey FOREIGN KEY (applicant_id) REFERENCES public.applicants(applicant_id)
-);
-CREATE TABLE public.employment_record (
-  applicant_id uuid NOT NULL,
-  company_name character varying,
-  position character varying,
-  leave_reason character varying,
-  CONSTRAINT employment_record_pkey PRIMARY KEY (applicant_id),
-  CONSTRAINT employment_record_applicant_id_fkey FOREIGN KEY (applicant_id) REFERENCES public.applicants(applicant_id)
-);
-CREATE TABLE public.inventory_fixed_asset (
-  id uuid NOT NULL DEFAULT gen_random_uuid(),
-  date character varying,
-  particular character varying,
-  quanitity integer,
-  amount numeric,
-  remarks character varying,
-  firearms_ammunitions character varying,
-  communications_equipment character varying,
-  furniture_and_fixtures character varying,
-  office_equipments_sec_equipments character varying,
-  sec_equipments character varying,
-  vehicle_and_motorcycle character varying,
-  total_amount numeric,
-  grand_total numeric,
-  firearms_qty numeric DEFAULT 0,
-  firearms_price numeric DEFAULT 0,
-  communications_qty numeric DEFAULT 0,
-  communications_price numeric DEFAULT 0,
-  furniture_qty numeric DEFAULT 0,
-  furniture_price numeric DEFAULT 0,
-  office_qty numeric DEFAULT 0,
-  office_price numeric DEFAULT 0,
-  sec_qty numeric DEFAULT 0,
-  sec_price numeric DEFAULT 0,
-  vehicle_qty numeric DEFAULT 0,
-  vehicle_price numeric DEFAULT 0,
-  firearms_name text,
-  communications_name text,
-  furniture_name text,
-  office_name text,
-  sec_name text,
-  vehicle_name text,
-  last_updated_at timestamp with time zone,
-  CONSTRAINT inventory_fixed_asset_pkey PRIMARY KEY (id)
-);
-CREATE TABLE public.job_titles (
-  title_id uuid NOT NULL DEFAULT gen_random_uuid(),
-  title text NOT NULL UNIQUE,
-  created_at timestamp with time zone NOT NULL DEFAULT now(),
-  CONSTRAINT job_titles_pkey PRIMARY KEY (title_id)
-);
-CREATE TABLE public.licensure (
-  applicant_id uuid NOT NULL,
-  driver_license_number character varying,
-  driver_expiration date,
-  security_license_number character varying,
-  security_expiration date,
-  insurance character varying,
-  insurance_expiration date,
-  CONSTRAINT licensure_pkey PRIMARY KEY (applicant_id),
-  CONSTRAINT licenseure_applicant_id_fkey FOREIGN KEY (applicant_id) REFERENCES public.applicants(applicant_id)
-);
-CREATE TABLE public.licensure_notification_log (
-  id uuid NOT NULL DEFAULT gen_random_uuid(),
-  created_at timestamp with time zone NOT NULL DEFAULT now(),
-  applicant_id uuid NOT NULL,
-  license_type text NOT NULL CHECK (license_type = ANY (ARRAY['DRIVER_LICENSE'::text, 'SECURITY_LICENSE'::text, 'INSURANCE'::text])),
-  expires_on date NOT NULL,
-  recipient_email text,
-  status text NOT NULL DEFAULT 'QUEUED'::text CHECK (status = ANY (ARRAY['QUEUED'::text, 'SENT'::text, 'FAILED'::text, 'SKIPPED'::text])),
-  error_message text,
-  CONSTRAINT licensure_notification_log_pkey PRIMARY KEY (id),
-  CONSTRAINT licensure_notification_log_applicant_id_fkey FOREIGN KEY (applicant_id) REFERENCES public.applicants(applicant_id)
+  CONSTRAINT invoices_pkey PRIMARY KEY (id),
+  CONSTRAINT invoices_user_item_id_fkey FOREIGN KEY (user_item_id) REFERENCES public.user_items(id),
+  CONSTRAINT invoices_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id)
 );
 CREATE TABLE public.modules (
   module_key text NOT NULL,
@@ -370,116 +337,119 @@ CREATE TABLE public.modules (
   path text NOT NULL,
   CONSTRAINT modules_pkey PRIMARY KEY (module_key)
 );
-CREATE TABLE public.notification_email_settings (
+CREATE TABLE public.notifications (
+  id bigint NOT NULL DEFAULT nextval('notifications_id_seq'::regclass),
+  title text NOT NULL,
+  message text NOT NULL,
+  type text DEFAULT 'general'::text CHECK (type = ANY (ARRAY['report'::text, 'stock'::text, 'task'::text, 'general'::text, 'product_added'::text, 'stock_updated'::text, 'order_status'::text])),
+  recipient_role text DEFAULT 'all'::text CHECK (recipient_role = ANY (ARRAY['employee'::text, 'manager'::text, 'admin'::text, 'all'::text])),
+  recipient_id uuid,
+  is_read boolean DEFAULT false,
+  created_at timestamp with time zone DEFAULT timezone('utc'::text, now()),
+  priority text DEFAULT 'medium'::text,
+  metadata jsonb DEFAULT '{}'::jsonb,
+  action_url text,
+  expires_at timestamp with time zone,
+  CONSTRAINT notifications_pkey PRIMARY KEY (id),
+  CONSTRAINT notifications_recipient_id_fkey FOREIGN KEY (recipient_id) REFERENCES auth.users(id)
+);
+CREATE TABLE public.order_team_members (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
+  user_item_id uuid NOT NULL,
+  admin_id uuid NOT NULL,
+  created_by_admin_id uuid,
   created_at timestamp with time zone NOT NULL DEFAULT now(),
-  updated_at timestamp with time zone NOT NULL DEFAULT now(),
-  provider text NOT NULL DEFAULT 'gmail'::text CHECK (provider = 'gmail'::text),
-  gmail_user text NOT NULL,
-  from_email text NOT NULL,
-  gmail_app_password text,
-  is_active boolean NOT NULL DEFAULT true,
-  notes text,
-  CONSTRAINT notification_email_settings_pkey PRIMARY KEY (id)
+  CONSTRAINT order_team_members_pkey PRIMARY KEY (id),
+  CONSTRAINT order_team_members_user_item_id_fkey FOREIGN KEY (user_item_id) REFERENCES public.user_items(id),
+  CONSTRAINT order_team_members_admin_id_fkey FOREIGN KEY (admin_id) REFERENCES public.admins(id),
+  CONSTRAINT order_team_members_created_by_admin_id_fkey FOREIGN KEY (created_by_admin_id) REFERENCES public.admins(id)
 );
-CREATE TABLE public.notification_preferences (
+CREATE TABLE public.product_reviews (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
+  product_id uuid NOT NULL,
+  user_id uuid NOT NULL,
+  rating smallint NOT NULL CHECK (rating >= 1 AND rating <= 5),
+  comment text CHECK (comment IS NULL OR char_length(TRIM(BOTH FROM comment)) > 0 AND char_length(comment) <= 2000),
   created_at timestamp with time zone NOT NULL DEFAULT now(),
   updated_at timestamp with time zone NOT NULL DEFAULT now(),
-  is_enabled boolean NOT NULL DEFAULT true,
-  days_before_expiry integer NOT NULL DEFAULT 30 CHECK (days_before_expiry >= 1 AND days_before_expiry <= 365),
-  include_driver_license boolean NOT NULL DEFAULT false,
-  include_security_license boolean NOT NULL DEFAULT true,
-  include_insurance boolean NOT NULL DEFAULT false,
-  send_time_local time without time zone NOT NULL DEFAULT '08:00:00'::time without time zone,
-  timezone text NOT NULL DEFAULT 'Asia/Manila'::text,
-  use_scheduled_send boolean NOT NULL DEFAULT true,
-  send_to_employees boolean NOT NULL DEFAULT true,
-  CONSTRAINT notification_preferences_pkey PRIMARY KEY (id)
+  CONSTRAINT product_reviews_pkey PRIMARY KEY (id),
+  CONSTRAINT product_reviews_product_id_fkey FOREIGN KEY (product_id) REFERENCES public.products(id),
+  CONSTRAINT product_reviews_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id)
 );
-CREATE TABLE public.notification_recipients (
-  id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
-  email text NOT NULL UNIQUE,
-  is_active boolean NOT NULL DEFAULT true,
-  notes text,
-  created_at timestamp with time zone NOT NULL DEFAULT now(),
-  updated_at timestamp with time zone NOT NULL DEFAULT now(),
-  CONSTRAINT notification_recipients_pkey PRIMARY KEY (id)
-);
-CREATE TABLE public.other_expiration_items (
-  id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
-  item_name text NOT NULL,
-  expiration_type text NOT NULL CHECK (NULLIF(btrim(expiration_type), ''::text) IS NOT NULL),
-  expires_on date NOT NULL,
-  recipient_email text,
-  notes text,
-  is_active boolean NOT NULL DEFAULT true,
-  created_at timestamp with time zone NOT NULL DEFAULT now(),
-  updated_at timestamp with time zone NOT NULL DEFAULT now(),
-  days_before_expiry integer NOT NULL DEFAULT 30 CHECK (days_before_expiry >= 1 AND days_before_expiry <= 365),
-  record_no integer,
-  patrol text,
-  post_distributions text,
-  make text,
-  model text,
-  color text,
-  plate_number text,
-  insurance_company text,
-  policy_from_date date,
-  car_registration_from_date date,
-  car_registration_to_date date,
-  CONSTRAINT other_expiration_items_pkey PRIMARY KEY (id)
-);
-CREATE TABLE public.other_expiration_notification_log (
+CREATE TABLE public.products (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
-  created_at timestamp with time zone NOT NULL DEFAULT now(),
-  other_expiration_item_id bigint NOT NULL,
-  item_name text NOT NULL,
-  expiration_type text NOT NULL,
-  expires_on date NOT NULL,
-  recipient_email text,
-  status text NOT NULL DEFAULT 'QUEUED'::text CHECK (status = ANY (ARRAY['QUEUED'::text, 'SENT'::text, 'FAILED'::text, 'SKIPPED'::text])),
-  error_message text,
-  CONSTRAINT other_expiration_notification_log_pkey PRIMARY KEY (id),
-  CONSTRAINT other_expiration_notification_log_other_item_fkey FOREIGN KEY (other_expiration_item_id) REFERENCES public.other_expiration_items(id)
-);
-CREATE TABLE public.paraphernalia (
-  id_paraphernalia uuid NOT NULL,
-  names text,
-  items character varying,
-  quantity integer,
-  price numeric,
-  date character varying,
-  timestamp timestamp without time zone NOT NULL DEFAULT now(),
+  name text NOT NULL,
+  description text,
+  price numeric NOT NULL DEFAULT 0,
+  images ARRAY DEFAULT '{}'::text[],
+  fbx_url text,
   created_at timestamp with time zone DEFAULT now(),
-  CONSTRAINT paraphernalia_pkey PRIMARY KEY (id_paraphernalia)
+  category text,
+  height numeric,
+  width numeric,
+  thickness numeric,
+  material text,
+  type text,
+  image1 text,
+  image2 text,
+  image3 text,
+  image4 text,
+  image5 text,
+  fullproductname text,
+  additionalfeatures text,
+  inventory integer DEFAULT 0,
+  fbx_urls ARRAY DEFAULT '{}'::text[],
+  last_stock_update timestamp with time zone DEFAULT now(),
+  stock_notification_sent boolean DEFAULT false,
+  updated_at timestamp with time zone DEFAULT now(),
+  skyboxes jsonb,
+  house_model_url text,
+  CONSTRAINT products_pkey PRIMARY KEY (id)
 );
-CREATE TABLE public.paraphernalia_inventory (
-  id_paraphernalia_inventory uuid NOT NULL,
-  items text,
-  stock_balance numeric,
-  stock_in numeric,
-  stock_out numeric,
-  id_paraphernalia uuid,
-  contract_id uuid,
-  CONSTRAINT paraphernalia_inventory_pkey PRIMARY KEY (id_paraphernalia_inventory),
-  CONSTRAINT paraphernalia_inventory_id_paraphernalia_fkey FOREIGN KEY (id_paraphernalia) REFERENCES public.paraphernalia(id_paraphernalia),
-  CONSTRAINT paraphernalia_inventory_contract_id_fkey FOREIGN KEY (contract_id) REFERENCES public.contracts(contract_id)
+CREATE TABLE public.products_archive (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  product_id uuid NOT NULL,
+  product_name text,
+  product_category text,
+  product_price numeric,
+  product_data jsonb NOT NULL,
+  archived_at timestamp with time zone NOT NULL DEFAULT now(),
+  archived_by uuid,
+  archived_by_name text,
+  CONSTRAINT products_archive_pkey PRIMARY KEY (id),
+  CONSTRAINT products_archive_archived_by_fkey FOREIGN KEY (archived_by) REFERENCES public.admins(id)
 );
-CREATE TABLE public.restock (
-  id_restock uuid NOT NULL,
-  date character varying,
-  status text,
-  item text,
-  quanitity character varying,
-  timestamptz timestamp without time zone NOT NULL DEFAULT now(),
-  id_paraphernalia uuid,
-  id_paraphernalia_inventory uuid,
-  contract_id uuid,
-  CONSTRAINT restock_pkey PRIMARY KEY (id_restock),
-  CONSTRAINT restock_paraphernalia_fkey FOREIGN KEY (id_paraphernalia) REFERENCES public.paraphernalia(id_paraphernalia),
-  CONSTRAINT restock_contract_fkey FOREIGN KEY (contract_id) REFERENCES public.contracts(contract_id),
-  CONSTRAINT restock_inventory_fkey FOREIGN KEY (id_paraphernalia_inventory) REFERENCES public.paraphernalia_inventory(id_paraphernalia_inventory)
+CREATE TABLE public.rbac_admin_page_overrides (
+  admin_id uuid NOT NULL,
+  page_key text NOT NULL,
+  created_by uuid,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT rbac_admin_page_overrides_pkey PRIMARY KEY (admin_id, page_key),
+  CONSTRAINT rbac_admin_page_overrides_admin_id_fkey FOREIGN KEY (admin_id) REFERENCES public.admins(id),
+  CONSTRAINT rbac_admin_page_overrides_page_key_fkey FOREIGN KEY (page_key) REFERENCES public.rbac_pages(key),
+  CONSTRAINT rbac_admin_page_overrides_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.admins(id)
+);
+CREATE TABLE public.rbac_pages (
+  key text NOT NULL,
+  name text NOT NULL,
+  path text NOT NULL UNIQUE,
+  group_name text,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT rbac_pages_pkey PRIMARY KEY (key)
+);
+CREATE TABLE public.rbac_position_pages (
+  position_name text NOT NULL,
+  page_key text NOT NULL,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT rbac_position_pages_pkey PRIMARY KEY (position_name, page_key),
+  CONSTRAINT rbac_position_pages_position_name_fkey FOREIGN KEY (position_name) REFERENCES public.rbac_positions(name),
+  CONSTRAINT rbac_position_pages_page_key_fkey FOREIGN KEY (page_key) REFERENCES public.rbac_pages(key)
+);
+CREATE TABLE public.rbac_positions (
+  name text NOT NULL,
+  description text,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT rbac_positions_pkey PRIMARY KEY (name)
 );
 CREATE TABLE public.role_column_access (
   role_id uuid NOT NULL,
@@ -490,8 +460,8 @@ CREATE TABLE public.role_column_access (
   updated_at timestamp with time zone NOT NULL DEFAULT now(),
   created_by uuid,
   CONSTRAINT role_column_access_pkey PRIMARY KEY (role_id, module_key, column_key),
-  CONSTRAINT role_column_access_module_key_fkey FOREIGN KEY (module_key) REFERENCES public.modules(module_key),
   CONSTRAINT role_column_access_role_id_fkey FOREIGN KEY (role_id) REFERENCES public.app_roles(role_id),
+  CONSTRAINT role_column_access_module_key_fkey FOREIGN KEY (module_key) REFERENCES public.modules(module_key),
   CONSTRAINT role_column_access_role_module_fkey FOREIGN KEY (role_id) REFERENCES public.role_module_access(role_id),
   CONSTRAINT role_column_access_role_module_fkey FOREIGN KEY (module_key) REFERENCES public.role_module_access(role_id),
   CONSTRAINT role_column_access_role_module_fkey FOREIGN KEY (role_id) REFERENCES public.role_module_access(module_key),
@@ -502,64 +472,166 @@ CREATE TABLE public.role_module_access (
   module_key text NOT NULL,
   can_read boolean NOT NULL DEFAULT true,
   can_write boolean NOT NULL DEFAULT false,
-  can_edit boolean NOT NULL DEFAULT false,
   CONSTRAINT role_module_access_pkey PRIMARY KEY (role_id, module_key),
-  CONSTRAINT role_module_access_module_key_fkey FOREIGN KEY (module_key) REFERENCES public.modules(module_key),
-  CONSTRAINT role_module_access_role_id_fkey FOREIGN KEY (role_id) REFERENCES public.app_roles(role_id)
+  CONSTRAINT role_module_access_role_id_fkey FOREIGN KEY (role_id) REFERENCES public.app_roles(role_id),
+  CONSTRAINT role_module_access_module_key_fkey FOREIGN KEY (module_key) REFERENCES public.modules(module_key)
 );
-CREATE TABLE public.user_applicant_access_overrides (
-  user_id uuid NOT NULL,
-  module_key text NOT NULL,
-  applicant_id uuid NOT NULL,
-  can_read boolean NOT NULL DEFAULT true,
+CREATE TABLE public.sales_inventory_data (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  product_id uuid NOT NULL,
+  month_start date NOT NULL,
+  branch text NOT NULL DEFAULT 'unknown'::text,
+  units_sold integer NOT NULL DEFAULT 0,
+  revenue numeric NOT NULL DEFAULT 0,
   created_at timestamp with time zone NOT NULL DEFAULT now(),
   updated_at timestamp with time zone NOT NULL DEFAULT now(),
-  created_by uuid,
-  CONSTRAINT user_applicant_access_overrides_pkey PRIMARY KEY (user_id, module_key, applicant_id)
+  Ending_Stock integer DEFAULT 0,
+  Beginning_Stock integer DEFAULT 0,
+  CONSTRAINT sales_inventory_data_pkey PRIMARY KEY (id),
+  CONSTRAINT sales_inventory_9months_product_id_fkey FOREIGN KEY (product_id) REFERENCES public.products(id)
 );
-CREATE TABLE public.user_applicant_column_access_overrides (
-  user_id uuid NOT NULL,
-  module_key text NOT NULL,
-  applicant_id uuid NOT NULL,
-  column_key text NOT NULL,
-  can_read boolean NOT NULL DEFAULT true,
+CREATE TABLE public.services (
+  id bigint NOT NULL DEFAULT nextval('services_id_seq'::regclass),
+  name text NOT NULL,
+  short_description text,
+  long_description text,
+  created_at timestamp without time zone DEFAULT now(),
+  icon text,
+  icon_url text,
+  CONSTRAINT services_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.services_page_content (
+  slug text NOT NULL,
+  content jsonb NOT NULL DEFAULT '{}'::jsonb,
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT services_page_content_pkey PRIMARY KEY (slug)
+);
+CREATE TABLE public.showrooms (
+  id bigint NOT NULL DEFAULT nextval('showrooms_id_seq'::regclass),
+  title text NOT NULL,
+  address text,
+  description text NOT NULL,
+  created_at timestamp with time zone DEFAULT timezone('utc'::text, now()),
+  image text,
+  CONSTRAINT showrooms_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.task_updates (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  task_id bigint NOT NULL,
+  submitted_by_admin_id uuid,
+  submitted_by_name text,
+  description text,
+  image_urls ARRAY,
+  status text NOT NULL DEFAULT 'submitted'::text CHECK (status = ANY (ARRAY['submitted'::text, 'approved'::text, 'rejected'::text])),
+  is_final_qc boolean NOT NULL DEFAULT false,
+  approved_by_admin_id uuid,
+  approved_at timestamp with time zone,
+  rejected_at timestamp with time zone,
+  rejection_reason text,
   created_at timestamp with time zone NOT NULL DEFAULT now(),
   updated_at timestamp with time zone NOT NULL DEFAULT now(),
-  created_by uuid,
-  CONSTRAINT user_applicant_column_access_overrides_pkey PRIMARY KEY (user_id, module_key, applicant_id, column_key)
+  visible_to_customer boolean NOT NULL DEFAULT false,
+  CONSTRAINT task_updates_pkey PRIMARY KEY (id),
+  CONSTRAINT task_updates_task_id_fkey FOREIGN KEY (task_id) REFERENCES public.tasks(id),
+  CONSTRAINT task_updates_submitted_by_admin_id_fkey FOREIGN KEY (submitted_by_admin_id) REFERENCES public.admins(id),
+  CONSTRAINT task_updates_approved_by_admin_id_fkey FOREIGN KEY (approved_by_admin_id) REFERENCES public.admins(id)
 );
-CREATE TABLE public.user_column_access_overrides (
-  user_id uuid NOT NULL,
-  module_key text NOT NULL,
-  column_key text NOT NULL,
-  can_read boolean NOT NULL DEFAULT true,
-  created_at timestamp with time zone NOT NULL DEFAULT now(),
-  updated_at timestamp with time zone NOT NULL DEFAULT now(),
-  created_by uuid,
-  CONSTRAINT user_column_access_overrides_pkey PRIMARY KEY (user_id, module_key, column_key),
-  CONSTRAINT user_column_access_overrides_module_fkey FOREIGN KEY (module_key) REFERENCES public.modules(module_key)
+CREATE TABLE public.tasks (
+  id integer NOT NULL DEFAULT nextval('tasks_id_seq'::regclass),
+  task_number character varying NOT NULL,
+  product_name character varying NOT NULL,
+  task_name character varying NOT NULL,
+  employee_id integer,
+  employee_name character varying NOT NULL,
+  employee_number character varying NOT NULL,
+  start_date date NOT NULL,
+  due_date date NOT NULL,
+  status character varying DEFAULT 'Pending'::character varying,
+  created_at timestamp without time zone DEFAULT now(),
+  user_item_id uuid,
+  product_id uuid,
+  assigned_admin_id uuid,
+  CONSTRAINT tasks_pkey PRIMARY KEY (id),
+  CONSTRAINT tasks_user_item_id_fkey FOREIGN KEY (user_item_id) REFERENCES public.user_items(id),
+  CONSTRAINT tasks_product_id_fkey FOREIGN KEY (product_id) REFERENCES public.products(id),
+  CONSTRAINT tasks_assigned_admin_id_fkey FOREIGN KEY (assigned_admin_id) REFERENCES public.admins(id)
 );
-CREATE TABLE public.user_module_access_overrides (
+CREATE TABLE public.user_items (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
   user_id uuid NOT NULL,
-  module_key text NOT NULL,
-  can_read boolean NOT NULL DEFAULT true,
+  product_id uuid NOT NULL,
+  item_type text NOT NULL CHECK (item_type = ANY (ARRAY['my-list'::text, 'reserve'::text, 'order'::text, 'reservation'::text, 'cart'::text])),
+  status text NOT NULL DEFAULT 'active'::text CHECK (status = ANY (ARRAY['active'::text, 'pending_payment'::text, 'pending_acceptance'::text, 'reserved'::text, 'accepted'::text, 'approved'::text, 'in_production'::text, 'start_packaging'::text, 'ready_for_delivery'::text, 'completed'::text, 'cancelled'::text, 'pending_cancellation'::text, 'packaging'::text, 'quality_check'::text, 'out_for_delivery'::text, 'pending_balance_payment'::text])),
+  quantity integer NOT NULL DEFAULT 1,
+  meta jsonb DEFAULT '{}'::jsonb,
   created_at timestamp with time zone NOT NULL DEFAULT now(),
-  updated_at timestamp with time zone NOT NULL DEFAULT now(),
-  created_by uuid,
-  can_write boolean NOT NULL DEFAULT false,
-  can_edit boolean NOT NULL DEFAULT false,
-  CONSTRAINT user_module_access_overrides_pkey PRIMARY KEY (user_id, module_key),
-  CONSTRAINT user_module_access_overrides_module_fkey FOREIGN KEY (module_key) REFERENCES public.modules(module_key)
+  reservation_fee numeric DEFAULT 500,
+  payment_intent_id text,
+  delivery_address_id uuid,
+  special_instructions text,
+  admin_notes text,
+  estimated_delivery_date date,
+  payment_id text,
+  payment_status text DEFAULT 'pending'::text,
+  updated_at timestamp with time zone DEFAULT now(),
+  price numeric,
+  total_amount numeric,
+  customer_name text,
+  customer_email text,
+  customer_phone text,
+  delivery_address text,
+  payment_method text,
+  order_status text DEFAULT 'pending_payment'::text,
+  order_progress text DEFAULT 'awaiting_payment'::text,
+  admin_accepted_at timestamp with time zone,
+  accepted_by_admin_id uuid,
+  cancellation_requested_at timestamp with time zone,
+  cancellation_approved_at timestamp with time zone,
+  cancelled_by_admin_id uuid,
+  cancellation_notes text,
+  progress_history jsonb DEFAULT '[]'::jsonb,
+  balance_payment_status text,
+  balance_payment_id text,
+  total_paid numeric,
+  CONSTRAINT user_items_pkey PRIMARY KEY (id),
+  CONSTRAINT user_items_delivery_address_id_fkey FOREIGN KEY (delivery_address_id) REFERENCES public.addresses(id),
+  CONSTRAINT user_items_product_id_fkey FOREIGN KEY (product_id) REFERENCES public.products(id)
 );
-CREATE TABLE public.user_row_identifier_column_access_overrides (
+CREATE TABLE public.user_notification_preferences (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  user_id uuid UNIQUE,
+  email_notifications boolean DEFAULT true,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  new_product_notifications boolean DEFAULT true,
+  stock_update_notifications boolean DEFAULT true,
+  order_status_notifications boolean DEFAULT true,
+  order_updates boolean DEFAULT true,
+  sms_notifications boolean DEFAULT false,
+  push_notifications boolean DEFAULT true,
+  CONSTRAINT user_notification_preferences_pkey PRIMARY KEY (id),
+  CONSTRAINT user_notification_preferences_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id)
+);
+CREATE TABLE public.user_notifications (
+  id bigint NOT NULL DEFAULT nextval('user_notifications_id_seq'::regclass),
   user_id uuid NOT NULL,
-  module_key text NOT NULL,
-  row_identifier_key text NOT NULL,
-  row_identifier_value text NOT NULL,
-  column_key text NOT NULL,
-  can_read boolean NOT NULL DEFAULT true,
-  created_at timestamp with time zone NOT NULL DEFAULT now(),
-  updated_at timestamp with time zone NOT NULL DEFAULT now(),
-  created_by uuid,
-  CONSTRAINT user_row_identifier_column_access_overrides_pkey PRIMARY KEY (user_id, module_key, row_identifier_key, row_identifier_value, column_key)
+  title text NOT NULL,
+  message text NOT NULL,
+  type text DEFAULT 'general'::text CHECK (type = ANY (ARRAY['new_product'::text, 'stock_update'::text, 'order_status'::text, 'general'::text])),
+  is_read boolean DEFAULT false,
+  created_at timestamp with time zone DEFAULT now(),
+  metadata jsonb DEFAULT '{}'::jsonb,
+  action_url text,
+  product_id uuid,
+  order_id uuid,
+  CONSTRAINT user_notifications_pkey PRIMARY KEY (id),
+  CONSTRAINT user_notifications_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id),
+  CONSTRAINT user_notifications_product_id_fkey FOREIGN KEY (product_id) REFERENCES public.products(id)
+);
+CREATE TABLE public.warranties (
+  id bigint NOT NULL DEFAULT nextval('warranties_id_seq'::regclass),
+  title text,
+  description text,
+  created_at timestamp without time zone DEFAULT now(),
+  CONSTRAINT warranties_pkey PRIMARY KEY (id)
 );

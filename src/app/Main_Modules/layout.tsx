@@ -139,6 +139,13 @@ function getExpiringSummaryRowKey(row: ExpiringSummaryRow) {
   return isOtherRow ? `${applicantId}:${expiresOn}` : `${applicantId}:${licenseType}:${expiresOn}`;
 }
 
+function isCarInsuranceExpiringRow(row: ExpiringSummaryRow) {
+  const applicantId = String(row?.applicant_id ?? "").trim();
+  const licenseType = String(row?.license_type ?? "").trim().toUpperCase();
+  if (!(row?.source_kind === "other" || applicantId.startsWith("other:"))) return false;
+  return licenseType === "OTHER: POLICY TERM" || licenseType === "OTHER: CAR REGISTRATION DATE";
+}
+
 function readDismissedExpiringSummaryKeys() {
   try {
     const raw = localStorage.getItem(EXPIRING_DISMISSED_KEYS_STORAGE);
@@ -395,7 +402,7 @@ function pageMetaForPath(pathname: string): PageMeta {
         title: "Client",
         description: "Track client-facing data, profiles, and related workflow items.",
         badge: "Client view",
-        icon: Users,
+        icon: CreditCard,
       },
     },
     {
@@ -428,6 +435,7 @@ function pageMetaForPath(pathname: string): PageMeta {
 
 const ALL_MENU = [
   { key: "dashboard", name: "Dashboard", href: "/Main_Modules/Dashboard/", icon: LayoutGrid },
+  { key: "client", name: "Client", href: "/Main_Modules/Client/", icon: CreditCard },
   { key: "applicants", name: "Applicant", href: "/Main_Modules/Applicants/", icon: Users },
   { key: "employees", name: "Employees", href: "/Main_Modules/Employees/", icon: Users },
   { key: "reassign", name: "Reassigned", href: "/Main_Modules/Reassign/", icon: Repeat2 },
@@ -579,6 +587,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
   const [activityOpen, setActivityOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [expiringOpen, setExpiringOpen] = useState(false);
+  const [carInsuranceExpiringOpen, setCarInsuranceExpiringOpen] = useState(false);
   const [adminAlertOpen, setAdminAlertOpen] = useState(false);
   const [activityCount, setActivityCount] = useState(0);
   const [activityMissingTable, setActivityMissingTable] = useState(false);
@@ -587,6 +596,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
   const [sendToEmployees, setSendToEmployees] = useState(true);
   const [recentActivity, setRecentActivity] = useState<RecentActivityRow[]>([]);
   const [expiringCount, setExpiringCount] = useState(0);
+  const [carInsuranceExpiringCount, setCarInsuranceExpiringCount] = useState(0);
   const [previewCount, setPreviewCount] = useState(0);
   function badgeText(n: number) {
     if (!Number.isFinite(n) || n <= 0) return "";
@@ -651,8 +661,26 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
   };
   const [expiringRows, setExpiringRows] = useState<ExpiringSummaryRow[]>([]);
   const [expiringEmailByApplicantId, setExpiringEmailByApplicantId] = useState<Record<string, string | null>>({});
+  const generalExpiringRows = useMemo(
+    () => expiringRows.filter((row) => !isCarInsuranceExpiringRow(row)),
+    [expiringRows]
+  );
+  const carInsuranceExpiringRows = useMemo(
+    () => expiringRows.filter((row) => isCarInsuranceExpiringRow(row)),
+    [expiringRows]
+  );
   const { role: sessionRole } = useAuthRole();
   const { modules: myModules } = useMyModules();
+
+  const applyVisibleExpiringRows = useCallback((rows: ExpiringSummaryRow[]) => {
+    setExpiringRows(rows);
+    setExpiringCount(
+      rows.filter((row) => !isCarInsuranceExpiringRow(row) && Number(row.sent_count ?? 0) <= 0).length
+    );
+    setCarInsuranceExpiringCount(
+      rows.filter((row) => isCarInsuranceExpiringRow(row) && Number(row.sent_count ?? 0) <= 0).length
+    );
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -785,6 +813,11 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
   }, [pathname, router]);
 
   const api = (globalThis as { electronAPI?: ElectronLayoutApi }).electronAPI;
+  const adminDisplayName = useMemo(
+    () => displayAdminName(currentAdmin.fullName, currentAdmin.username),
+    [currentAdmin.fullName, currentAdmin.username]
+  );
+  const adminInitials = useMemo(() => initialsFromLabel(adminDisplayName), [adminDisplayName]);
 
   const refreshNotificationPrefs = useCallback(async () => {
     try {
@@ -835,7 +868,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
     return () => {
       cancelled = true;
     };
-  }, [api, pathname]);
+  }, [adminDisplayName, api, pathname]);
 
   useEffect(() => {
     // Close dropdowns when clicking outside.
@@ -846,11 +879,13 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
         t.closest?.("[data-activity-menu]") ||
         t.closest?.("[data-preview-menu]") ||
         t.closest?.("[data-expiring-menu]") ||
+        t.closest?.("[data-car-insurance-expiring-menu]") ||
         t.closest?.("[data-admin-alert-menu]")
       ) return;
       setActivityOpen(false);
       setPreviewOpen(false);
       setExpiringOpen(false);
+      setCarInsuranceExpiringOpen(false);
       setAdminAlertOpen(false);
     }
     document.addEventListener("mousedown", onDocDown);
@@ -942,7 +977,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
     if (!api?.notifications?.getExpiringSummary) return;
     try {
       await refreshNotificationPrefs();
-      const res = await api.notifications.getExpiringSummary({ limit: 50 });
+      const res = await api.notifications.getExpiringSummary({ limit: 100 });
       const sortedRows = [...(res?.rows ?? [])].sort((a, b) => {
         const toMs = (value: unknown) => {
           const d = new Date(String(value ?? ""));
@@ -965,8 +1000,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
       });
       const dismissedKeys = readDismissedExpiringSummaryKeys();
       const visibleRows = sortedRows.filter((row) => !dismissedKeys.has(getExpiringSummaryRowKey(row)));
-      setExpiringRows(visibleRows);
-      setExpiringCount(visibleRows.filter((row) => Number(row.sent_count ?? 0) <= 0).length);
+      applyVisibleExpiringRows(visibleRows);
 
       try {
         const allRows = (res?.rows ?? []);
@@ -1010,31 +1044,32 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
     } catch {
       // ignore
     }
-  }, [api, refreshNotificationPrefs]);
+  }, [api, applyVisibleExpiringRows, refreshNotificationPrefs]);
 
-  const clearAllExpiringNotifications = useCallback(async () => {
-    if (!expiringRows.length) return;
+  const clearExpiringNotifications = useCallback(async (rowsToClear: ExpiringSummaryRow[], label: string) => {
+    if (!rowsToClear.length) return;
 
-    const ok = window.confirm("Clear all expiring licenses and records from this list?");
+    const ok = window.confirm(`Clear all ${label} from this list?`);
     if (!ok) return;
 
     try {
       setClearingAllExpiring(true);
       const dismissedKeys = readDismissedExpiringSummaryKeys();
-      for (const row of expiringRows) {
+      for (const row of rowsToClear) {
         const key = getExpiringSummaryRowKey(row);
         if (key) dismissedKeys.add(key);
       }
       writeDismissedExpiringSummaryKeys(dismissedKeys);
-      setExpiringRows([]);
-      setExpiringCount(0);
+      applyVisibleExpiringRows(
+        expiringRows.filter((row) => !dismissedKeys.has(getExpiringSummaryRowKey(row)))
+      );
       await refreshExpiring();
     } catch {
       // ignore
     } finally {
       setClearingAllExpiring(false);
     }
-  }, [expiringRows, refreshExpiring]);
+  }, [applyVisibleExpiringRows, expiringRows, refreshExpiring]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1065,6 +1100,9 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
       "notification_preferences",
       "notification_email_settings",
       "notification_recipients",
+      "car_insurance_notification_recipients",
+      "licensure_notification_log",
+      "other_expiration_notification_log",
       "audit_log",
     ];
 
@@ -1075,8 +1113,13 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
         .subscribe()
     );
 
+    const intervalId = window.setInterval(() => {
+      scheduleRefresh();
+    }, 15 * 1000);
+
     return () => {
       cancelled = true;
+      window.clearInterval(intervalId);
       if (refreshTimer) {
         clearTimeout(refreshTimer);
         refreshTimer = null;
@@ -1182,11 +1225,6 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
   }, []);
 
   const pageTitle = useMemo(() => titleFromPath(pathname), [pathname]);
-  const adminDisplayName = useMemo(
-    () => displayAdminName(currentAdmin.fullName, currentAdmin.username),
-    [currentAdmin.fullName, currentAdmin.username]
-  );
-  const adminInitials = useMemo(() => initialsFromLabel(adminDisplayName), [adminDisplayName]);
 
   const allowedKeys = useMemo(() => {
     const fromDb = new Set(myModules.map((m) => m.module_key));
@@ -1221,7 +1259,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
       if (fromDb.has("reassign") && !fromDb.has("resigned")) fromDb.add("resigned");
 
       // Treat the Logistics group as allowed if ANY logistics child module is allowed.
-      if (fromDb.has("client") || fromDb.has("inventory") || fromDb.has("paraphernalia") || fromDb.has("reports")) {
+      if (fromDb.has("inventory") || fromDb.has("paraphernalia") || fromDb.has("reports") || fromDb.has("car_insurance_expiration")) {
         fromDb.add("logistics");
       }
 
@@ -1287,7 +1325,6 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
   const LOGISTICS_ITEMS = useMemo(
     () =>
       [
-        { key: "logistics_client", moduleKey: "client" as const, name: "Client", href: "/Main_Modules/Client/", icon: CreditCard },
         { key: "logistics_inventory", moduleKey: "inventory" as const, name: "Inventory", href: "/Main_Modules/Inventory/", icon: Package },
         { key: "logistics_paraphernalia", moduleKey: "paraphernalia" as const, name: "Paraphernalia", href: "/Main_Modules/Paraphernalia/", icon: Package },
         { key: "logistics_reports", moduleKey: "reports" as const, name: "Reports", href: "/Main_Modules/Reports/", icon: FileText },
@@ -1449,7 +1486,6 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
     return [
       "/Main_Modules/Logistics/",
       "/Main_Modules/Logistics/CarInsuranceExpiration/",
-      "/Main_Modules/Client/",
       "/Main_Modules/Inventory/",
       "/Main_Modules/Paraphernalia/",
       "/Main_Modules/Reports/",
@@ -1495,8 +1531,8 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
 
             {!collapsed ? (
               <div className="leading-tight">
-                <div className="text-sm font-semibold text-gray-900">Faragon Security</div>
-                <div className="text-sm font-semibold text-gray-900">Agency, Inc.</div>
+                <div className="font-brand-serif text-lg font-semibold text-gray-900">Faragon</div>
+                <div className="font-brand-serif text-sm font-semibold text-gray-900">Security Agency, Inc.</div>
                 <div className="mt-1 text-[11px] text-gray-500">Role: {sessionRole ?? "—"}</div>
               </div>
             ) : null}
@@ -1743,6 +1779,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
                       setActivityOpen((v) => !v);
                       setPreviewOpen(false);
                       setExpiringOpen(false);
+                      setCarInsuranceExpiringOpen(false);
                       setAdminAlertOpen(false);
                       refreshActivity();
                     }}
@@ -1822,6 +1859,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
                     type="button"
                     onClick={() => {
                       setExpiringOpen((v) => !v);
+                      setCarInsuranceExpiringOpen(false);
                       setActivityOpen(false);
                       setPreviewOpen(false);
                       setAdminAlertOpen(false);
@@ -1831,14 +1869,14 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
                     aria-label="Expiring Licenses and Records"
                   >
                     <CreditCard className="w-5 h-5" />
-						{expiringCount > 0 ? (
-							<span
-								className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-red-600 text-white text-[10px] font-bold leading-[18px] text-center shadow"
-                aria-label={`Expiring licenses and records count ${expiringCount}`}
-							>
-								{badgeText(expiringCount)}
-							</span>
-						) : null}
+                    {expiringCount > 0 ? (
+                      <span
+                        className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-red-600 text-white text-[10px] font-bold leading-[18px] text-center shadow"
+                        aria-label={`Expiring licenses and records count ${expiringCount}`}
+                      >
+                        {badgeText(expiringCount)}
+                      </span>
+                    ) : null}
                   </button>
 
                   {expiringOpen ? (
@@ -1849,9 +1887,9 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
                           <button
                             type="button"
                             className="text-xs text-red-600 hover:underline disabled:opacity-50"
-                            disabled={!expiringRows.length || clearingAllExpiring}
+                            disabled={!generalExpiringRows.length || clearingAllExpiring}
                             onClick={() => {
-                              void clearAllExpiringNotifications();
+                              void clearExpiringNotifications(generalExpiringRows, "expiring licenses and records");
                             }}
                           >
                             {clearingAllExpiring ? "Clearing..." : "Clear all"}
@@ -1867,8 +1905,8 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
                       </div>
 
                       <div className="max-h-[360px] overflow-auto">
-                        {expiringRows.length ? (
-                          expiringRows.map((r, idx) => {
+                        {generalExpiringRows.length ? (
+                          generalExpiringRows.map((r, idx) => {
                             const isOtherRow = r.source_kind === "other" || String(r.applicant_id).startsWith("other:");
                             const canOpenDetails = !isOtherRow && Boolean(r.applicant_id);
                             const displayName = isOtherRow
@@ -1971,7 +2009,125 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
                             );
                           })
                         ) : (
-                          <div className="px-4 py-6 text-sm text-gray-500">No expiring licenses or records found.</div>
+                          <div className="px-4 py-6 text-sm text-gray-500">No expiring licenses or non-car-insurance records found.</div>
+                        )}
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+
+                <div className="relative" data-car-insurance-expiring-menu>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCarInsuranceExpiringOpen((v) => !v);
+                      setExpiringOpen(false);
+                      setActivityOpen(false);
+                      setPreviewOpen(false);
+                      setAdminAlertOpen(false);
+                      refreshExpiring();
+                    }}
+                    className="relative h-10 w-10 rounded-xl bg-[#FFDA03] text-black flex items-center justify-center"
+                    aria-label="Car Insurance Expiration"
+                    title="Car Insurance Expiration"
+                  >
+                    <Truck className="w-5 h-5" />
+                    {carInsuranceExpiringCount > 0 ? (
+                      <span
+                        className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-red-600 text-white text-[10px] font-bold leading-[18px] text-center shadow"
+                        aria-label={`Car insurance expiration count ${carInsuranceExpiringCount}`}
+                      >
+                        {badgeText(carInsuranceExpiringCount)}
+                      </span>
+                    ) : null}
+                  </button>
+
+                  {carInsuranceExpiringOpen ? (
+                    <div className="absolute right-0 mt-2 w-[420px] max-w-[92vw] rounded-2xl border bg-white shadow-lg overflow-hidden z-50">
+                      <div className="px-4 py-3 border-b flex items-center justify-between">
+                        <div className="text-sm font-semibold text-black">Car Insurance Expiration</div>
+                        <div className="flex items-center gap-3">
+                          <button
+                            type="button"
+                            className="text-xs text-red-600 hover:underline disabled:opacity-50"
+                            disabled={!carInsuranceExpiringRows.length || clearingAllExpiring}
+                            onClick={() => {
+                              void clearExpiringNotifications(carInsuranceExpiringRows, "car insurance expiration records");
+                            }}
+                          >
+                            {clearingAllExpiring ? "Clearing..." : "Clear all"}
+                          </button>
+                          <Link
+                            href="/Main_Modules/Logistics/CarInsuranceExpiration/"
+                            className="text-xs text-blue-600 hover:underline"
+                            onClick={() => setCarInsuranceExpiringOpen(false)}
+                          >
+                            Open module
+                          </Link>
+                        </div>
+                      </div>
+
+                      <div className="max-h-[360px] overflow-auto">
+                        {carInsuranceExpiringRows.length ? (
+                          carInsuranceExpiringRows.map((r, idx) => {
+                            const displayName = String(r.record_name ?? "").trim() || "Car Insurance Record";
+                            return (
+                              <div
+                                key={`${r.applicant_id}:${r.license_type}:${idx}`}
+                                role="button"
+                                tabIndex={0}
+                                onKeyDown={(ev) => {
+                                  if (ev.key !== "Enter" && ev.key !== " ") return;
+                                  ev.preventDefault();
+                                  router.push("/Main_Modules/Logistics/CarInsuranceExpiration/");
+                                  setCarInsuranceExpiringOpen(false);
+                                }}
+                                onClick={() => {
+                                  router.push("/Main_Modules/Logistics/CarInsuranceExpiration/");
+                                  setCarInsuranceExpiringOpen(false);
+                                }}
+                                className="px-4 py-3 border-b last:border-b-0 cursor-pointer hover:bg-white"
+                                title="Open car insurance expiration module"
+                              >
+                                <div className="flex items-center justify-between gap-3">
+                                  <div className="text-sm font-medium text-black">{r.license_type}</div>
+                                  <div className="text-xs text-gray-600 whitespace-nowrap">{r.expires_on}</div>
+                                </div>
+                                <div className="text-xs text-gray-600">{displayName}</div>
+                                <div className="mt-1 flex items-center justify-between gap-3">
+                                  <div className="text-[11px] text-gray-500">Days: {r.days_until_expiry}</div>
+                                  <div className="flex items-center gap-2">
+                                    {(() => {
+                                      const badge = emailBadge(expiringEmailByApplicantId[String(r.applicant_id)] ?? null);
+                                      const isSent = Number(r.sent_count ?? 0) > 0;
+                                      const badgeClassName = isSent
+                                        ? "bg-emerald-100 text-emerald-800"
+                                        : badge.className;
+                                      return (
+                                        <span className={`text-[11px] px-2 py-0.5 rounded-full border ${badgeClassName}`}>
+                                          {badge.label}
+                                        </span>
+                                      );
+                                    })()}
+                                    <span
+                                      className={
+                                        (Number(r.sent_count ?? 0) > 0)
+                                          ? "text-[11px] px-2 py-0.5 rounded-full bg-green-50 text-green-700 border border-green-200"
+                                          : "text-[11px] px-2 py-0.5 rounded-full bg-white text-gray-700 border"
+                                      }
+                                    >
+                                      {(Number(r.sent_count ?? 0) > 0) ? `Sent ${r.sent_count}x` : "Not sent"}
+                                    </span>
+                                  </div>
+                                </div>
+                                {r.last_sent_at ? (
+                                  <div className="text-[11px] text-gray-400 mt-1">Last sent: {new Date(r.last_sent_at).toLocaleString()}</div>
+                                ) : null}
+                              </div>
+                            );
+                          })
+                        ) : (
+                          <div className="px-4 py-6 text-sm text-gray-500">No expiring car insurance records found.</div>
                         )}
                       </div>
                     </div>
@@ -1985,6 +2141,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
                       setPreviewOpen((v) => !v);
                       setActivityOpen(false);
                       setExpiringOpen(false);
+                      setCarInsuranceExpiringOpen(false);
                       setAdminAlertOpen(false);
                       refreshPreview();
                     }}
@@ -2076,17 +2233,18 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
                       setActivityOpen(false);
                       setPreviewOpen(false);
                       setExpiringOpen(false);
+                      setCarInsuranceExpiringOpen(false);
                     }}
                     className="relative h-10 w-10 rounded-xl bg-[#FFDA03] text-black flex items-center justify-center"
                     aria-label="Admin Alerts"
                   >
                     <CircleAlert className="w-5 h-5" />
-                    {(activityCount + expiringCount) > 0 ? (
+                    {(activityCount + expiringCount + carInsuranceExpiringCount) > 0 ? (
                       <span
                         className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-red-600 text-white text-[10px] font-bold leading-[18px] text-center shadow"
-                        aria-label={`Admin alerts count ${activityCount + expiringCount}`}
+                        aria-label={`Admin alerts count ${activityCount + expiringCount + carInsuranceExpiringCount}`}
                       >
-                        {badgeText(activityCount + expiringCount)}
+                        {badgeText(activityCount + expiringCount + carInsuranceExpiringCount)}
                       </span>
                     ) : null}
                   </button>
@@ -2130,6 +2288,23 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
                             }}
                           >
                             Notification Settings
+                          </button>
+                        </div>
+
+                        <div className="rounded-xl border bg-white border-[#FFDA03] px-3 py-2 flex items-center justify-between">
+                          <div>
+                            <div className="text-xs text-black">Pending Car Insurance Notices</div>
+                            <div className="text-sm font-semibold text-black">{carInsuranceExpiringCount}</div>
+                          </div>
+                          <button
+                            type="button"
+                            className="text-xs px-3 py-1.5 rounded-lg border bg-[#FFDA03] text-black hover:bg-[#EFCB00]"
+                            onClick={() => {
+                              setAdminAlertOpen(false);
+                              router.push("/Main_Modules/Logistics/CarInsuranceExpiration/");
+                            }}
+                          >
+                            Open Module
                           </button>
                         </div>
 

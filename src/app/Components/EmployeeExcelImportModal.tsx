@@ -628,7 +628,7 @@ export default function EmployeeExcelImportModal({
       const blob = new Blob([out], {
         type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       });
-      downloadBlob("employees_template_export.xlsx", blob);
+      downloadBlob("All_employees_table.xlsx", blob);
       setResultMsg(`Exported ${bodyRows.length} employee row(s) in template format.`);
     } catch (e: unknown) {
       setParsingError(e instanceof Error ? e.message : "Failed to export employees");
@@ -949,7 +949,7 @@ export default function EmployeeExcelImportModal({
                         exporting || importing ? "opacity-60" : ""
                       }`}
                     >
-                      {exporting ? "Exporting…" : "Export All (Template)"}
+                      {exporting ? "Exporting…" : "Export Excel All Tables"}
                     </button>
                   </div>
                 ) : null}
