@@ -69,6 +69,18 @@ function normalizeRoleNameLoose(value: unknown) {
   return String(value ?? "").trim().toLowerCase();
 }
 
+function formatRequestedModuleLabel(value: string | null | undefined) {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (normalized === "reassign") return "AWOL";
+
+  const raw = String(value ?? "").trim();
+  if (!raw) return "requested page";
+
+  return raw
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
 function moduleKeysForRequest(moduleKey: string): string[] {
   const key = String(moduleKey ?? "").trim().toLowerCase();
   if (!key) return [];
@@ -672,7 +684,7 @@ export default function RequestsQueuePage() {
                     </td>
                     <td className="px-3 py-2 text-sm text-black whitespace-nowrap">{requesterLabel}</td>
                     <td className="px-3 py-2 text-sm text-black whitespace-nowrap">{r.requester_role ?? "—"}</td>
-                    <td className="px-3 py-2 text-sm text-black whitespace-nowrap">{r.requested_module_key}</td>
+                    <td className="px-3 py-2 text-sm text-black whitespace-nowrap">{formatRequestedModuleLabel(r.requested_module_key)}</td>
                     <td className="px-3 py-2 text-xs text-black whitespace-nowrap">{scopeLabel}</td>
                     <td className="px-3 py-2 text-xs text-black whitespace-nowrap">{columnsLabel || "—"}</td>
                     <td className="px-3 py-2 text-xs text-black whitespace-nowrap">{personLabel}</td>

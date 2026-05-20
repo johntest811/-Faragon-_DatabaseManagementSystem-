@@ -12,6 +12,7 @@ import EmployeeExcelImportModal from "../../Components/EmployeeExcelImportModal"
 import LoadingCircle from "../../Components/LoadingCircle";
 import TableZoomWrapper from "@/app/Components/TableZoomWrapper";
 import ImportSummaryModal, { ImportSummaryData } from "../Components/ImportSummaryModal";
+import DetachmentHistoryPopover from "../Components/DetachmentHistoryPopover";
 import EmployeeStatusMenu from "../Components/EmployeeStatusMenu";
 import { buildEmployeeStatusUpdatePatch } from "../employeeListData";
 import { addBrandedPdfHeader, buildBrandedWorkbookBuffer } from "../Components/exportBranding";
@@ -41,16 +42,17 @@ const BUCKETS = {
 	profile: "applicants",
 };
 
-const STATUS_FILTERS = ["ALL", "APPLICANT", "ACTIVE", "INACTIVE", "REASSIGN", "RESIGNED", "RETIRED"] as const;
+const STATUS_FILTERS = ["ALL", "APPLICANT", "ACTIVE", "INACTIVE", "AWOL", "RESIGNED", "RETIRED"] as const;
 
 type StatusFilter = (typeof STATUS_FILTERS)[number];
 
 function normalizeStatus(input: string | null) {
 	const v = (input ?? "").trim().toUpperCase();
 	if (!v) return "ACTIVE";
-	if (v === "ACTIVE" || v === "APPLICANT" || v === "INACTIVE" || v === "REASSIGN" || v === "RETIRED" || v === "RESIGNED") {
+	if (v === "ACTIVE" || v === "APPLICANT" || v === "INACTIVE" || v === "AWOL" || v === "RETIRED" || v === "RESIGNED") {
 		return v;
 	}
+	if (v === "REASSIGN") return "AWOL";
 	return "ACTIVE";
 }
 
@@ -87,7 +89,7 @@ function badgeClass(status: string) {
 			return "bg-sky-500 text-white";
 		case "INACTIVE":
 			return "bg-slate-700 text-white";
-		case "REASSIGN":
+		case "AWOL":
 			return "bg-amber-500 text-white";
 		case "RESIGNED":
 			return "bg-rose-500 text-white";
@@ -487,8 +489,17 @@ export default function ApplicantsPage() {
 										<div className="mt-1 text-xs text-gray-500 truncate">
 											<span className="text-gray-500">Position:</span> {row.client_position ?? "—"}
 										</div>
-										<div className="text-xs text-gray-500 truncate">
-											<span className="text-gray-500">Detachment:</span> {row.detachment ?? "—"}
+										<div className="text-xs text-gray-500 min-w-0">
+											<div className="flex min-w-0 items-center gap-1">
+												<span className="shrink-0 text-gray-500">Detachment:</span>
+												<DetachmentHistoryPopover
+													applicantId={row.applicant_id}
+													currentDetachment={row.detachment}
+													detailsHref={detailsHref}
+													textClassName="text-gray-500"
+													buttonClassName="px-1.5 py-0.5"
+												/>
+											</div>
 										</div>
 									</div>
 								</div>
@@ -574,7 +585,14 @@ export default function ApplicantsPage() {
 											</td>
 											<td className="px-4 py-3 font-semibold">{name}</td>
 											<td className="px-4 py-3">{row.client_position ?? "—"}</td>
-											<td className="px-4 py-3">{row.detachment ?? "—"}</td>
+											<td className="px-4 py-3">
+												<DetachmentHistoryPopover
+													applicantId={row.applicant_id}
+													currentDetachment={row.detachment}
+													detailsHref={detailsHref}
+													textClassName="text-black"
+												/>
+											</td>
 											<td className="px-4 py-3">
 												{canEditApplicants ? (
 													<EmployeeStatusMenu

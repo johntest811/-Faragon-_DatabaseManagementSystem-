@@ -104,8 +104,8 @@ export const MODULE_CATALOG: ModuleCatalogItem[] = [
   },
   {
     moduleKey: "reassign",
-    displayName: "Reassigned",
-    path: "/Main_Modules/Reassign/",
+    displayName: "AWOL",
+    path: "/Main_Modules/AWOL/",
     group: "workforce",
     columns: ["applicant_id", "first_name", "last_name", "detachment", "status", "updated_at"],
   },
@@ -204,6 +204,20 @@ export const MODULE_CATALOG: ModuleCatalogItem[] = [
       "days_before_expiry",
       "notes",
     ],
+  },
+  {
+    moduleKey: "preview_service_anniversary",
+    displayName: "Preview (1+ year of service)",
+    path: "/Main_Modules/Employees/",
+    group: "system",
+    columns: [],
+  },
+  {
+    moduleKey: "expiring_licenses_records",
+    displayName: "Expiring Licenses and Records",
+    path: "/Main_Modules/Employees/",
+    group: "system",
+    columns: [],
   },
   {
     moduleKey: "requests",

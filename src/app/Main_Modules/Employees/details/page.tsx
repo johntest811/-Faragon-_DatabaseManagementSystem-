@@ -22,6 +22,7 @@ import { supabase } from "../../../Client/SupabaseClients";
 import { useMyApplicantColumnAccess, useMyApplicantRowAccess, useMyColumnAccess, useMyModuleEditAccess } from "../../../Client/useRbac";
 import EmployeeEditorModal from "../../../Components/EmployeeEditorModal";
 import LoadingCircle from "../../../Components/LoadingCircle";
+import DetachmentHistoryPopover from "../../Components/DetachmentHistoryPopover";
 
 type Applicant = {
   applicant_id: string;
@@ -126,6 +127,32 @@ function formatDate(value: string | null) {
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return value;
   return d.toLocaleDateString();
+}
+
+function normalizeEmployeeStatus(input: string | null) {
+  const value = String(input ?? "").trim().toUpperCase();
+  if (!value) return "ACTIVE";
+  if (value === "REASSIGN") return "AWOL";
+  return value;
+}
+
+function statusBadgeClass(status: string) {
+  switch (status) {
+    case "ACTIVE":
+      return "bg-emerald-500 text-white";
+    case "APPLICANT":
+      return "bg-sky-500 text-white";
+    case "INACTIVE":
+      return "bg-slate-700 text-white";
+    case "AWOL":
+      return "bg-amber-500 text-white";
+    case "RESIGNED":
+      return "bg-rose-500 text-white";
+    case "RETIRED":
+      return "bg-zinc-700 text-white";
+    default:
+      return "bg-gray-700 text-white";
+  }
 }
 
 function startOfDay(d: Date) {
@@ -412,6 +439,7 @@ function EmployeeDetailsInner() {
     () => formatServiceLength(applicant?.date_hired_fsai ?? null, now),
     [applicant?.date_hired_fsai, now]
   );
+  const currentStatus = useMemo(() => normalizeEmployeeStatus(applicant?.status ?? null), [applicant?.status]);
 
   useEffect(() => {
     const run = async () => {
@@ -549,7 +577,17 @@ function EmployeeDetailsInner() {
       )
       .on(
         "postgres_changes",
+        { event: "*", schema: "public", table: "employment_history" },
+        () => run()
+      )
+      .on(
+        "postgres_changes",
         { event: "*", schema: "public", table: "licensure" },
+        () => run()
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "applicant_other_documents" },
         () => run()
       )
       .subscribe();
@@ -730,31 +768,44 @@ function EmployeeDetailsInner() {
                 {applicant.applicant_id.slice(0, 8).toUpperCase()}
               </span>
               {showStatus ? (
-                <span className="px-3 py-1 rounded-full bg-emerald-500 text-white text-xs font-bold">
-                  {applicant.status ?? "ACTIVE"}
+                <span className={`px-3 py-1 rounded-full text-xs font-bold ${statusBadgeClass(currentStatus)}`}>
+                  {currentStatus}
                 </span>
               ) : null}
             </div>
 
             <div className="mt-4 w-full border rounded-2xl overflow-hidden">
-              <div className="grid grid-cols-2 text-sm">
-                  <div className="px-4 py-3 text-gray-500">{detailLabel} Status</div>
-                <div className="px-4 py-3 font-semibold text-gray-900 text-right">Full-time</div>
-              </div>
+              {showStatus ? (
+                <div className="grid grid-cols-2 text-sm">
+                  <div className="px-4 py-3 text-gray-500">Status</div>
+                  <div className="px-4 py-3 text-right">
+                    <span className={`inline-flex rounded-full px-3 py-1 text-xs font-bold ${statusBadgeClass(currentStatus)}`}>
+                      {currentStatus}
+                    </span>
+                  </div>
+                </div>
+              ) : null}
               {showDetachment ? (
                 <>
-                  <div className="h-px bg-gray-100" />
+                  {showStatus ? <div className="h-px bg-gray-100" /> : null}
                   <div className="grid grid-cols-2 text-sm">
                     <div className="px-4 py-3 text-gray-500">Detachment</div>
                     <div className="px-4 py-3 font-semibold text-gray-900 text-right">
-                      {applicant.detachment ?? "—"}
+                      <div className="flex justify-end">
+                        <DetachmentHistoryPopover
+                          applicantId={applicant.applicant_id}
+                          currentDetachment={applicant.detachment}
+                          textClassName="text-sm font-semibold text-gray-900"
+                          buttonClassName="text-[10px]"
+                        />
+                      </div>
                     </div>
                   </div>
                 </>
               ) : null}
               {showHiredDate ? (
                 <>
-                  <div className="h-px bg-gray-100" />
+                  {showStatus || showDetachment ? <div className="h-px bg-gray-100" /> : null}
                   <div className="grid grid-cols-2 text-sm">
                     <div className="px-4 py-3 text-gray-500">Join Date</div>
                     <div className="px-4 py-3 font-semibold text-gray-900 text-right">
@@ -1046,3 +1097,5 @@ export default function EmployeeDetailsPage() {
     </Suspense>
   );
 }
+
+

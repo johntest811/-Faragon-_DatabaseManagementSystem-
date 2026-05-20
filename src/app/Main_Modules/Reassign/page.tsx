@@ -8,6 +8,7 @@ import { useAuthRole, useMyModuleDeleteAccess } from "../../Client/useRbac";
 import EmployeeEditorModal from "../../Components/EmployeeEditorModal";
 import LoadingCircle from "../../Components/LoadingCircle";
 import TableZoomWrapper from "@/app/Components/TableZoomWrapper";
+import DetachmentHistoryPopover from "../Components/DetachmentHistoryPopover";
 import EmployeeStatusMenu from "../Components/EmployeeStatusMenu";
 import { buildEmployeeStatusUpdatePatch } from "../employeeListData";
 import jsPDF from "jspdf";
@@ -57,7 +58,8 @@ function shortCode(id: string) {
 function normalizeStatus(input: string | null) {
   const v = (input ?? "").trim().toUpperCase();
   if (!v) return "ACTIVE";
-  if (v === "ACTIVE" || v === "APPLICANT" || v === "INACTIVE" || v === "REASSIGN" || v === "RETIRED" || v === "RESIGNED") return v;
+  if (v === "ACTIVE" || v === "APPLICANT" || v === "INACTIVE" || v === "AWOL" || v === "RETIRED" || v === "RESIGNED") return v;
+  if (v === "REASSIGN") return "AWOL";
   return "ACTIVE";
 }
 
@@ -218,7 +220,7 @@ export default function ReassignPage() {
   const [exportOpen, setExportOpen] = useState(false);
   const [exportMonth, setExportMonth] = useState("ALL"); // MM
   const [exportWeek, setExportWeek] = useState("ALL"); // 1..5
-  const [exportTitle, setExportTitle] = useState("Reassign (1+ year of service)");
+  const [exportTitle, setExportTitle] = useState("AWOL (1+ year of service)");
 
   async function fetchEmployees() {
     const fetchRunId = ++fetchRunIdRef.current;
@@ -237,7 +239,7 @@ export default function ReassignPage() {
 
       if (fetchError) {
         console.error(fetchError);
-        setError(fetchError.message || "Failed to load Reassign list");
+        setError(fetchError.message || "Failed to load AWOL list");
         setEmployees([]);
       } else {
         const list = (data as Applicant[]) || [];
@@ -249,7 +251,7 @@ export default function ReassignPage() {
   }
 
   const exportSourceEmployees = useMemo(
-    () => employees.filter((e) => normalizeStatus(e.status) === "REASSIGN"),
+    () => employees.filter((e) => normalizeStatus(e.status) === "AWOL"),
     [employees]
   );
 
@@ -279,7 +281,7 @@ export default function ReassignPage() {
   }
 
   function exportFileBase() {
-    const parts = ["reassign", "min1yr"];
+    const parts = ["awol", "min1yr"];
     if (exportMonth !== "ALL") parts.push(`m${exportMonth}`);
     if (exportWeek !== "ALL") parts.push(`w${exportWeek}`);
     parts.push(new Date().toISOString().slice(0, 10));
@@ -293,7 +295,7 @@ export default function ReassignPage() {
       setError("No employees match the export criteria (must be 1+ year of service).");
       return;
     }
-    const title = exportTitle.trim() || "Reassign (1+ year of service)";
+    const title = exportTitle.trim() || "AWOL (1+ year of service)";
     const now = new Date();
     const data = rows.map((e) => ({
       Name: getFullName(e),
@@ -308,7 +310,7 @@ export default function ReassignPage() {
 
     const out = await buildBrandedWorkbookBuffer([
       {
-        name: "Reassign",
+        name: "AWOL",
         title,
         subtitle: `Generated: ${new Date().toLocaleString()}`,
         rows: data,
@@ -328,7 +330,7 @@ export default function ReassignPage() {
       setError("No employees match the export criteria (must be 1+ year of service).");
       return;
     }
-    const title = exportTitle.trim() || "Reassign (1+ year of service)";
+    const title = exportTitle.trim() || "AWOL (1+ year of service)";
     const now = new Date();
     const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
     const startY = await addBrandedPdfHeader(doc, title, "Generated export of employees with 1+ year of service");
@@ -388,7 +390,7 @@ export default function ReassignPage() {
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
 
-    let list = employees.filter((e) => normalizeStatus(e.status) === "REASSIGN");
+    let list = employees.filter((e) => normalizeStatus(e.status) === "AWOL");
 
     if (genderFilter !== "ALL") {
       const gf = genderFilter.trim().toUpperCase();
@@ -530,7 +532,7 @@ export default function ReassignPage() {
         <input
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search reassign employees"
+          placeholder="Search AWOL employees"
           className="bg-white border rounded-full pl-10 pr-4 py-2 shadow-sm w-full"
         />
       </div>
@@ -605,7 +607,7 @@ export default function ReassignPage() {
           <LoadingCircle label="Loading employees..." />
         </div>
       ) : filtered.length === 0 ? (
-        <div className="glass-panel animate-slide-up rounded-2xl p-8 text-center text-gray-500">No employees in Reassign.</div>
+        <div className="glass-panel animate-slide-up rounded-2xl p-8 text-center text-gray-500">No employees in AWOL.</div>
       ) : viewMode === "table" ? (
     <TableZoomWrapper storageKey="reassign">
     <div className="relative overflow-x-auto rounded-2xl glass-panel animate-slide-up">
@@ -629,7 +631,7 @@ export default function ReassignPage() {
             const canClick = sessionRole !== "employee";
             const detailsHref = `/Main_Modules/Employees/details/?id=${encodeURIComponent(
               e.applicant_id
-            )}&from=${encodeURIComponent("/Main_Modules/Reassign/")}`;
+            )}&from=${encodeURIComponent("/Main_Modules/AWOL/")}`;
 
             return (
               <tr
@@ -657,12 +659,19 @@ export default function ReassignPage() {
                 <td className="px-4 py-3 font-semibold">{getFullName(e)}</td>
                 <td className="px-4 py-3">{e.client_position ?? "—"}</td>
                 <td className="px-4 py-3">{e.date_hired_fsai ? new Date(e.date_hired_fsai).toLocaleDateString() : "—"}</td>
-                <td className="px-4 py-3">{e.detachment ?? "—"}</td>
+                <td className="px-4 py-3">
+                  <DetachmentHistoryPopover
+                    applicantId={e.applicant_id}
+                    currentDetachment={e.detachment}
+                    detailsHref={detailsHref}
+                    textClassName="text-black"
+                  />
+                </td>
                 <td className="px-4 py-3">
                   {sessionRole !== "employee" ? (
                     <EmployeeStatusMenu value={normalizeStatus(e.status)} onChange={(nextStatus) => void updateEmployeeStatus(e, nextStatus)} />
                   ) : (
-                    <span className="px-3 py-1 rounded-full text-xs font-bold bg-orange-500 text-white">REASSIGN</span>
+                    <span className="px-3 py-1 rounded-full text-xs font-bold bg-orange-500 text-white">AWOL</span>
                   )}
                 </td>
                 {sessionRole !== "employee" ? (
@@ -717,7 +726,7 @@ export default function ReassignPage() {
             const name = getFullName(e);
             const profileUrl = getProfileUrl(e.profile_image_path);
             const detailsHref = `/Main_Modules/Employees/details/?id=${encodeURIComponent(e.applicant_id)}&from=${encodeURIComponent(
-              "/Main_Modules/Reassign/"
+              "/Main_Modules/AWOL/"
             )}`;
 
             return (
@@ -754,8 +763,17 @@ export default function ReassignPage() {
                     <div className="mt-1 text-xs text-gray-500 truncate">
                       <span className="text-gray-500">Job Title:</span> {e.client_position ?? "—"}
                     </div>
-                    <div className="text-xs text-gray-500 truncate">
-                      <span className="text-gray-500">Detachment:</span> {e.detachment ?? "—"}
+                    <div className="text-xs text-gray-500 min-w-0">
+                      <div className="flex min-w-0 items-center gap-1">
+                        <span className="shrink-0 text-gray-500">Detachment:</span>
+                        <DetachmentHistoryPopover
+                          applicantId={e.applicant_id}
+                          currentDetachment={e.detachment}
+                          detailsHref={detailsHref}
+                          textClassName="text-gray-500"
+                          buttonClassName="px-1.5 py-0.5"
+                        />
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -765,7 +783,7 @@ export default function ReassignPage() {
                     {sessionRole !== "employee" ? (
                       <EmployeeStatusMenu value={normalizeStatus(e.status)} onChange={(nextStatus) => void updateEmployeeStatus(e, nextStatus)} />
                     ) : (
-                      <span className="px-3 py-1 rounded-full text-xs font-bold bg-orange-500 text-white">REASSIGN</span>
+                      <span className="px-3 py-1 rounded-full text-xs font-bold bg-orange-500 text-white">AWOL</span>
                     )}
                   </div>
 
@@ -841,7 +859,7 @@ export default function ReassignPage() {
                   value={exportTitle}
                   onChange={(e) => setExportTitle(e.target.value)}
                   className="w-full border rounded-xl px-3 py-2 bg-white"
-                  placeholder="Reassign (1+ year of service)"
+                  placeholder="AWOL (1+ year of service)"
                 />
               </label>
 

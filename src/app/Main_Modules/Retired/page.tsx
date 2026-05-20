@@ -8,6 +8,7 @@ import { useAuthRole, useMyModuleDeleteAccess } from "../../Client/useRbac";
 import EmployeeEditorModal from "../../Components/EmployeeEditorModal";
 import LoadingCircle from "../../Components/LoadingCircle";
 import TableZoomWrapper from "@/app/Components/TableZoomWrapper";
+import DetachmentHistoryPopover from "../Components/DetachmentHistoryPopover";
 import EmployeeStatusMenu from "../Components/EmployeeStatusMenu";
 import { buildEmployeeStatusUpdatePatch } from "../employeeListData";
 import { useLiveNow } from "../../Client/useLiveNow";
@@ -55,7 +56,8 @@ function shortCode(id: string) {
 function normalizeStatus(input: string | null) {
   const v = (input ?? "").trim().toUpperCase();
   if (!v) return "ACTIVE";
-  if (v === "ACTIVE" || v === "APPLICANT" || v === "INACTIVE" || v === "REASSIGN" || v === "RETIRED" || v === "RESIGNED") return v;
+  if (v === "ACTIVE" || v === "APPLICANT" || v === "INACTIVE" || v === "AWOL" || v === "RETIRED" || v === "RESIGNED") return v;
+  if (v === "REASSIGN") return "AWOL";
   return "ACTIVE";
 }
 
@@ -512,7 +514,14 @@ export default function RetiredPage() {
                     "—"
                   )}
                 </td>
-                <td className="px-4 py-3">{e.detachment ?? "—"}</td>
+                <td className="px-4 py-3">
+                  <DetachmentHistoryPopover
+                    applicantId={e.applicant_id}
+                    currentDetachment={e.detachment}
+                    detailsHref={detailsHref}
+                    textClassName="text-black"
+                  />
+                </td>
                 <td className="px-4 py-3">
                   {sessionRole !== "employee" && canDeleteRetired ? (
                     <EmployeeStatusMenu value={normalizeStatus(e.status)} onChange={(nextStatus) => void updateEmployeeStatus(e, nextStatus)} />
@@ -609,8 +618,17 @@ export default function RetiredPage() {
                     <div className="mt-1 text-xs text-gray-500 truncate">
                       <span className="text-gray-500">Job Title:</span> {e.client_position ?? "—"}
                     </div>
-                    <div className="text-xs text-gray-500 truncate">
-                      <span className="text-gray-500">Detachment:</span> {e.detachment ?? "—"}
+                    <div className="text-xs text-gray-500 min-w-0">
+                      <div className="flex min-w-0 items-center gap-1">
+                        <span className="shrink-0 text-gray-500">Detachment:</span>
+                        <DetachmentHistoryPopover
+                          applicantId={e.applicant_id}
+                          currentDetachment={e.detachment}
+                          detailsHref={detailsHref}
+                          textClassName="text-gray-500"
+                          buttonClassName="px-1.5 py-0.5"
+                        />
+                      </div>
                     </div>
                   </div>
                 </div>

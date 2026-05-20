@@ -283,7 +283,7 @@ function normalizeStatus(value: string | null | undefined) {
   const v = String(value ?? "").trim().toUpperCase();
   if (v === "APPLICANT") return "APPLICANT";
   if (v === "INACTIVE") return "INACTIVE";
-  if (v === "REASSIGN") return "REASSIGN";
+  if (v === "AWOL" || v === "REASSIGN") return "AWOL";
   if (v === "RETIRED") return "RETIRED";
   if (v === "RESIGNED") return "RESIGNED";
   return "ACTIVE";
@@ -994,8 +994,8 @@ export default function EmployeeEditorModal({
         onSaved?.(newId, nextStatus);
         onClose();
 
-        if (nextStatus === "REASSIGN") {
-          router.push("/Main_Modules/Reassign/");
+        if (nextStatus === "AWOL") {
+          router.push("/Main_Modules/AWOL/");
         } else if (nextStatus === "RESIGNED") {
           router.push("/Main_Modules/Resigned/");
         } else if (nextStatus === "RETIRED") {
@@ -1134,8 +1134,8 @@ export default function EmployeeEditorModal({
       onSaved?.(effectiveId, nextStatus);
       onClose();
 
-      if (nextStatus === "REASSIGN") {
-        router.push("/Main_Modules/Reassign/");
+      if (nextStatus === "AWOL") {
+        router.push("/Main_Modules/AWOL/");
       } else if (nextStatus === "RESIGNED") {
         router.push("/Main_Modules/Resigned/");
       } else if (nextStatus === "RETIRED") {
@@ -1484,7 +1484,7 @@ export default function EmployeeEditorModal({
                           ? "border-sky-300"
                           : normalizeStatus(app.status) === "INACTIVE"
                           ? "border-red-300"
-                          : normalizeStatus(app.status) === "REASSIGN"
+                          : normalizeStatus(app.status) === "AWOL"
                           ? "border-orange-300"
                           : normalizeStatus(app.status) === "RESIGNED"
                           ? "border-orange-300"
@@ -1494,7 +1494,7 @@ export default function EmployeeEditorModal({
                       <option value="ACTIVE">ACTIVE</option>
                       <option value="APPLICANT">APPLICANT</option>
                       <option value="INACTIVE">INACTIVE</option>
-                      <option value="REASSIGN">REASSIGN</option>
+                      <option value="AWOL">AWOL</option>
                       <option value="RESIGNED">RESIGNED</option>
                       <option value="RETIRED">RETIRED</option>
                     </select>
@@ -1506,7 +1506,7 @@ export default function EmployeeEditorModal({
                           ? "bg-sky-500"
                           : normalizeStatus(app.status) === "INACTIVE"
                           ? "bg-red-500"
-                          : normalizeStatus(app.status) === "REASSIGN"
+                          : normalizeStatus(app.status) === "AWOL"
                           ? "bg-orange-500"
                           : normalizeStatus(app.status) === "RESIGNED"
                           ? "bg-orange-500"

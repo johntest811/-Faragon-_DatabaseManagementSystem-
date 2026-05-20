@@ -29,7 +29,6 @@ import {
   Package,
   FileText,
   ClipboardCheck,
-  CircleAlert,
   KeyRound,
   Sparkles,
 } from "lucide-react";
@@ -352,11 +351,11 @@ function pageMetaForPath(pathname: string): PageMeta {
       },
     },
     {
-      test: (value) => value.startsWith("/Main_Modules/Reassign"),
+      test: (value) => value.startsWith("/Main_Modules/AWOL") || value.startsWith("/Main_Modules/Reassign"),
       meta: {
-        title: "Reassign",
-        description: "Move records to the right owner with clear workflow context.",
-        badge: "Transfer",
+        title: "AWOL",
+        description: "Track personnel marked AWOL and manage follow-up actions from one workspace.",
+        badge: "Attendance",
         icon: Repeat2,
       },
     },
@@ -438,7 +437,7 @@ const ALL_MENU = [
   { key: "client", name: "Client", href: "/Main_Modules/Client/", icon: CreditCard },
   { key: "applicants", name: "Applicant", href: "/Main_Modules/Applicants/", icon: Users },
   { key: "employees", name: "Employees", href: "/Main_Modules/Employees/", icon: Users },
-  { key: "reassign", name: "Reassigned", href: "/Main_Modules/Reassign/", icon: Repeat2 },
+  { key: "reassign", name: "AWOL", href: "/Main_Modules/AWOL/", icon: Repeat2 },
   { key: "resigned", name: "Resigned", href: "/Main_Modules/Resigned/", icon: UserMinus },
   { key: "retired", name: "Retired", href: "/Main_Modules/Retired/", icon: UserX },
   { key: "archive", name: "Archive", href: "/Main_Modules/Archive/", icon: Archive },
@@ -468,7 +467,9 @@ type ModuleKey =
   | "settings"
   | "access"
   | "logistics"
-  | "car_insurance_expiration";
+  | "car_insurance_expiration"
+  | "preview_service_anniversary"
+  | "expiring_licenses_records";
 
 type AccessRequirement =
   | { kind: "module"; moduleKey: ModuleKey }
@@ -494,7 +495,9 @@ function accessRequirementForPath(pathname: string): AccessRequirement | null {
   if (p.startsWith("/Main_Modules/Dashboard/")) return { kind: "module", moduleKey: "dashboard" };
   if (p.startsWith("/Main_Modules/Applicants/")) return { kind: "module", moduleKey: "applicants" };
   if (p.startsWith("/Main_Modules/Employees/")) return { kind: "module", moduleKey: "employees" };
-  if (p.startsWith("/Main_Modules/Reassign/")) return { kind: "module", moduleKey: "reassign" };
+  if (p.startsWith("/Main_Modules/AWOL/") || p.startsWith("/Main_Modules/Reassign/")) {
+    return { kind: "module", moduleKey: "reassign" };
+  }
   if (p.startsWith("/Main_Modules/Resigned/")) return { kind: "module", moduleKey: "resigned" };
   if (p.startsWith("/Main_Modules/Retired/")) return { kind: "module", moduleKey: "retired" };
   if (p.startsWith("/Main_Modules/Archive/")) return { kind: "module", moduleKey: "archive" };
@@ -515,6 +518,13 @@ function accessRequirementForPath(pathname: string): AccessRequirement | null {
 
   // Unknown route inside Main_Modules: let the existing behavior handle it.
   return null;
+}
+
+function normalizeMenuPath(pathname: string) {
+  if (pathname.startsWith("/Main_Modules/Reassign/")) {
+    return pathname.replace("/Main_Modules/Reassign/", "/Main_Modules/AWOL/");
+  }
+  return pathname;
 }
 
 function titleFromPath(pathname: string) {
@@ -588,7 +598,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
   const [previewOpen, setPreviewOpen] = useState(false);
   const [expiringOpen, setExpiringOpen] = useState(false);
   const [carInsuranceExpiringOpen, setCarInsuranceExpiringOpen] = useState(false);
-  const [adminAlertOpen, setAdminAlertOpen] = useState(false);
+  const [, setAdminAlertOpen] = useState(false);
   const [activityCount, setActivityCount] = useState(0);
   const [activityMissingTable, setActivityMissingTable] = useState(false);
   const [resendingKey, setResendingKey] = useState<string | null>(null);
@@ -671,6 +681,13 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
   );
   const { role: sessionRole } = useAuthRole();
   const { modules: myModules } = useMyModules();
+  const grantedModuleKeys = useMemo(
+    () => new Set(myModules.map((module) => String(module.module_key ?? "").trim().toLowerCase()).filter(Boolean)),
+    [myModules]
+  );
+  const canViewPreviewWidget = sessionRole === "superadmin" || grantedModuleKeys.has("preview_service_anniversary");
+  const canViewExpiringWidget = sessionRole === "superadmin" || grantedModuleKeys.has("expiring_licenses_records");
+  const canViewCarInsuranceWidget = sessionRole === "superadmin" || grantedModuleKeys.has("car_insurance_expiration");
 
   const applyVisibleExpiringRows = useCallback((rows: ExpiringSummaryRow[]) => {
     setExpiringRows(rows);
@@ -892,7 +909,19 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
     return () => document.removeEventListener("mousedown", onDocDown);
   }, []);
 
+  useEffect(() => {
+    if (!canViewExpiringWidget) setExpiringOpen(false);
+    if (!canViewCarInsuranceWidget) setCarInsuranceExpiringOpen(false);
+    if (!canViewPreviewWidget) setPreviewOpen(false);
+  }, [canViewCarInsuranceWidget, canViewExpiringWidget, canViewPreviewWidget]);
+
   const refreshPreview = useCallback(async () => {
+    if (!canViewPreviewWidget) {
+      setPreviewRows([]);
+      setPreviewCount(0);
+      return;
+    }
+
     try {
       const now = new Date();
       const threshold = new Date(now);
@@ -929,7 +958,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
       for (const r of data) {
         const years = serviceYearsExact(r.date_hired_fsai, now);
         const s = String(r.status ?? "").trim().toUpperCase();
-        const excluded = s === "REASSIGN" || s === "RETIRED" || s === "RESIGNED";
+        const excluded = s === "AWOL" || s === "REASSIGN" || s === "RETIRED" || s === "RESIGNED";
         if (excluded) continue;
         if (years == null || years < 1) continue;
         rows.push({
@@ -948,7 +977,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
       setPreviewRows([]);
       setPreviewCount(0);
     }
-  }, []);
+  }, [canViewPreviewWidget]);
 
   const refreshActivity = useCallback(async () => {
     if (!api?.audit?.getRecent) return;
@@ -974,11 +1003,21 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
   }, [api]);
 
   const refreshExpiring = useCallback(async () => {
+    if (!canViewExpiringWidget && !canViewCarInsuranceWidget) {
+      applyVisibleExpiringRows([]);
+      setExpiringEmailByApplicantId({});
+      return;
+    }
+
     if (!api?.notifications?.getExpiringSummary) return;
     try {
       await refreshNotificationPrefs();
       const res = await api.notifications.getExpiringSummary({ limit: 100 });
-      const sortedRows = [...(res?.rows ?? [])].sort((a, b) => {
+      const permittedRows = [...(res?.rows ?? [])].filter((row) => {
+        if (isCarInsuranceExpiringRow(row)) return canViewCarInsuranceWidget;
+        return canViewExpiringWidget;
+      });
+      const sortedRows = permittedRows.sort((a, b) => {
         const toMs = (value: unknown) => {
           const d = new Date(String(value ?? ""));
           const t = d.getTime();
@@ -1003,7 +1042,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
       applyVisibleExpiringRows(visibleRows);
 
       try {
-        const allRows = (res?.rows ?? []);
+        const allRows = permittedRows;
         const map: Record<string, string | null> = {};
 
         for (const row of allRows) {
@@ -1044,7 +1083,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
     } catch {
       // ignore
     }
-  }, [api, applyVisibleExpiringRows, refreshNotificationPrefs]);
+  }, [api, applyVisibleExpiringRows, canViewCarInsuranceWidget, canViewExpiringWidget, refreshNotificationPrefs]);
 
   const clearExpiringNotifications = useCallback(async (rowsToClear: ExpiringSummaryRow[], label: string) => {
     if (!rowsToClear.length) return;
@@ -1139,14 +1178,14 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
 
   const menuActivePath = useMemo(() => {
     const isDetails = pathname.startsWith("/Main_Modules/Employees/details");
-    if (!isDetails) return pathname;
+    if (!isDetails) return normalizeMenuPath(pathname);
 
     const from = fromParam;
-    if (from && from.startsWith("/Main_Modules/")) return from;
+    if (from && from.startsWith("/Main_Modules/")) return normalizeMenuPath(from);
 
     try {
       const last = sessionStorage.getItem("lastModulePath");
-      if (last && last.startsWith("/Main_Modules/")) return last;
+      if (last && last.startsWith("/Main_Modules/")) return normalizeMenuPath(last);
     } catch {
       // ignore
     }
@@ -1160,7 +1199,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
     if (!pathname) return;
     if (pathname.startsWith("/Main_Modules/Employees/details")) return;
     try {
-      sessionStorage.setItem("lastModulePath", pathname);
+      sessionStorage.setItem("lastModulePath", normalizeMenuPath(pathname));
     } catch {
       // ignore
     }
@@ -1854,6 +1893,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
                   ) : null}
                 </div>
 
+                {canViewExpiringWidget ? (
                 <div className="relative" data-expiring-menu>
                   <button
                     type="button"
@@ -2015,7 +2055,9 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
                     </div>
                   ) : null}
                 </div>
+                ) : null}
 
+                {canViewCarInsuranceWidget ? (
                 <div className="relative" data-car-insurance-expiring-menu>
                   <button
                     type="button"
@@ -2133,7 +2175,9 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
                     </div>
                   ) : null}
                 </div>
+                ) : null}
 
+                {canViewPreviewWidget ? (
                 <div className="relative" data-preview-menu>
                   <button
                     type="button"
@@ -2216,6 +2260,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
                     </div>
                   ) : null}
                 </div>
+                ) : null}
 
                 {/* <button
                   type="button"
@@ -2224,106 +2269,6 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
                 >
                   <Settings className="w-5 h-5" />
                 </button> */}
-
-                <div className="relative" data-admin-alert-menu>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setAdminAlertOpen((v) => !v);
-                      setActivityOpen(false);
-                      setPreviewOpen(false);
-                      setExpiringOpen(false);
-                      setCarInsuranceExpiringOpen(false);
-                    }}
-                    className="relative h-10 w-10 rounded-xl bg-[#FFDA03] text-black flex items-center justify-center"
-                    aria-label="Admin Alerts"
-                  >
-                    <CircleAlert className="w-5 h-5" />
-                    {(activityCount + expiringCount + carInsuranceExpiringCount) > 0 ? (
-                      <span
-                        className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-red-600 text-white text-[10px] font-bold leading-[18px] text-center shadow"
-                        aria-label={`Admin alerts count ${activityCount + expiringCount + carInsuranceExpiringCount}`}
-                      >
-                        {badgeText(activityCount + expiringCount + carInsuranceExpiringCount)}
-                      </span>
-                    ) : null}
-                  </button>
-
-                  {adminAlertOpen ? (
-                    <div className="absolute right-0 mt-2 w-[340px] max-w-[90vw] rounded-2xl border bg-white shadow-lg overflow-hidden z-50">
-                      <div className="px-4 py-3 border-b">
-                        <div className="text-sm font-semibold text-black">Admin Alert Center</div>
-                        <div className="text-xs text-black">Quick actions for pending admin work.</div>
-                      </div>
-
-                      <div className="p-4 space-y-3">
-                        <div className="rounded-xl border bg-white border-[#FFDA03] px-3 py-2 flex items-center justify-between">
-                          <div>
-                            <div className="text-xs text-black">Unread Activity</div>
-                            <div className="text-sm font-semibold text-black">{activityCount}</div>
-                          </div>
-                          <button
-                            type="button"
-                            className="text-xs px-3 py-1.5 rounded-lg border bg-[#FFDA03] text-black hover:bg-[#EFCB00]"
-                            onClick={() => {
-                              setAdminAlertOpen(false);
-                              router.push("/Main_Modules/Audit/");
-                            }}
-                          >
-                            Open Audit
-                          </button>
-                        </div>
-
-                        <div className="rounded-xl border bg-white border-[#FFDA03] px-3 py-2 flex items-center justify-between">
-                          <div>
-                            <div className="text-xs text-black">Pending License Notices</div>
-                            <div className="text-sm font-semibold text-black">{expiringCount}</div>
-                          </div>
-                          <button
-                            type="button"
-                            className="text-xs px-3 py-1.5 rounded-lg border bg-[#FFDA03] text-black hover:bg-[#EFCB00]"
-                            onClick={() => {
-                              setAdminAlertOpen(false);
-                              router.push("/Main_Modules/Settings/");
-                            }}
-                          >
-                            Notification Settings
-                          </button>
-                        </div>
-
-                        <div className="rounded-xl border bg-white border-[#FFDA03] px-3 py-2 flex items-center justify-between">
-                          <div>
-                            <div className="text-xs text-black">Pending Car Insurance Notices</div>
-                            <div className="text-sm font-semibold text-black">{carInsuranceExpiringCount}</div>
-                          </div>
-                          <button
-                            type="button"
-                            className="text-xs px-3 py-1.5 rounded-lg border bg-[#FFDA03] text-black hover:bg-[#EFCB00]"
-                            onClick={() => {
-                              setAdminAlertOpen(false);
-                              router.push("/Main_Modules/Logistics/CarInsuranceExpiration/");
-                            }}
-                          >
-                            Open Module
-                          </button>
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-2">
-                          <button
-                            type="button"
-                            className="text-xs px-3 py-2 rounded-lg border bg-[#FFDA03] text-black hover:bg-[#EFCB00]"
-                            onClick={() => {
-                              setAdminAlertOpen(false);
-                              router.push("/Main_Modules/Inventory/");
-                            }}
-                          >
-                            Inventory
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  ) : null}
-                </div>
 
                 <div className="min-w-0 rounded-xl border border-gray-200 bg-white px-2 py-1.5 flex items-center gap-2">
                   <div className="h-10 w-10 rounded-xl overflow-hidden bg-gray-200 flex items-center justify-center shrink-0">

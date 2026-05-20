@@ -52,12 +52,13 @@ function normalizeEmployeeStatus(value: string | null | undefined) {
 		normalized === "ACTIVE" ||
 		normalized === "APPLICANT" ||
 		normalized === "INACTIVE" ||
-		normalized === "REASSIGN" ||
+		normalized === "AWOL" ||
 		normalized === "RETIRED" ||
 		normalized === "RESIGNED"
 	) {
 		return normalized;
 	}
+	if (normalized === "REASSIGN") return "AWOL";
 	return "ACTIVE";
 }
 

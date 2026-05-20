@@ -6,7 +6,7 @@ import { supabase } from "../../Client/SupabaseClients";
 import { useAuthRole } from "../../Client/useRbac";
 import { AccessTabs } from "../Components/AccessTabs";
 import { RoleDialog } from "./RoleDialog";
-import { PencilLine, Plus, Trash2, X } from "lucide-react";
+import { PencilLine, Plus, Trash2 } from "lucide-react";
 import TableZoomWrapper from "@/app/Components/TableZoomWrapper";
 import {
 	columnsForModule,
@@ -107,8 +107,6 @@ export default function RolesPage() {
 	const [roleSearch, setRoleSearch] = useState("");
 	const [moduleSearch, setModuleSearch] = useState("");
 
-	const [newRoleName, setNewRoleName] = useState("");
-	const [creatingRole, setCreatingRole] = useState(false);
 	const [roleDialogOpen, setRoleDialogOpen] = useState(false);
 	const [roleDialogMode, setRoleDialogMode] = useState<RoleDialogMode>("create");
 	const [roleDialogRoleId, setRoleDialogRoleId] = useState("");
@@ -259,21 +257,6 @@ export default function RolesPage() {
 		() => roles.find((r) => r.role_id === roleDialogRoleId) ?? null,
 		[roles, roleDialogRoleId]
 	);
-
-	async function createRole() {
-		setError("");
-		setSuccess("");
-		const name = newRoleName.trim().toLowerCase();
-		if (!name) return setError("Role name is required");
-		setCreatingRole(true);
-		const { error: insErr } = await supabase.from("app_roles").insert({ role_name: name });
-		setCreatingRole(false);
-		if (insErr) return setError(insErr.message);
-		setNewRoleName("");
-		setSuccess("Role created.");
-		logAudit("RBAC_CREATE_ROLE", { role_name: name });
-		load();
-	}
 
 	function openCreateRoleDialog() {
 		if (!canManage) return;

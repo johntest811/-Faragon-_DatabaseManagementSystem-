@@ -331,6 +331,18 @@ function normalizeRequestStatus(value: string | null | undefined) {
   return normalized || "PENDING";
 }
 
+function formatRequestedModuleLabel(value: string | null | undefined) {
+  const normalized = normalizeModuleKey(value);
+  if (normalized === "reassign") return "AWOL";
+
+  const raw = String(value ?? "").trim();
+  if (!raw) return "requested page";
+
+  return raw
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
 function isResolvedRequestStatus(value: string | null | undefined) {
   const normalized = normalizeRequestStatus(value);
   return normalized === "APPROVED" || normalized === "REJECTED";
@@ -654,7 +666,7 @@ function RequestsPageContent() {
           if (previousStatus === status) continue;
 
           notifiedResolvedStatusByRequestIdRef.current.set(rowId, status);
-          const moduleLabel = String(row.requested_module_key ?? "requested page").replace(/_/g, " ");
+          const moduleLabel = formatRequestedModuleLabel(row.requested_module_key);
           if (status === "APPROVED") {
             toast.success(`Your request for ${moduleLabel} was approved.`);
           } else {
@@ -729,7 +741,7 @@ function RequestsPageContent() {
                 const previousStatus = notifiedResolvedStatusByRequestIdRef.current.get(rowId);
                 if (previousStatus !== "APPROVED") {
                   notifiedResolvedStatusByRequestIdRef.current.set(rowId, "APPROVED");
-                  const moduleLabel = String(row.requested_module_key ?? "requested page").replace(/_/g, " ");
+                  const moduleLabel = formatRequestedModuleLabel(row.requested_module_key);
                   toast.success(`Your request for ${moduleLabel} was approved.`);
                 }
               }
@@ -738,7 +750,7 @@ function RequestsPageContent() {
                 const previousStatus = notifiedResolvedStatusByRequestIdRef.current.get(rowId);
                 if (previousStatus !== "REJECTED") {
                   notifiedResolvedStatusByRequestIdRef.current.set(rowId, "REJECTED");
-                  const moduleLabel = String(row.requested_module_key ?? "requested page").replace(/_/g, " ");
+                  const moduleLabel = formatRequestedModuleLabel(row.requested_module_key);
                   toast.error(`Your request for ${moduleLabel} was rejected.`);
                 }
               }
@@ -791,6 +803,7 @@ function RequestsPageContent() {
       .map((m) => ({
         ...m,
         module_key: normalizeModuleKey(m.module_key),
+        display_name: normalizeModuleKey(m.module_key) === "reassign" ? "AWOL" : m.display_name,
       }))
       .sort((a, b) => {
         const aOrder = orderMap.get(normalizeModuleKey(a.module_key)) ?? Number.MAX_SAFE_INTEGER;
@@ -1488,7 +1501,9 @@ function RequestsPageContent() {
                         </td>
                         <td className="px-3 py-2 text-sm text-black whitespace-nowrap">{requesterLabel}</td>
                         <td className="px-3 py-2 text-sm text-black whitespace-nowrap">{r.requester_role ?? "—"}</td>
-                        <td className="px-3 py-2 text-sm text-black whitespace-nowrap">{r.requested_module_key}</td>
+                        <td className="px-3 py-2 text-sm text-black whitespace-nowrap">
+                          {moduleLabelByKey.get(normalizeModuleKey(r.requested_module_key)) ?? formatRequestedModuleLabel(r.requested_module_key)}
+                        </td>
                         <td className="px-3 py-2 text-xs text-black whitespace-nowrap">{scopeLabel}</td>
                         <td className="px-3 py-2 text-xs text-black whitespace-nowrap">{columnsLabel || "—"}</td>
                         <td className="px-3 py-2 text-xs text-black whitespace-nowrap">{personLabel}</td>
@@ -1755,7 +1770,7 @@ function RequestsPageContent() {
                     const requestedColumns = requestColumnKeys(r);
                     const requestedApplicants = requestApplicantIds(r);
                     const moduleKey = normalizeModuleKey(r.requested_module_key);
-                    const moduleLabel = moduleLabelByKey.get(moduleKey) ?? r.requested_module_key;
+                    const moduleLabel = moduleLabelByKey.get(moduleKey) ?? formatRequestedModuleLabel(r.requested_module_key);
 
                     return (
                       <li key={r.id} className={`animated-row px-3 py-2 rounded-xl border ${rowClass}`}>

@@ -152,7 +152,7 @@ function normalizeStatus(value: unknown) {
   const v = String(value ?? "").trim().toUpperCase();
   if (v === "APPLICANT") return "APPLICANT";
   if (v === "INACTIVE") return "INACTIVE";
-  if (v === "REASSIGN") return "REASSIGN";
+  if (v === "AWOL" || v === "REASSIGN") return "AWOL";
   if (v === "RETIRED") return "RETIRED";
   if (v === "RESIGNED") return "RESIGNED";
   if (v === "ACTIVE") return "ACTIVE";
@@ -655,7 +655,7 @@ export default function EmployeeExcelImportModal({
       bad: converted.filter((x) => !x.ok).length,
       head: converted.slice(0, 50),
     };
-  }, [rows]);
+  }, [normalizedDefaultStatus, rows]);
 
   async function onPick(file?: File | null) {
     if (!file) return;

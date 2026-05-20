@@ -8,7 +8,7 @@ export const EMPLOYEE_STATUS_OPTIONS = [
 	{ value: "ACTIVE", label: "Active" },
 	{ value: "APPLICANT", label: "Applicant" },
 	{ value: "INACTIVE", label: "Inactive" },
-	{ value: "REASSIGN", label: "Reassign" },
+	{ value: "AWOL", label: "AWOL" },
 	{ value: "RESIGNED", label: "Resigned" },
 	{ value: "RETIRED", label: "Retired" },
 ] as const;
@@ -23,6 +23,7 @@ type EmployeeStatusMenuProps = {
 
 function normalizeStatus(value: string | null | undefined) {
 	const normalized = String(value ?? "").trim().toUpperCase();
+	if (normalized === "REASSIGN") return "AWOL" as EmployeeStatusValue;
 	return (EMPLOYEE_STATUS_OPTIONS.find((option) => option.value === normalized)?.value ?? "ACTIVE") as EmployeeStatusValue;
 }
 
@@ -46,7 +47,7 @@ function statusTone(status: EmployeeStatusValue) {
 				dot: "bg-white/90",
 				menuSelected: "bg-slate-50 text-slate-800",
 			};
-		case "REASSIGN":
+		case "AWOL":
 			return {
 				trigger: "bg-amber-500 text-white border-amber-400 hover:bg-amber-600",
 				dot: "bg-white/90",

@@ -20,7 +20,7 @@ export default function TableZoomWrapper({
   storageKey,
   children,
   defaultZoom = 1,
-  minZoom = 0.75,
+  minZoom = 0.25,
   maxZoom = 1.5,
   step = 0.1,
 }: TableZoomWrapperProps) {

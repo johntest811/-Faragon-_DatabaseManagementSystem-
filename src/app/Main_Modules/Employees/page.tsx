@@ -14,6 +14,7 @@ import LoadingCircle from "../../Components/LoadingCircle";
 import TableZoomWrapper from "@/app/Components/TableZoomWrapper";
 import ImportSummaryModal, { ImportSummaryData } from "../Components/ImportSummaryModal";
 import EmployeeStatusMenu from "../Components/EmployeeStatusMenu";
+import DetachmentHistoryPopover from "../Components/DetachmentHistoryPopover";
 import { addBrandedPdfHeader, buildBrandedAoa, buildBrandedWorkbookBuffer } from "../Components/exportBranding";
 import { buildEmployeeStatusUpdatePatch, loadLicensureMap } from "../employeeListData";
 import { useLiveNow } from "../../Client/useLiveNow";
@@ -91,7 +92,8 @@ function shortCode(id: string) {
 function normalizeStatus(input: string | null) {
 	const v = (input ?? "").trim().toUpperCase();
 	if (!v) return "ACTIVE";
-	if (v === "ACTIVE" || v === "APPLICANT" || v === "INACTIVE" || v === "REASSIGN" || v === "RETIRED" || v === "RESIGNED") return v;
+	if (v === "ACTIVE" || v === "APPLICANT" || v === "INACTIVE" || v === "AWOL" || v === "RETIRED" || v === "RESIGNED") return v;
+	if (v === "REASSIGN") return "AWOL";
 	return "ACTIVE";
 }
 
@@ -258,7 +260,7 @@ export default function EmployeesPage() {
 
 
 	const [filtersOpen, setFiltersOpen] = useState(false);
-	const [statusFilter, setStatusFilter] = useState<"ALL" | "ACTIVE" | "APPLICANT" | "INACTIVE" | "REASSIGN" | "RETIRED">("ALL");
+	const [statusFilter, setStatusFilter] = useState<"ALL" | "ACTIVE" | "APPLICANT" | "INACTIVE" | "AWOL" | "RETIRED">("ALL");
 	const [genderFilter, setGenderFilter] = useState<string>("ALL");
 	const [detachmentFilter, setDetachmentFilter] = useState<string>("ALL");
 	const [positionFilter, setPositionFilter] = useState<string>("ALL");
@@ -406,11 +408,11 @@ export default function EmployeesPage() {
 		let list = employees;
 
 				// By default Employees page shows Active/Inactive.
-				// If the admin explicitly filters for REASSIGN/RETIRED/APPLICANT, allow it.
+				// If the admin explicitly filters for AWOL/RETIRED/APPLICANT, allow it.
 		if (statusFilter === "ALL") {
 			list = list.filter((e) => {
 				const s = normalizeStatus(e.status);
-						return s !== "REASSIGN" && s !== "RETIRED" && s !== "RESIGNED" && s !== "APPLICANT";
+						return s !== "AWOL" && s !== "RETIRED" && s !== "RESIGNED" && s !== "APPLICANT";
 			});
 		}
 
@@ -577,7 +579,7 @@ if (hiredMonthFilter !== "ALL") {
 	const exportSourceEmployees = useMemo(() => {
 		return employees.filter((e) => {
 			const status = normalizeStatus(e.status);
-			return status !== "REASSIGN" && status !== "RETIRED" && status !== "RESIGNED" && status !== "APPLICANT";
+			return status !== "AWOL" && status !== "RETIRED" && status !== "RESIGNED" && status !== "APPLICANT";
 		});
 	}, [employees]);
 
@@ -824,11 +826,15 @@ if (hiredMonthFilter !== "ALL") {
 	async function onSaved(applicantId: string, savedStatus: string) {
 		await fetchEmployees();
 		const normalized = normalizeStatus(savedStatus);
+		if (normalized === "AWOL") {
+			router.push("/Main_Modules/AWOL/");
+			return;
+		}
 		if (normalized === "RESIGNED") {
 			router.push("/Main_Modules/Resigned/");
 			return;
 		}
-		if (editorMode === "create" && normalized !== "RETIRED" && normalized !== "REASSIGN") {
+		if (editorMode === "create" && normalized !== "RETIRED") {
 			router.push(
 				`/Main_Modules/Employees/details/?id=${encodeURIComponent(applicantId)}&from=${encodeURIComponent(
 					"/Main_Modules/Employees/"
@@ -1179,7 +1185,13 @@ if (hiredMonthFilter !== "ALL") {
 										{showDetachmentColumn ? (
 											<div className="text-xs text-gray-500 truncate">
 												<span className="text-gray-500">Detachment:</span>{" "}
-												{e.detachment ?? "—"}
+												<DetachmentHistoryPopover
+													applicantId={e.applicant_id}
+													currentDetachment={e.detachment}
+													detailsHref={detailsHref}
+													textClassName="text-xs text-gray-500"
+													buttonClassName="text-[10px]"
+												/>
 											</div>
 										) : null}
 									</div>
@@ -1307,7 +1319,16 @@ if (hiredMonthFilter !== "ALL") {
 							{showHiredDateColumn ? (
 								<td className="px-4 py-3">{e.date_hired_fsai ? new Date(e.date_hired_fsai).toLocaleDateString() : "—"}</td>
 							) : null}
-							{showDetachmentColumn ? <td className="px-4 py-3">{e.detachment ?? "—"}</td> : null}
+							{showDetachmentColumn ? (
+								<td className="px-4 py-3">
+									<DetachmentHistoryPopover
+										applicantId={e.applicant_id}
+										currentDetachment={e.detachment}
+										detailsHref={detailsHref}
+										textClassName="text-sm text-black"
+									/>
+								</td>
+							) : null}
 							{showStatusColumn ? (
 								<td className="px-4 py-3">
 									{canEditEmployees ? (
@@ -1645,7 +1666,7 @@ if (hiredMonthFilter !== "ALL") {
 										value={statusFilter}
 										onChange={(e) =>
 											setStatusFilter(
-												e.target.value as "ALL" | "ACTIVE" | "APPLICANT" | "INACTIVE" | "REASSIGN" | "RETIRED"
+												e.target.value as "ALL" | "ACTIVE" | "APPLICANT" | "INACTIVE" | "AWOL" | "RETIRED"
 											)
 										}
 										className="w-full border rounded-xl px-3 py-2 bg-white"
@@ -1654,7 +1675,7 @@ if (hiredMonthFilter !== "ALL") {
 										<option value="ACTIVE">ACTIVE</option>
 										<option value="APPLICANT">APPLICANT</option>
 										<option value="INACTIVE">INACTIVE</option>
-										<option value="REASSIGN">REASSIGN</option>
+										<option value="AWOL">AWOL</option>
 										<option value="RETIRED">RETIRED</option>
 									</select>
 								</label>
