@@ -15,14 +15,16 @@ values
   ('archive', 'Archive', '/Main_Modules/Archive/'),
   ('trash', 'Trash', '/Main_Modules/Trash/'),
   ('audit', 'Audit', '/Main_Modules/Audit/'),
+  ('recent_activities', 'Recent Activities', '/Main_Modules/Audit/'),
   ('settings', 'Settings', '/Main_Modules/Settings/'),
 
   -- Logistics child pages
   ('client', 'Client', '/Main_Modules/Client/'),
   ('inventory', 'Inventory', '/Main_Modules/Inventory/'),
   ('paraphernalia', 'Paraphernalia', '/Main_Modules/Paraphernalia/'),
-  ('reports', 'Reports', '/Main_Modules/Reports/'),
   ('car_insurance_expiration', 'Car Insurance Expiration', '/Main_Modules/Logistics/CarInsuranceExpiration/'),
+  ('preview_service_anniversary', 'Preview (1+ year of service)', '/Main_Modules/Employees/'),
+  ('expiring_licenses_records', 'Expiring Licenses and Records', '/Main_Modules/Employees/'),
 
   -- Request-access page (keep reachable so users can ask for permissions)
   ('requests', 'Requests', '/Main_Modules/Requests/'),
@@ -91,9 +93,9 @@ insert into public.role_module_access (role_id, module_key, can_read, can_write)
 select r.role_id, m.module_key, true, true
 from public.app_roles r
 join public.modules m
-  on m.module_key in ('client', 'inventory', 'paraphernalia', 'reports', 'car_insurance_expiration', 'logistics')
+  on m.module_key in (
     'dashboard','employees','reassign','resigned','retired','archive',
-    'client','inventory','paraphernalia','reports',
+    'client','inventory','paraphernalia','car_insurance_expiration',
     'trash','audit','settings','requests','logistics'
   )
 where r.role_name = 'admin'

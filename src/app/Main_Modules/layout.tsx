@@ -27,7 +27,6 @@ import {
   BadgeCheck,
   CreditCard,
   Package,
-  FileText,
   ClipboardCheck,
   KeyRound,
   Sparkles,
@@ -360,15 +359,6 @@ function pageMetaForPath(pathname: string): PageMeta {
       },
     },
     {
-      test: (value) => value.startsWith("/Main_Modules/Reports"),
-      meta: {
-        title: "Reports",
-        description: "Summarize key operational data with a clean reporting surface.",
-        badge: "Insights",
-        icon: FileText,
-      },
-    },
-    {
       test: (value) => value.startsWith("/Main_Modules/Logistics/CarInsuranceExpiration"),
       meta: {
         title: "Car Insurance Expiration",
@@ -460,7 +450,6 @@ type ModuleKey =
   | "client"
   | "inventory"
   | "paraphernalia"
-  | "reports"
   | "requests"
   | "access_reviewer_queue"
   | "audit"
@@ -468,6 +457,7 @@ type ModuleKey =
   | "access"
   | "logistics"
   | "car_insurance_expiration"
+  | "recent_activities"
   | "preview_service_anniversary"
   | "expiring_licenses_records";
 
@@ -504,7 +494,6 @@ function accessRequirementForPath(pathname: string): AccessRequirement | null {
   if (p.startsWith("/Main_Modules/Client/")) return { kind: "module", moduleKey: "client" };
   if (p.startsWith("/Main_Modules/Inventory/")) return { kind: "module", moduleKey: "inventory" };
   if (p.startsWith("/Main_Modules/Paraphernalia/")) return { kind: "module", moduleKey: "paraphernalia" };
-  if (p.startsWith("/Main_Modules/Reports/")) return { kind: "module", moduleKey: "reports" };
   if (p.startsWith("/Main_Modules/Requests/")) return { kind: "module", moduleKey: "requests" };
   if (p.startsWith("/Main_Modules/Audit/")) return { kind: "module", moduleKey: "audit" };
   if (p.startsWith("/Main_Modules/Settings/")) return { kind: "module", moduleKey: "settings" };
@@ -686,6 +675,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
     [myModules]
   );
   const canViewPreviewWidget = sessionRole === "superadmin" || grantedModuleKeys.has("preview_service_anniversary");
+  const canViewRecentActivitiesWidget = sessionRole === "superadmin" || grantedModuleKeys.has("recent_activities");
   const canViewExpiringWidget = sessionRole === "superadmin" || grantedModuleKeys.has("expiring_licenses_records");
   const canViewCarInsuranceWidget = sessionRole === "superadmin" || grantedModuleKeys.has("car_insurance_expiration");
 
@@ -910,10 +900,11 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
   }, []);
 
   useEffect(() => {
+    if (!canViewRecentActivitiesWidget) setActivityOpen(false);
     if (!canViewExpiringWidget) setExpiringOpen(false);
     if (!canViewCarInsuranceWidget) setCarInsuranceExpiringOpen(false);
     if (!canViewPreviewWidget) setPreviewOpen(false);
-  }, [canViewCarInsuranceWidget, canViewExpiringWidget, canViewPreviewWidget]);
+  }, [canViewCarInsuranceWidget, canViewExpiringWidget, canViewPreviewWidget, canViewRecentActivitiesWidget]);
 
   const refreshPreview = useCallback(async () => {
     if (!canViewPreviewWidget) {
@@ -980,6 +971,11 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
   }, [canViewPreviewWidget]);
 
   const refreshActivity = useCallback(async () => {
+    if (!canViewRecentActivitiesWidget) {
+      setRecentActivity([]);
+      setActivityCount(0);
+      return;
+    }
     if (!api?.audit?.getRecent) return;
     try {
       const key = "auditLastSeenAt";
@@ -1000,7 +996,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
     } catch {
       // ignore
     }
-  }, [api]);
+  }, [api, canViewRecentActivitiesWidget]);
 
   const refreshExpiring = useCallback(async () => {
     if (!canViewExpiringWidget && !canViewCarInsuranceWidget) {
@@ -1282,13 +1278,16 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
         "client",
         "inventory",
         "paraphernalia",
-        "reports",
         "requests",
         "access_reviewer_queue",
         "audit",
         "settings",
         "access",
         "logistics",
+        "recent_activities",
+        "preview_service_anniversary",
+        "expiring_licenses_records",
+        "car_insurance_expiration",
       ]);
     }
 
@@ -1298,7 +1297,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
       if (fromDb.has("reassign") && !fromDb.has("resigned")) fromDb.add("resigned");
 
       // Treat the Logistics group as allowed if ANY logistics child module is allowed.
-      if (fromDb.has("inventory") || fromDb.has("paraphernalia") || fromDb.has("reports") || fromDb.has("car_insurance_expiration")) {
+      if (fromDb.has("inventory") || fromDb.has("paraphernalia") || fromDb.has("car_insurance_expiration")) {
         fromDb.add("logistics");
       }
 
@@ -1319,11 +1318,11 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
         "client",
         "inventory",
         "paraphernalia",
-        "reports",
         "logistics",
         "settings",
         "audit",
         "requests",
+        "recent_activities",
       ]);
     }
     return new Set<ModuleKey>(["dashboard", "applicants", "employees", "archive", "requests"]);
@@ -1366,7 +1365,6 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
       [
         { key: "logistics_inventory", moduleKey: "inventory" as const, name: "Inventory", href: "/Main_Modules/Inventory/", icon: Package },
         { key: "logistics_paraphernalia", moduleKey: "paraphernalia" as const, name: "Paraphernalia", href: "/Main_Modules/Paraphernalia/", icon: Package },
-        { key: "logistics_reports", moduleKey: "reports" as const, name: "Reports", href: "/Main_Modules/Reports/", icon: FileText },
         { key: "logistics_car_insurance", moduleKey: "car_insurance_expiration" as const, name: "Car Insurance Expiration", href: "/Main_Modules/Logistics/CarInsuranceExpiration/", icon: ShieldCheck },
       ] as const,
     []
@@ -1527,7 +1525,6 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
       "/Main_Modules/Logistics/CarInsuranceExpiration/",
       "/Main_Modules/Inventory/",
       "/Main_Modules/Paraphernalia/",
-      "/Main_Modules/Reports/",
     ].some((prefix) => pathname === prefix || pathname.startsWith(prefix));
   }, [logisticsAllowed, pathname]);
 
@@ -1811,6 +1808,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
               </div>
 
               <div className="flex items-center gap-3">
+                {canViewRecentActivitiesWidget ? (
                 <div className="relative" data-activity-menu>
                   <button
                     type="button"
@@ -1823,7 +1821,8 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
                       refreshActivity();
                     }}
                     className="relative h-10 w-10 rounded-xl bg-[#FFDA03] text-black flex items-center justify-center"
-                    aria-label="Activity"
+                    aria-label="Recent Activities"
+                    title="Recent Activities"
                   >
                     <Activity className="w-5 h-5" />
 						{activityCount > 0 ? (
@@ -1839,7 +1838,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
                   {activityOpen ? (
                     <div className="absolute right-0 mt-2 w-[360px] max-w-[90vw] rounded-2xl border bg-white shadow-lg overflow-hidden z-50">
                       <div className="px-4 py-3 border-b flex items-center justify-between">
-                        <div className="text-sm font-semibold text-black">Recent Activity</div>
+                        <div className="text-sm font-semibold text-black">Recent Activities</div>
                         <Link
                           href="/Main_Modules/Audit/"
                           className="text-xs text-blue-600 hover:underline"
@@ -1892,6 +1891,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
                     </div>
                   ) : null}
                 </div>
+                ) : null}
 
                 {canViewExpiringWidget ? (
                 <div className="relative" data-expiring-menu>

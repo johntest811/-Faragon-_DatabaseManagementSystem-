@@ -253,7 +253,7 @@ export default function Login() {
                     </div>
                     <div>
                       <div className="text-sm font-semibold text-white">Clean workflow</div>
-                      <div className="text-xs text-white/70">Fast access to employees, requests, settings, and reports</div>
+                      <div className="text-xs text-white/70">Fast access to employees, requests, settings, and logistics tools</div>
                     </div>
                   </div>
                 </div>

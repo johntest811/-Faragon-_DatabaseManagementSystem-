@@ -897,17 +897,27 @@ export default function CarInsuranceExpirationPage() {
 
       const payload = parsed.payload;
       const plateKey = cleanText(payload.plateNumber).toLowerCase();
-      const recordKey = payload.recordNo ? `record:${payload.recordNo}` : `plate:${plateKey}`;
+      const recordIdentity = payload.recordNo ? `record:${payload.recordNo}` : "";
+      const plateIdentity = plateKey ? `plate:${plateKey}` : "";
 
-      if (seenKeys.has(recordKey)) {
+      if ((recordIdentity && seenKeys.has(recordIdentity)) || (plateIdentity && seenKeys.has(plateIdentity))) {
         skipped += 1;
         errors.push(`Row ${index + 2}: Duplicate row identity in the import file.`);
         continue;
       }
 
-      seenKeys.add(recordKey);
+      if (recordIdentity) seenKeys.add(recordIdentity);
+      if (plateIdentity) seenKeys.add(plateIdentity);
 
-      const existing = payload.recordNo ? existingByRecordNo.get(payload.recordNo) ?? null : existingByPlate.get(plateKey) ?? null;
+      const existingByNumber = payload.recordNo ? existingByRecordNo.get(payload.recordNo) ?? null : null;
+      const existingByPlateRow = plateKey ? existingByPlate.get(plateKey) ?? null : null;
+      if (existingByNumber && existingByPlateRow && existingByNumber.id !== existingByPlateRow.id) {
+        skipped += 1;
+        errors.push(`Row ${index + 2}: Record No. and Plate Number match different existing rows.`);
+        continue;
+      }
+
+      const existing = existingByNumber ?? existingByPlateRow;
       const recordNo = payload.recordNo ?? nextGeneratedRecordNo++;
 
       const dbPayload = {
@@ -948,13 +958,21 @@ export default function CarInsuranceExpirationPage() {
 
       if (existing) {
         const upd = await supabase.from("other_expiration_items").update(dbPayload).eq("id", existing.id);
-        if (upd.error) throw upd.error;
+        if (upd.error) {
+          skipped += 1;
+          errors.push(`Row ${index + 2}: Update failed for plate ${payload.plateNumber}: ${upd.error.message}`);
+          continue;
+        }
         updated += 1;
         continue;
       }
 
       const ins = await supabase.from("other_expiration_items").insert(dbPayload);
-      if (ins.error) throw ins.error;
+      if (ins.error) {
+        skipped += 1;
+        errors.push(`Row ${index + 2}: Insert failed for plate ${payload.plateNumber}: ${ins.error.message}`);
+        continue;
+      }
       inserted += 1;
     }
 

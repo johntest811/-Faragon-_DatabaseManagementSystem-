@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { supabase } from "../../Client/SupabaseClients";
 import { useAuthRole } from "../../Client/useRbac";
 import { AccessTabs } from "../Components/AccessTabs";
-import { UserPlus, X } from "lucide-react";
+import { Search, ShieldCheck, UserCheck, UserPlus, UserX, Users, X } from "lucide-react";
 
 type RoleRow = { role_id: string; role_name: string };
 
@@ -62,6 +62,16 @@ function getLegacyAdminDisplayName() {
 	}
 }
 
+function formatRoleLabel(value: string | null | undefined) {
+	const raw = String(value ?? "").trim();
+	if (!raw) return "Unassigned";
+	return raw
+		.split(/[_\s]+/)
+		.filter(Boolean)
+		.map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+		.join(" ");
+}
+
 export default function AdminAccountsPage() {
 	const router = useRouter();
 	const { role } = useAuthRole();
@@ -77,6 +87,7 @@ export default function AdminAccountsPage() {
 	const [accountFullName, setAccountFullName] = useState("");
 	const [accountPassword, setAccountPassword] = useState("");
 	const [accountRole, setAccountRole] = useState("admin");
+	const [accountSearch, setAccountSearch] = useState("");
 	const [creatingAccount, setCreatingAccount] = useState(false);
 	const [createAccountOpen, setCreateAccountOpen] = useState(false);
 	const [togglingActiveId, setTogglingActiveId] = useState<string | null>(null);
@@ -176,6 +187,18 @@ export default function AdminAccountsPage() {
 	}, [load, loadAccounts, loadRoles]);
 
 	const roleNames = useMemo(() => roles.map((r) => r.role_name), [roles]);
+	const activeAdminCount = useMemo(() => admins.filter((row) => row.is_active).length, [admins]);
+	const inactiveAdminCount = useMemo(() => admins.filter((row) => !row.is_active).length, [admins]);
+	const filteredAdmins = useMemo(() => {
+		const q = accountSearch.trim().toLowerCase();
+		if (!q) return admins;
+		return admins.filter((row) => {
+			const username = String(row.username ?? "").toLowerCase();
+			const fullName = String(row.full_name ?? "").toLowerCase();
+			const roleName = String(row.role ?? "").toLowerCase();
+			return username.includes(q) || fullName.includes(q) || roleName.includes(q);
+		});
+	}, [accountSearch, admins]);
 
 	async function createAccount() {
 		setError("");
@@ -371,8 +394,59 @@ export default function AdminAccountsPage() {
 				</div>
 			) : null}
 
-			{error ? <div className="mb-3 text-red-600 text-sm">{error}</div> : null}
-			{success ? <div className="mb-3 text-emerald-700 text-sm">{success}</div> : null}
+			{error ? (
+				<div className="mb-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>
+			) : null}
+			{success ? (
+				<div className="mb-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{success}</div>
+			) : null}
+
+			<div className="mb-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+				<div className="rounded-2xl border border-white/70 bg-white/90 p-4 shadow-sm">
+					<div className="flex items-center gap-3">
+						<div className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-900 text-white">
+							<Users className="h-5 w-5" />
+						</div>
+						<div>
+							<div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Accounts</div>
+							<div className="text-2xl font-semibold text-black">{admins.length}</div>
+						</div>
+					</div>
+				</div>
+				<div className="rounded-2xl border border-white/70 bg-white/90 p-4 shadow-sm">
+					<div className="flex items-center gap-3">
+						<div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-600 text-white">
+							<UserCheck className="h-5 w-5" />
+						</div>
+						<div>
+							<div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Active</div>
+							<div className="text-2xl font-semibold text-black">{activeAdminCount}</div>
+						</div>
+					</div>
+				</div>
+				<div className="rounded-2xl border border-white/70 bg-white/90 p-4 shadow-sm">
+					<div className="flex items-center gap-3">
+						<div className="flex h-10 w-10 items-center justify-center rounded-xl bg-rose-600 text-white">
+							<UserX className="h-5 w-5" />
+						</div>
+						<div>
+							<div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Inactive</div>
+							<div className="text-2xl font-semibold text-black">{inactiveAdminCount}</div>
+						</div>
+					</div>
+				</div>
+				<div className="rounded-2xl border border-white/70 bg-white/90 p-4 shadow-sm">
+					<div className="flex items-center gap-3">
+						<div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-400 text-black">
+							<ShieldCheck className="h-5 w-5" />
+						</div>
+						<div>
+							<div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Roles</div>
+							<div className="text-2xl font-semibold text-black">{roles.length}</div>
+						</div>
+					</div>
+				</div>
+			</div>
 
 			{createAccountOpen && canUsePortal ? (
 						<div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/45 p-4" onClick={() => setCreateAccountOpen(false)}>
@@ -444,7 +518,7 @@ export default function AdminAccountsPage() {
 												{roleNames.length === 0 ? <option value="admin">admin</option> : null}
 												{roleNames.map((r) => (
 													<option key={r} value={r}>
-														{r}
+														{formatRoleLabel(r)}
 													</option>
 												))}
 											</select>
@@ -475,17 +549,35 @@ export default function AdminAccountsPage() {
 						</div>
 						) : null}
 
-			<div className="mt-5 glass-panel animate-scale-in rounded-2xl border-none p-4">
-				<div>
-					<div className="text-sm font-semibold text-black">Accounts</div>
-					<div className="mt-1 text-xs text-black">
-						All accounts are shown in one table. Open Permissions for account-only page/column access overrides.
+			<div className="mt-5 animate-scale-in rounded-[28px] border border-white/70 bg-white/90 p-5 shadow-xl">
+				<div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+					<div>
+						<div className="text-sm font-semibold text-black">Accounts</div>
+						<div className="mt-1 text-xs text-black">
+							All accounts are shown in one table. Open Permissions for account-only page/column access overrides.
+						</div>
+					</div>
+					<div className="flex w-full flex-col gap-3 sm:flex-row xl:w-auto">
+						<label className="relative block min-w-[280px]">
+							<Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+							<input
+								value={accountSearch}
+								onChange={(e) => setAccountSearch(e.target.value)}
+								placeholder="Search username, full name, or role"
+								className="w-full rounded-2xl border border-slate-200 bg-white py-3 pl-11 pr-4 text-sm text-black outline-none transition focus:border-[#8B1C1C] focus:ring-4 focus:ring-[#8B1C1C]/10"
+							/>
+						</label>
+						<div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+							Showing <span className="font-semibold text-slate-900">{filteredAdmins.length}</span> of{" "}
+							<span className="font-semibold text-slate-900">{admins.length}</span>
+						</div>
 					</div>
 				</div>
 
-				<div className="mt-4 overflow-x-auto">
-					<table className="w-full table-auto">
-						<thead>
+				<div className="mt-4 overflow-hidden rounded-2xl border border-slate-200">
+					<div className="overflow-x-auto">
+					<table className="w-full min-w-[980px] table-auto">
+						<thead className="bg-slate-50">
 							<tr className="text-left text-sm text-black">
 								<th className="px-3 py-2">Username</th>
 								<th className="px-3 py-2">Name</th>
@@ -496,7 +588,15 @@ export default function AdminAccountsPage() {
 							</tr>
 						</thead>
 						<tbody>
-							{admins.map((a) => {
+							{filteredAdmins.length === 0 ? (
+								<tr className="border-t border-gray-100">
+									<td colSpan={6} className="px-3 py-10 text-center">
+										<div className="text-sm font-semibold text-black">No accounts matched your search.</div>
+										<div className="mt-1 text-xs text-slate-500">Try a different username, name, or role filter.</div>
+									</td>
+								</tr>
+							) : null}
+							{filteredAdmins.map((a) => {
 									const self = currentAdminId ? a.id === currentAdminId : false;
 									const activeLabel = a.is_active ? "Active" : "Inactive";
 									const activeClass = a.is_active
@@ -504,9 +604,18 @@ export default function AdminAccountsPage() {
 										: "text-red-700 bg-red-50 border-red-200";
 									const toggleBusy = togglingActiveId === a.id;
 									return (
-										<tr key={a.id} className="animated-row border-t border-gray-100">
-											<td className="px-3 py-2 text-black whitespace-nowrap">{a.username}</td>
-											<td className="px-3 py-2 text-black">{a.full_name ?? "—"}</td>
+										<tr key={a.id} className={`animated-row border-t border-gray-100 ${self ? "bg-amber-50/40" : "bg-white"}`}>
+											<td className="px-3 py-2 text-black whitespace-nowrap">
+												<div className="flex items-center gap-2">
+													<span className="font-semibold">{a.username}</span>
+													{self ? (
+														<span className="inline-flex items-center rounded-full border border-amber-200 bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-800">
+															You
+														</span>
+													) : null}
+												</div>
+											</td>
+											<td className="px-3 py-2 text-black">{a.full_name?.trim() || "Not provided"}</td>
 											<td className="px-3 py-2 text-black">
 												<select
 													value={a.role}
@@ -516,10 +625,10 @@ export default function AdminAccountsPage() {
 												>
 													{roleNames.map((r) => (
 														<option key={r} value={r}>
-															{r}
+															{formatRoleLabel(r)}
 														</option>
 													))}
-													{roleNames.includes(a.role) ? null : <option value={a.role}>{a.role}</option>}
+													{roleNames.includes(a.role) ? null : <option value={a.role}>{formatRoleLabel(a.role)}</option>}
 												</select>
 											</td>
 											<td className="px-3 py-2">
@@ -528,7 +637,7 @@ export default function AdminAccountsPage() {
 												</span>
 											</td>
 											<td className="px-3 py-2 text-black">
-												{a.last_login ? new Date(a.last_login).toLocaleString() : "—"}
+												{a.last_login ? new Date(a.last_login).toLocaleString() : "Never"}
 											</td>
 											<td className="px-3 py-2">
 												<div className="flex items-center gap-2">
@@ -572,6 +681,7 @@ export default function AdminAccountsPage() {
 								})}
 						</tbody>
 					</table>
+					</div>
 				</div>
 			</div>
 		</section>

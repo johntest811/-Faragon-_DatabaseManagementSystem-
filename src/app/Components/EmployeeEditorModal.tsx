@@ -2,7 +2,10 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import JSZip from "jszip";
 import { supabase } from "../Client/SupabaseClients";
+import * as XLSX from "xlsx";
+import LoadingCircle from "./LoadingCircle";
 
 type Mode = "create" | "edit";
 
@@ -13,6 +16,8 @@ export type EmployeeEditorModalProps = {
   defaultStatus?: string;
   title?: string;
   subtitle?: string;
+  idNumberLabel?: string;
+  showIdGenerate?: boolean;
   onClose: () => void;
   onSaved?: (applicantId: string, status: string) => void;
   onDeleted?: (applicantId: string) => void;
@@ -188,11 +193,21 @@ type JobTitleRow = {
   title: string;
 };
 
+type DetachmentOption = {
+  area: string;
+  clientName: string | null;
+  projectName: string | null;
+  contractNo: string | null;
+};
+
 const BUCKETS = {
   applicants: "applicants",
   certificates: "certificates",
   licensure: "licensure",
 } as const;
+
+const GENERAL_DOCUMENT_ACCEPT =
+  "image/*,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.pdf,.doc,.docx,.xls,.xlsx,.zip,.rar,application/zip,application/x-rar-compressed,application/vnd.rar";
 
 function emptyApplicantDraft(defaultStatus = "ACTIVE"): ApplicantDraft {
   return {
@@ -282,7 +297,6 @@ function normalizeDateInput(value: string | null | undefined) {
 function normalizeStatus(value: string | null | undefined) {
   const v = String(value ?? "").trim().toUpperCase();
   if (v === "APPLICANT") return "APPLICANT";
-  if (v === "INACTIVE") return "INACTIVE";
   if (v === "AWOL" || v === "REASSIGN") return "AWOL";
   if (v === "RETIRED") return "RETIRED";
   if (v === "RESIGNED") return "RESIGNED";
@@ -336,6 +350,51 @@ function toNullableText(value: string) {
   return v.length ? v : null;
 }
 
+type EducationWhenWhereKey = "highschool_when_where" | "college_when_where" | "vocational_when_where";
+
+function splitEducationNameYear(value: string | null | undefined) {
+  const text = String(value ?? "").trim();
+  if (!text) return { name: "", year: "" };
+
+  const explicitParts = text
+    .split(/\s*(?:\||\u2022|\s+-\s+)\s*/g)
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  if (explicitParts.length >= 2) {
+    const first = explicitParts[0];
+    const rest = explicitParts.slice(1).join(" - ");
+    if (/^\d{4}(?:\s*-\s*\d{4})?$/.test(first) && !/\b\d{4}\b/.test(rest)) return { name: rest, year: first };
+    return { name: first, year: rest };
+  }
+
+  const yearFirst = text.match(/^(\d{4}(?:\s*-\s*\d{4})?)\s+(.+)$/);
+  if (yearFirst) {
+    return { name: yearFirst[2].replace(/^[^A-Za-z0-9]+/, "").trim(), year: yearFirst[1].trim() };
+  }
+
+  const parts = text
+    .split(/\s*(?:\||-|•|â€¢)\s*/g)
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  if (parts.length >= 2) {
+    const first = parts[0];
+    const rest = parts.slice(1).join(" - ");
+    if (/\b\d{4}\b/.test(first) && !/\b\d{4}\b/.test(rest)) return { name: rest, year: first };
+    return { name: first, year: rest };
+  }
+
+  return { name: text, year: "" };
+}
+
+function joinEducationNameYear(name: string, year: string) {
+  const cleanName = name.trim();
+  const cleanYear = year.trim();
+  if (cleanName && cleanYear) return `${cleanName} - ${cleanYear}`;
+  return cleanName || cleanYear;
+}
+
 function collapseWhitespace(value: string | null | undefined) {
   return String(value ?? "").trim().replace(/\s+/g, " ");
 }
@@ -377,6 +436,62 @@ function toNullableInt(value: string) {
   return Number.isFinite(num) ? Math.trunc(num) : null;
 }
 
+function onlyDigits(value: string | null | undefined) {
+  return String(value ?? "").replace(/\D/g, "");
+}
+
+function formatDigitGroups(value: string, groupSizes: number[]) {
+  const maxDigits = groupSizes.reduce((sum, size) => sum + size, 0);
+  const digits = onlyDigits(value).slice(0, maxDigits);
+  const groups: string[] = [];
+  let cursor = 0;
+
+  for (const size of groupSizes) {
+    const part = digits.slice(cursor, cursor + size);
+    if (!part) break;
+    groups.push(part);
+    cursor += size;
+  }
+
+  return groups.join("-");
+}
+
+function formatSssNumber(value: string) {
+  return formatDigitGroups(value, [2, 7, 1]);
+}
+
+function formatPhilhealthNumber(value: string) {
+  return formatDigitGroups(value, [2, 9, 1]);
+}
+
+function formatPagibigNumber(value: string) {
+  return formatDigitGroups(value, [4, 4, 4]);
+}
+
+function formatTinNumber(value: string) {
+  const digits = onlyDigits(value).slice(0, 12);
+  return formatDigitGroups(digits, digits.length > 9 ? [3, 3, 3, 3] : [3, 3, 3]);
+}
+
+function validateSocialWelfareValues(app: ApplicantDraft) {
+  const checks = [
+    { label: "SSS No.", digits: onlyDigits(app.sss_number), validLengths: [10], example: "12-3456789-0" },
+    { label: "PhilHealth No.", digits: onlyDigits(app.philhealth_number), validLengths: [12], example: "12-345678901-2" },
+    { label: "Pag-IBIG No.", digits: onlyDigits(app.pagibig_number), validLengths: [12], example: "1234-5678-9012" },
+    { label: "TIN", digits: onlyDigits(app.tin_number), validLengths: [9, 12], example: "123-456-789 or 123-456-789-000" },
+  ];
+
+  const missing = checks.filter((item) => !item.digits).map((item) => item.label);
+  if (missing.length) return `Please complete Social Welfare before continuing: ${missing.join(", ")}.`;
+
+  const invalid = checks.filter((item) => !item.validLengths.includes(item.digits.length));
+  if (invalid.length) {
+    return invalid.map((item) => `${item.label} must match ${item.example}.`).join(" ");
+  }
+
+  return "";
+}
+
 function getLegacyAdminId(): string | null {
   try {
     const raw = localStorage.getItem("adminSession");
@@ -398,6 +513,184 @@ function isMissingRelationError(error: unknown, relationName: string) {
   return message.includes(relationName.toLowerCase()) && message.includes("does not exist");
 }
 
+function getFileExtension(fileName: string) {
+  const trimmed = fileName.trim().toLowerCase();
+  const parts = trimmed.split(".");
+  return parts.length > 1 ? parts.pop() ?? "" : "";
+}
+
+function replaceFileExtension(fileName: string, nextExtension: string) {
+  const ext = nextExtension.replace(/^\./, "");
+  return fileName.replace(/\.[^/.]+$/, "") + (ext ? `.${ext}` : "");
+}
+
+function mimeTypeForExtension(extension: string) {
+  switch (extension) {
+    case "doc":
+      return "application/msword";
+    case "docx":
+      return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+    case "xls":
+      return "application/vnd.ms-excel";
+    case "xlsx":
+      return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+    case "pdf":
+      return "application/pdf";
+    case "zip":
+      return "application/zip";
+    case "rar":
+      return "application/vnd.rar";
+    case "jpg":
+    case "jpeg":
+      return "image/jpeg";
+    case "png":
+      return "image/png";
+    case "webp":
+      return "image/webp";
+    default:
+      return "";
+  }
+}
+
+function isAllowedGeneralDocument(file: File) {
+  const extension = getFileExtension(file.name);
+  if (file.type.startsWith("image/")) return true;
+  return ["pdf", "doc", "docx", "xls", "xlsx", "zip", "rar"].includes(extension);
+}
+
+function canCompressImage(extension: string) {
+  return ["jpg", "jpeg", "png", "webp", "bmp"].includes(extension);
+}
+
+function canRepackOfficeDocument(extension: string) {
+  return ["docx", "docm", "dotx"].includes(extension);
+}
+
+function canRewriteSpreadsheet(extension: string) {
+  return ["xlsx", "xlsm"].includes(extension);
+}
+
+function loadImageElement(file: File) {
+  return new Promise<HTMLImageElement>((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const image = new Image();
+    image.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve(image);
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("Failed to process image upload."));
+    };
+    image.src = url;
+  });
+}
+
+function canvasToBlob(canvas: HTMLCanvasElement, type: string, quality?: number) {
+  return new Promise<Blob | null>((resolve) => {
+    canvas.toBlob((blob) => resolve(blob), type, quality);
+  });
+}
+
+async function compressImageUpload(file: File) {
+  const extension = getFileExtension(file.name);
+  if (!canCompressImage(extension)) return file;
+
+  try {
+    const image = await loadImageElement(file);
+    const width = image.naturalWidth || image.width;
+    const height = image.naturalHeight || image.height;
+    if (!width || !height) return file;
+
+    const maxDimension = 2000;
+    const scale = Math.min(1, maxDimension / Math.max(width, height));
+    const nextWidth = Math.max(1, Math.round(width * scale));
+    const nextHeight = Math.max(1, Math.round(height * scale));
+
+    const canvas = document.createElement("canvas");
+    canvas.width = nextWidth;
+    canvas.height = nextHeight;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return file;
+
+    ctx.drawImage(image, 0, 0, nextWidth, nextHeight);
+
+    const targetMime = extension === "png" ? "image/webp" : extension === "webp" ? "image/webp" : "image/jpeg";
+    const targetExtension = targetMime === "image/jpeg" ? "jpg" : "webp";
+    const blob = await canvasToBlob(canvas, targetMime, 0.82);
+    if (!blob || blob.size >= file.size * 0.98) return file;
+
+    return new File([blob], replaceFileExtension(file.name, targetExtension), {
+      type: targetMime,
+      lastModified: file.lastModified,
+    });
+  } catch {
+    return file;
+  }
+}
+
+async function recompressOfficeDocument(file: File) {
+  const extension = getFileExtension(file.name);
+  if (!canRepackOfficeDocument(extension)) return file;
+
+  try {
+    const zip = await JSZip.loadAsync(await file.arrayBuffer());
+    const blob = await zip.generateAsync({
+      type: "blob",
+      compression: "DEFLATE",
+      compressionOptions: { level: 9 },
+    });
+    if (blob.size >= file.size * 0.98) return file;
+
+    return new File([blob], file.name, {
+      type: file.type || mimeTypeForExtension(extension),
+      lastModified: file.lastModified,
+    });
+  } catch {
+    return file;
+  }
+}
+
+async function recompressSpreadsheet(file: File) {
+  const extension = getFileExtension(file.name);
+  if (!canRewriteSpreadsheet(extension)) return file;
+
+  try {
+    const workbook = XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: true });
+    const output = XLSX.write(workbook, {
+      type: "array",
+      bookType: extension === "xlsm" ? "xlsm" : "xlsx",
+      compression: true,
+    });
+    const blob = new Blob([output], {
+      type: file.type || mimeTypeForExtension(extension),
+    });
+    if (blob.size >= file.size * 0.98) return file;
+
+    return new File([blob], file.name, {
+      type: file.type || mimeTypeForExtension(extension),
+      lastModified: file.lastModified,
+    });
+  } catch {
+    return file;
+  }
+}
+
+async function optimizeUploadFile(file: File) {
+  const extension = getFileExtension(file.name);
+
+  if (file.type.startsWith("image/")) {
+    return compressImageUpload(file);
+  }
+  if (canRewriteSpreadsheet(extension)) {
+    return recompressSpreadsheet(file);
+  }
+  if (canRepackOfficeDocument(extension)) {
+    return recompressOfficeDocument(file);
+  }
+  return file;
+}
+
 export default function EmployeeEditorModal({
   open,
   mode,
@@ -405,6 +698,8 @@ export default function EmployeeEditorModal({
   defaultStatus = "ACTIVE",
   title,
   subtitle,
+  idNumberLabel = "ID Number Employee",
+  showIdGenerate = false,
   onClose,
   onSaved,
   onDeleted,
@@ -414,6 +709,7 @@ export default function EmployeeEditorModal({
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string>("");
+  const [uploadingFileKey, setUploadingFileKey] = useState<string | null>(null);
 
   const STEPS = useMemo(
     () => ["personal", "education", "social", "licensure", "employment", "documents"] as const,
@@ -435,8 +731,22 @@ export default function EmployeeEditorModal({
   const [jobs, setJobs] = useState<EmploymentItem[]>([]);
   const [otherDocs, setOtherDocs] = useState<OtherDocumentItem[]>([]);
   const [jobTitleOptions, setJobTitleOptions] = useState<JobTitleRow[]>([]);
+  const [detachmentOptions, setDetachmentOptions] = useState<DetachmentOption[]>([]);
+  const [detachmentOptionsLoading, setDetachmentOptionsLoading] = useState(false);
   const [newJobTitle, setNewJobTitle] = useState("");
   const [jobTitlesSource, setJobTitlesSource] = useState<"table" | "applicants">("table");
+
+  const highSchoolEducation = splitEducationNameYear(certs.highschool_when_where);
+  const collegeEducation = splitEducationNameYear(certs.college_when_where);
+  const vocationalEducation = splitEducationNameYear(certs.vocational_when_where);
+
+  function updateEducationNameYearField(field: EducationWhenWhereKey, part: "name" | "year", value: string) {
+    setCerts((draft) => {
+      const current = splitEducationNameYear(draft[field]);
+      const next = { ...current, [part]: value };
+      return { ...draft, [field]: joinEducationNameYear(next.name, next.year) };
+    });
+  }
 
 
   const effectiveId = mode === "edit" ? applicantId ?? null : draftApplicantId;
@@ -450,7 +760,22 @@ export default function EmployeeEditorModal({
     return idx <= maxStepIndex;
   }
 
+  function canAdvancePastSocial(nextStep?: Step) {
+    const socialStepIndex = STEPS.indexOf("social");
+    const targetIndex = nextStep ? STEPS.indexOf(nextStep) : currentStepIndex + 1;
+    if (targetIndex <= socialStepIndex) return true;
+
+    const socialError = validateSocialWelfareValues(app);
+    if (!socialError) return true;
+
+    setTab("social");
+    setError(socialError);
+    return false;
+  }
+
   function goToStep(step: Step) {
+    if (!canAdvancePastSocial(step)) return;
+
     if (canNavigateTo(step)) {
       setTab(step);
       // setError("");
@@ -460,6 +785,8 @@ export default function EmployeeEditorModal({
   }
 
   function goNext() {
+    if (!canAdvancePastSocial(STEPS[Math.min(currentStepIndex + 1, STEPS.length - 1)])) return;
+
     const next = Math.min(currentStepIndex + 1, STEPS.length - 1);
     setMaxStepIndex((v) => Math.max(v, next));
     setTab(STEPS[next]);
@@ -472,7 +799,7 @@ export default function EmployeeEditorModal({
     setError("");
   }
 
-  function normalizeJobTitle(value: string) {
+function normalizeJobTitle(value: string) {
     return value.trim().replace(/\s+/g, " ");
   }
 
@@ -702,10 +1029,10 @@ export default function EmployeeEditorModal({
           last_duty: normalizeDateInput(a?.last_duty ?? null),
 
           security_licensed_num: a?.security_licensed_num ?? "",
-          sss_number: a?.sss_number ?? "",
-          pagibig_number: a?.pagibig_number ?? "",
-          philhealth_number: a?.philhealth_number ?? "",
-          tin_number: a?.tin_number ?? "",
+          sss_number: formatSssNumber(a?.sss_number ?? ""),
+          pagibig_number: formatPagibigNumber(a?.pagibig_number ?? ""),
+          philhealth_number: formatPhilhealthNumber(a?.philhealth_number ?? ""),
+          tin_number: formatTinNumber(a?.tin_number ?? ""),
 
           profile_image_path: a?.profile_image_path ?? "",
           sss_certain_path: a?.sss_certain_path ?? "",
@@ -826,10 +1153,75 @@ export default function EmployeeEditorModal({
     });
   }, [app.client_position]);
 
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+
+    async function loadDetachmentOptions() {
+      setDetachmentOptionsLoading(true);
+      try {
+        const res = await supabase
+          .from("contracts")
+          .select("specific_area, client_name, project_name, contract_no")
+          .not("specific_area", "is", null)
+          .order("specific_area", { ascending: true })
+          .limit(2000);
+
+        if (cancelled) return;
+        if (res.error) {
+          console.warn(res.error);
+          setDetachmentOptions([]);
+          return;
+        }
+
+        const unique = new Map<string, DetachmentOption>();
+        for (const row of ((res.data ?? []) as Array<Record<string, unknown>>)) {
+          const area = collapseWhitespace(row.specific_area == null ? "" : String(row.specific_area));
+          if (!area) continue;
+          const key = area.toLowerCase();
+          if (unique.has(key)) continue;
+          unique.set(key, {
+            area,
+            clientName: row.client_name == null ? null : String(row.client_name),
+            projectName: row.project_name == null ? null : String(row.project_name),
+            contractNo: row.contract_no == null ? null : String(row.contract_no),
+          });
+        }
+
+        setDetachmentOptions(Array.from(unique.values()).sort((a, b) => a.area.localeCompare(b.area)));
+      } finally {
+        if (!cancelled) setDetachmentOptionsLoading(false);
+      }
+    }
+
+    void loadDetachmentOptions();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
+
+  const detachmentChoices = useMemo(() => {
+    const current = collapseWhitespace(app.detachment);
+    const list = [...detachmentOptions];
+    if (current && !list.some((option) => option.area.toLowerCase() === current.toLowerCase())) {
+      list.unshift({
+        area: current,
+        clientName: null,
+        projectName: null,
+        contractNo: "Current value",
+      });
+    }
+    return list;
+  }, [app.detachment, detachmentOptions]);
+
   async function uploadToBucket(bucket: string, id: string, file: File, prefix: string) {
     const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
     const path = `${id}/${prefix}-${Date.now()}-${safeName}`;
-    const upRes = await supabase.storage.from(bucket).upload(path, file);
+    const upRes = await supabase.storage.from(bucket).upload(path, file, {
+      contentType: file.type || mimeTypeForExtension(getFileExtension(file.name)) || undefined,
+      upsert: true,
+    });
     if (upRes.error) throw upRes.error;
     return path;
   }
@@ -841,22 +1233,38 @@ export default function EmployeeEditorModal({
     file?: File | null
   ) {
     if (!file) return;
+    if (!isAllowedGeneralDocument(file)) {
+      setError("Unsupported file type. Allowed uploads: images, PDF, Word, Excel, ZIP, and RAR files.");
+      return;
+    }
     const id = effectiveId;
     if (!id) {
       setError("Missing employee id; please try reopening the modal.");
       return;
     }
     setError("");
+    setUploadingFileKey(prefix);
     try {
-      const path = await uploadToBucket(bucket, id, file, prefix);
-      setter(path, file);
+      const optimizedFile = await optimizeUploadFile(file);
+      const path = await uploadToBucket(bucket, id, optimizedFile, prefix);
+      setter(path, optimizedFile);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Upload failed");
+    } finally {
+      setUploadingFileKey((current) => (current === prefix ? null : current));
     }
   }
 
   async function save() {
     setError("");
+
+    const socialError = validateSocialWelfareValues(app);
+    if (socialError) {
+      setTab("social");
+      setError(socialError);
+      return;
+    }
+
     setSaving(true);
 
     try {
@@ -1270,12 +1678,20 @@ export default function EmployeeEditorModal({
                         View
                       </a>
                     ) : null}
-                    <label className="px-3 py-2 rounded-xl bg-[#FFDA03] text-black text-sm font-semibold cursor-pointer">
-                      Upload
+                    {uploadingFileKey === "profile" ? (
+                      <LoadingCircle label="Uploading..." sizeClassName="h-5 w-5" className="flex-row text-xs" />
+                    ) : null}
+                    <label
+                      className={`px-3 py-2 rounded-xl bg-[#FFDA03] text-black text-sm font-semibold ${
+                        uploadingFileKey ? "cursor-not-allowed opacity-60" : "cursor-pointer"
+                      }`}
+                    >
+                      {uploadingFileKey === "profile" ? "Uploading" : "Upload"}
                       <input
                         type="file"
                         className="hidden"
                         accept="image/*"
+                        disabled={Boolean(uploadingFileKey)}
                         onChange={(e) =>
                           onPickFile(
                             BUCKETS.applicants,
@@ -1300,15 +1716,17 @@ export default function EmployeeEditorModal({
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <label className="text-sm text-black md:col-span-2">
                   <div className="flex items-center justify-between">
-                    <div className="text-gray-600 mb-1">Custom ID</div>
+                    <div className="text-gray-600 mb-1">{idNumberLabel}</div>
                     <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setApp((d) => ({ ...d, custom_id: generateCustomId() }))}
-                        className="text-xs text-blue-600 hover:underline"
-                      >
-                        Generate
-                      </button>
+                      {showIdGenerate ? (
+                        <button
+                          type="button"
+                          onClick={() => setApp((d) => ({ ...d, custom_id: generateCustomId() }))}
+                          className="text-xs text-blue-600 hover:underline"
+                        >
+                          Generate
+                        </button>
+                      ) : null}
                       <button
                         type="button"
                         onClick={() => setApp((d) => ({ ...d, custom_id: "" }))}
@@ -1321,7 +1739,7 @@ export default function EmployeeEditorModal({
                   <input
                     value={app.custom_id}
                     onChange={(e) => setApp((d) => ({ ...d, custom_id: e.target.value }))}
-                    placeholder="EMP-XXXXXXXX"
+                    placeholder="Enter ID number"
                     className="w-full border rounded-xl px-3 py-2"
                   />
                 </label>
@@ -1387,7 +1805,7 @@ export default function EmployeeEditorModal({
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <label className="text-sm text-black">
-                  <div className="text-gray-600 mb-1">Emergency Contact</div>
+                  <div className="text-gray-600 mb-1">Emergency Contact Person</div>
                   <input value={app.emergency_contact_person}
                     onChange={(e) => setApp((d) => ({ ...d, emergency_contact_person: e.target.value }))}
                     className="w-full border rounded-xl px-3 py-2" />
@@ -1458,9 +1876,25 @@ export default function EmployeeEditorModal({
                 </label>
                 <label className="text-sm text-black">
                   <div className="text-gray-600 mb-1">Detachment</div>
-                  <input value={app.detachment}
+                  <select
+                    value={app.detachment}
                     onChange={(e) => setApp((d) => ({ ...d, detachment: e.target.value }))}
-                    className="w-full border rounded-xl px-3 py-2" />
+                    className="w-full border rounded-xl px-3 py-2 bg-white"
+                  >
+                    <option value="">-- Select Specific Area --</option>
+                    {detachmentChoices.map((option) => (
+                      <option key={option.area} value={option.area}>
+                        {option.area}
+                      </option>
+                    ))}
+                  </select>
+                  <div className="mt-1 text-xs text-gray-500">
+                    {detachmentOptionsLoading
+                      ? "Loading contract areas..."
+                      : detachmentOptions.length
+                        ? "Options are pulled from Client contract Specific Area values."
+                        : "Create a Client contract with a Specific Area to add detachment options."}
+                  </div>
                 </label>
                 <label className="text-sm text-black">
                   <div className="text-gray-600 mb-1">Hire Date</div>
@@ -1482,8 +1916,6 @@ export default function EmployeeEditorModal({
                           ? "border-emerald-300"
                           : normalizeStatus(app.status) === "APPLICANT"
                           ? "border-sky-300"
-                          : normalizeStatus(app.status) === "INACTIVE"
-                          ? "border-red-300"
                           : normalizeStatus(app.status) === "AWOL"
                           ? "border-orange-300"
                           : normalizeStatus(app.status) === "RESIGNED"
@@ -1493,7 +1925,6 @@ export default function EmployeeEditorModal({
                     >
                       <option value="ACTIVE">ACTIVE</option>
                       <option value="APPLICANT">APPLICANT</option>
-                      <option value="INACTIVE">INACTIVE</option>
                       <option value="AWOL">AWOL</option>
                       <option value="RESIGNED">RESIGNED</option>
                       <option value="RETIRED">RETIRED</option>
@@ -1504,8 +1935,6 @@ export default function EmployeeEditorModal({
                           ? "bg-emerald-500"
                           : normalizeStatus(app.status) === "APPLICANT"
                           ? "bg-sky-500"
-                          : normalizeStatus(app.status) === "INACTIVE"
-                          ? "bg-red-500"
                           : normalizeStatus(app.status) === "AWOL"
                           ? "bg-orange-500"
                           : normalizeStatus(app.status) === "RESIGNED"
@@ -1541,7 +1970,7 @@ export default function EmployeeEditorModal({
               ) : null}
 
               <div className="rounded-2xl border p-4">
-                <div className="text-sm font-semibold text-black">Application Form Image</div>
+                <div className="text-sm font-semibold text-black">Application Form Document</div>
                 <div className="mt-2 flex flex-col md:flex-row md:items-center gap-3 justify-between">
                   <div className="text-xs text-gray-500 break-all">
                     {bio.applicant_form_path ? bio.applicant_form_path : "Not uploaded"}
@@ -1552,12 +1981,20 @@ export default function EmployeeEditorModal({
                         View
                       </a>
                     ) : null}
-                    <label className="px-3 py-2 rounded-xl bg-[#FFDA03] text-black text-sm font-semibold cursor-pointer">
-                      Upload
+                    {uploadingFileKey === "application_form" ? (
+                      <LoadingCircle label="Uploading..." sizeClassName="h-5 w-5" className="flex-row text-xs" />
+                    ) : null}
+                    <label
+                      className={`px-3 py-2 rounded-xl bg-[#FFDA03] text-black text-sm font-semibold ${
+                        uploadingFileKey ? "cursor-not-allowed opacity-60" : "cursor-pointer"
+                      }`}
+                    >
+                      {uploadingFileKey === "application_form" ? "Uploading" : "Upload"}
                       <input
                         type="file"
                         className="hidden"
-                        accept="image/*,application/pdf"
+                        accept={GENERAL_DOCUMENT_ACCEPT}
+                        disabled={Boolean(uploadingFileKey)}
                         onChange={(e) =>
                           onPickFile(
                             BUCKETS.certificates,
@@ -1589,7 +2026,81 @@ export default function EmployeeEditorModal({
                 </label>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-4">
+                <div className="grid grid-cols-1 items-end gap-4 md:grid-cols-[1fr_180px]">
+                  <label className="text-sm text-black">
+                    <div className="text-gray-600 mb-1">High School Name</div>
+                    <input
+                      value={highSchoolEducation.name}
+                      onChange={(e) => updateEducationNameYearField("highschool_when_where", "name", e.target.value)}
+                      className="w-full border rounded-xl px-3 py-2"
+                      placeholder="School name"
+                    />
+                  </label>
+                  <label className="text-sm text-black">
+                    <div className="text-gray-600 mb-1">Year Graduated</div>
+                    <input
+                      value={highSchoolEducation.year}
+                      onChange={(e) => updateEducationNameYearField("highschool_when_where", "year", e.target.value)}
+                      className="w-full border rounded-xl px-3 py-2"
+                      placeholder="e.g. 2016"
+                    />
+                  </label>
+                </div>
+
+                <div className="grid grid-cols-1 items-end gap-4 md:grid-cols-[1fr_180px]">
+                  <label className="text-sm text-black">
+                    <div className="text-gray-600 mb-1">College Name</div>
+                    <input
+                      value={collegeEducation.name}
+                      onChange={(e) => updateEducationNameYearField("college_when_where", "name", e.target.value)}
+                      className="w-full border rounded-xl px-3 py-2"
+                      placeholder="School name"
+                    />
+                  </label>
+                  <label className="text-sm text-black">
+                    <div className="text-gray-600 mb-1">Year Graduated</div>
+                    <input
+                      value={collegeEducation.year}
+                      onChange={(e) => updateEducationNameYearField("college_when_where", "year", e.target.value)}
+                      className="w-full border rounded-xl px-3 py-2"
+                      placeholder="e.g. 2020"
+                    />
+                  </label>
+                </div>
+
+                <div className="grid grid-cols-1 items-end gap-4 md:grid-cols-[1fr_180px]">
+                  <label className="text-sm text-black">
+                    <div className="text-gray-600 mb-1">Vocational Name</div>
+                    <input
+                      value={vocationalEducation.name}
+                      onChange={(e) => updateEducationNameYearField("vocational_when_where", "name", e.target.value)}
+                      className="w-full border rounded-xl px-3 py-2"
+                      placeholder="School or program name"
+                    />
+                  </label>
+                  <label className="text-sm text-black">
+                    <div className="text-gray-600 mb-1">Year Graduated</div>
+                    <input
+                      value={vocationalEducation.year}
+                      onChange={(e) => updateEducationNameYearField("vocational_when_where", "year", e.target.value)}
+                      className="w-full border rounded-xl px-3 py-2"
+                      placeholder="e.g. 2021"
+                    />
+                  </label>
+                </div>
+
+                <label className="block text-sm text-black">
+                  <div className="text-gray-600 mb-1">Course/Degree (When/Where)</div>
+                  <input
+                    value={certs.course_when_where}
+                    onChange={(e) => setCerts((d) => ({ ...d, course_when_where: e.target.value }))}
+                    className="w-full border rounded-xl px-3 py-2"
+                  />
+                </label>
+              </div>
+
+              <div className="hidden">
                 <label className="text-sm text-black">
                   <div className="text-gray-600 mb-1">High School (When/Where)</div>
                   <input value={certs.highschool_when_where}
@@ -1616,7 +2127,7 @@ export default function EmployeeEditorModal({
                 </label>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="hidden">
                 <label className="text-sm text-black">
                   <div className="text-gray-600 mb-1">Training (When/Where)</div>
                   <input value={certs.training_when_where}
@@ -1636,27 +2147,42 @@ export default function EmployeeEditorModal({
               <label className="text-sm text-black">
                 <div className="text-gray-600 mb-1">SSS No.</div>
                 <input value={app.sss_number}
-                  onChange={(e) => setApp((d) => ({ ...d, sss_number: e.target.value }))}
+                  onChange={(e) => setApp((d) => ({ ...d, sss_number: formatSssNumber(e.target.value) }))}
+                  inputMode="numeric"
+                  maxLength={12}
+                  placeholder="12-3456789-0"
                   className="w-full border rounded-xl px-3 py-2" />
               </label>
               <label className="text-sm text-black">
-                <div className="text-gray-600 mb-1">Pag-ibig No.</div>
+                <div className="text-gray-600 mb-1">Pag-IBIG No.</div>
                 <input value={app.pagibig_number}
-                  onChange={(e) => setApp((d) => ({ ...d, pagibig_number: e.target.value }))}
+                  onChange={(e) => setApp((d) => ({ ...d, pagibig_number: formatPagibigNumber(e.target.value) }))}
+                  inputMode="numeric"
+                  maxLength={14}
+                  placeholder="1234-5678-9012"
                   className="w-full border rounded-xl px-3 py-2" />
               </label>
               <label className="text-sm text-black">
-                <div className="text-gray-600 mb-1">Philhealth No.</div>
+                <div className="text-gray-600 mb-1">PhilHealth No.</div>
                 <input value={app.philhealth_number}
-                  onChange={(e) => setApp((d) => ({ ...d, philhealth_number: e.target.value }))}
+                  onChange={(e) => setApp((d) => ({ ...d, philhealth_number: formatPhilhealthNumber(e.target.value) }))}
+                  inputMode="numeric"
+                  maxLength={14}
+                  placeholder="12-345678901-2"
                   className="w-full border rounded-xl px-3 py-2" />
               </label>
               <label className="text-sm text-black">
                 <div className="text-gray-600 mb-1">TIN</div>
                 <input value={app.tin_number}
-                  onChange={(e) => setApp((d) => ({ ...d, tin_number: e.target.value }))}
+                  onChange={(e) => setApp((d) => ({ ...d, tin_number: formatTinNumber(e.target.value) }))}
+                  inputMode="numeric"
+                  maxLength={15}
+                  placeholder="123-456-789 or 123-456-789-000"
                   className="w-full border rounded-xl px-3 py-2" />
               </label>
+              <div className="md:col-span-2 rounded-xl border bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                These Social Welfare numbers are required before continuing: SSS, PhilHealth, Pag-IBIG, and TIN.
+              </div>
             </div>
           ) : tab === "licensure" ? (
             <div className="space-y-5">
@@ -1687,6 +2213,28 @@ export default function EmployeeEditorModal({
                     onChange={(e) => setLic((d) => ({ ...d, driver_expiration: e.target.value }))}
                     className="w-full border rounded-xl px-3 py-2" />
                 </label>
+              </div>
+
+              <div className="rounded-2xl border p-4">
+                <div className="text-sm font-semibold text-black">Training and Seminar</div>
+                <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <label className="text-sm text-black">
+                    <div className="text-gray-600 mb-1">Training (When/Where)</div>
+                    <input
+                      value={certs.training_when_where}
+                      onChange={(e) => setCerts((d) => ({ ...d, training_when_where: e.target.value }))}
+                      className="w-full border rounded-xl px-3 py-2"
+                    />
+                  </label>
+                  <label className="text-sm text-black">
+                    <div className="text-gray-600 mb-1">Seminar (When/Where)</div>
+                    <input
+                      value={certs.seminar_when_where}
+                      onChange={(e) => setCerts((d) => ({ ...d, seminar_when_where: e.target.value }))}
+                      className="w-full border rounded-xl px-3 py-2"
+                    />
+                  </label>
+                </div>
               </div>
 
               {/* <div className="rounded-2xl border p-4">
@@ -1771,11 +2319,16 @@ export default function EmployeeEditorModal({
             <div className="space-y-6">
               <div className="rounded-2xl border p-4">
                 <div className="text-sm font-semibold text-black">Scanned Documents</div>
+                <div className="mt-1 text-xs text-gray-500">
+                  Supported uploads: images, PDF, Word, Excel, ZIP, and RAR files. Images and supported Office files are optimized before upload when possible.
+                </div>
                 <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-4">
                   <DocUploadRow
                     label="SSS Certain"
                     path={app.sss_certain_path}
                     url={docPreview.sss}
+                    uploading={uploadingFileKey === "sss_certain"}
+                    uploadDisabled={Boolean(uploadingFileKey)}
                     onSet={(path) => setApp((d) => ({ ...d, sss_certain_path: path }))}
                     onPick={(file) => onPickFile(BUCKETS.applicants, "sss_certain", (p) => setApp((d) => ({ ...d, sss_certain_path: p })), file)}
                   />
@@ -1783,6 +2336,8 @@ export default function EmployeeEditorModal({
                     label="TIN ID"
                     path={app.tin_id_path}
                     url={docPreview.tin}
+                    uploading={uploadingFileKey === "tin_id"}
+                    uploadDisabled={Boolean(uploadingFileKey)}
                     onSet={(path) => setApp((d) => ({ ...d, tin_id_path: path }))}
                     onPick={(file) => onPickFile(BUCKETS.applicants, "tin_id", (p) => setApp((d) => ({ ...d, tin_id_path: p })), file)}
                   />
@@ -1790,6 +2345,8 @@ export default function EmployeeEditorModal({
                     label="PAG-IBIG ID"
                     path={app.pag_ibig_id_path}
                     url={docPreview.pagibig}
+                    uploading={uploadingFileKey === "pag_ibig"}
+                    uploadDisabled={Boolean(uploadingFileKey)}
                     onSet={(path) => setApp((d) => ({ ...d, pag_ibig_id_path: path }))}
                     onPick={(file) => onPickFile(BUCKETS.applicants, "pag_ibig", (p) => setApp((d) => ({ ...d, pag_ibig_id_path: p })), file)}
                   />
@@ -1797,6 +2354,8 @@ export default function EmployeeEditorModal({
                     label="PHILHEALTH ID"
                     path={app.philhealth_id_path}
                     url={docPreview.philhealth}
+                    uploading={uploadingFileKey === "philhealth"}
+                    uploadDisabled={Boolean(uploadingFileKey)}
                     onSet={(path) => setApp((d) => ({ ...d, philhealth_id_path: path }))}
                     onPick={(file) => onPickFile(BUCKETS.applicants, "philhealth", (p) => setApp((d) => ({ ...d, philhealth_id_path: p })), file)}
                   />
@@ -1804,6 +2363,8 @@ export default function EmployeeEditorModal({
                     label="Security License"
                     path={app.security_license_path}
                     url={docPreview.securityLicense}
+                    uploading={uploadingFileKey === "security_license"}
+                    uploadDisabled={Boolean(uploadingFileKey)}
                     onSet={(path) => setApp((d) => ({ ...d, security_license_path: path }))}
                     onPick={(file) => onPickFile(BUCKETS.licensure, "security_license", (p) => setApp((d) => ({ ...d, security_license_path: p })), file)}
                   />
@@ -1817,6 +2378,8 @@ export default function EmployeeEditorModal({
                     label="Gun Safety Certificate"
                     path={certs.gun_safety_certificate_path}
                     url={docPreview.gunSafety}
+                    uploading={uploadingFileKey === "gun_safety_certificate"}
+                    uploadDisabled={Boolean(uploadingFileKey)}
                     onSet={(path) => setCerts((d) => ({ ...d, gun_safety_certificate_path: path }))}
                     onPick={(file) =>
                       onPickFile(
@@ -1831,6 +2394,8 @@ export default function EmployeeEditorModal({
                     label="Training Certificate"
                     path={certs.training_path}
                     url={docPreview.training}
+                    uploading={uploadingFileKey === "training"}
+                    uploadDisabled={Boolean(uploadingFileKey)}
                     onSet={(path) => setCerts((d) => ({ ...d, training_path: path }))}
                     onPick={(file) => onPickFile(BUCKETS.certificates, "training", (p) => setCerts((d) => ({ ...d, training_path: p })), file)}
                   />
@@ -1838,6 +2403,8 @@ export default function EmployeeEditorModal({
                     label="Seminar Certificate"
                     path={certs.seminar_path}
                     url={docPreview.seminar}
+                    uploading={uploadingFileKey === "seminar"}
+                    uploadDisabled={Boolean(uploadingFileKey)}
                     onSet={(path) => setCerts((d) => ({ ...d, seminar_path: path }))}
                     onPick={(file) => onPickFile(BUCKETS.certificates, "seminar", (p) => setCerts((d) => ({ ...d, seminar_path: p })), file)}
                   />
@@ -1845,6 +2412,8 @@ export default function EmployeeEditorModal({
                     label="Highschool Diploma"
                     path={certs.highschool_diploma_path}
                     url={docPreview.hs}
+                    uploading={uploadingFileKey === "highschool_diploma"}
+                    uploadDisabled={Boolean(uploadingFileKey)}
                     onSet={(path) => setCerts((d) => ({ ...d, highschool_diploma_path: path }))}
                     onPick={(file) => onPickFile(BUCKETS.certificates, "highschool_diploma", (p) => setCerts((d) => ({ ...d, highschool_diploma_path: p })), file)}
                   />
@@ -1852,6 +2421,8 @@ export default function EmployeeEditorModal({
                     label="College Diploma"
                     path={certs.college_diploma_path}
                     url={docPreview.college}
+                    uploading={uploadingFileKey === "college_diploma"}
+                    uploadDisabled={Boolean(uploadingFileKey)}
                     onSet={(path) => setCerts((d) => ({ ...d, college_diploma_path: path }))}
                     onPick={(file) => onPickFile(BUCKETS.certificates, "college_diploma", (p) => setCerts((d) => ({ ...d, college_diploma_path: p })), file)}
                   />
@@ -1859,6 +2430,8 @@ export default function EmployeeEditorModal({
                     label="Vocational"
                     path={certs.vocational_path}
                     url={docPreview.vocational}
+                    uploading={uploadingFileKey === "vocational"}
+                    uploadDisabled={Boolean(uploadingFileKey)}
                     onSet={(path) => setCerts((d) => ({ ...d, vocational_path: path }))}
                     onPick={(file) => onPickFile(BUCKETS.certificates, "vocational", (p) => setCerts((d) => ({ ...d, vocational_path: p })), file)}
                   />
@@ -1869,7 +2442,7 @@ export default function EmployeeEditorModal({
                 <div className="flex items-center justify-between gap-3">
                   <div>
                     <div className="text-sm font-semibold text-black">Other Documents</div>
-                    <div className="text-xs text-gray-500">Add as many additional documents as needed. New uploads default to the Certificates bucket, and labels auto-fill from the filename.</div>
+                    <div className="text-xs text-gray-500">Add as many additional documents as needed. New uploads default to the Certificates bucket, labels auto-fill from the filename, and Word/Excel/image uploads are optimized when possible.</div>
                   </div>
                   <button
                     type="button"
@@ -1886,6 +2459,7 @@ export default function EmployeeEditorModal({
                   <div className="mt-3 space-y-3">
                     {otherDocs.map((doc, idx) => {
                       const preview = publicUrl(doc.bucket, doc.path || null);
+                      const uploadKey = `other_document_${idx + 1}`;
                       return (
                         <div key={doc.document_id ?? `other-doc-${idx}`} className="rounded-xl border p-3">
                           <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-3 items-end">
@@ -1926,16 +2500,24 @@ export default function EmployeeEditorModal({
                                 View
                               </a>
                             ) : null}
-                            <label className="px-3 py-2 rounded-xl bg-[#FFDA03] text-black text-sm font-semibold cursor-pointer">
-                              Upload
+                            {uploadingFileKey === uploadKey ? (
+                              <LoadingCircle label="Uploading..." sizeClassName="h-5 w-5" className="flex-row text-xs" />
+                            ) : null}
+                            <label
+                              className={`px-3 py-2 rounded-xl bg-[#FFDA03] text-black text-sm font-semibold ${
+                                uploadingFileKey ? "cursor-not-allowed opacity-60" : "cursor-pointer"
+                              }`}
+                            >
+                              {uploadingFileKey === uploadKey ? "Uploading" : "Upload"}
                               <input
                                 type="file"
                                 className="hidden"
-                                accept="image/*,application/pdf"
+                                accept={GENERAL_DOCUMENT_ACCEPT}
+                                disabled={Boolean(uploadingFileKey)}
                                 onChange={(e) =>
                                   onPickFile(
                                     doc.bucket || "certificates",
-                                    `other_document_${idx + 1}`,
+                                    uploadKey,
                                     (path, uploadedFile) =>
                                       setOtherDocs((prev) =>
                                         prev.map((item, i) =>
@@ -1958,6 +2540,7 @@ export default function EmployeeEditorModal({
                             </label>
                             <button
                               type="button"
+                              disabled={Boolean(uploadingFileKey)}
                               onClick={() =>
                                 setOtherDocs((prev) => prev.map((item, i) => (i === idx ? { ...item, path: "" } : item)))
                               }
@@ -2032,12 +2615,16 @@ function DocUploadRow({
   label,
   path,
   url,
+  uploading = false,
+  uploadDisabled = false,
   onSet,
   onPick,
 }: {
   label: string;
   path: string;
   url: string | null;
+  uploading?: boolean;
+  uploadDisabled?: boolean;
   onSet: (path: string) => void;
   onPick: (file?: File | null) => void;
 }) {
@@ -2056,18 +2643,25 @@ function DocUploadRow({
             View
           </a>
         ) : null}
-        <label className="px-3 py-2 rounded-xl bg-[#FFDA03] text-black text-sm font-semibold cursor-pointer">
-          Upload
+        {uploading ? <LoadingCircle label="Uploading..." sizeClassName="h-5 w-5" className="flex-row text-xs" /> : null}
+        <label
+          className={`px-3 py-2 rounded-xl bg-[#FFDA03] text-black text-sm font-semibold ${
+            uploadDisabled ? "cursor-not-allowed opacity-60" : "cursor-pointer"
+          }`}
+        >
+          {uploading ? "Uploading" : "Upload"}
           <input
             type="file"
             className="hidden"
-            accept="image/*,application/pdf"
+            accept={GENERAL_DOCUMENT_ACCEPT}
+            disabled={uploadDisabled}
             onChange={(e) => onPick(e.target.files?.[0])}
           />
         </label>
         <button
           type="button"
           onClick={() => onSet("")}
+          disabled={uploadDisabled}
           className="px-3 py-2 rounded-xl border bg-white text-black text-sm"
         >
           Clear

@@ -3,6 +3,7 @@
 import React, { useMemo, useState } from "react";
 import * as XLSX from "xlsx";
 import { supabase } from "../Client/SupabaseClients";
+import { readSpreadsheetRows } from "./spreadsheetImportUtils";
 
 export type EmployeeExcelImportModalProps = {
   open: boolean;
@@ -664,22 +665,7 @@ export default function EmployeeExcelImportModal({
     setFileName(file.name);
 
     try {
-      const lower = file.name.toLowerCase();
-      const isCsv = lower.endsWith(".csv") || file.type === "text/csv";
-
-      const wb = isCsv
-        ? XLSX.read(await file.text(), { type: "string", cellDates: true })
-        : XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: true });
-      const sheetName = wb.SheetNames[0];
-      if (!sheetName) throw new Error("No sheets found in Excel file");
-      const sheet = wb.Sheets[sheetName];
-      const json = XLSX.utils.sheet_to_json<RowObject>(sheet, {
-        defval: "",
-        // Use formatted cell text where possible to preserve values like IDs that
-        // Excel may otherwise parse as numbers (and display in scientific notation).
-        raw: false,
-      });
-      setRows(json);
+      setRows(await readSpreadsheetRows(file));
     } catch (e: unknown) {
       setRows([]);
       setParsingError(e instanceof Error ? e.message : "Failed to parse file");
@@ -891,7 +877,7 @@ export default function EmployeeExcelImportModal({
     } catch (e: unknown) {
       errors.push(e instanceof Error ? e.message : "Import failed");
     } finally {
-      const skipped = Math.max(0, rows.length - inserted - updated);
+      const skipped = Math.max(0, rows.length - inserted - updated - unchanged);
       const msg = `Imported ${inserted} • Updated ${updated} • Unchanged ${unchanged} • Skipped ${skipped}.`;
       setResultMsg(msg);
       onImported?.({ inserted, updated, skipped, errors });

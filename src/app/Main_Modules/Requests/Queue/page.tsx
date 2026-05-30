@@ -85,7 +85,7 @@ function moduleKeysForRequest(moduleKey: string): string[] {
   const key = String(moduleKey ?? "").trim().toLowerCase();
   if (!key) return [];
   if (key === "logistics") {
-    return ["inventory", "paraphernalia", "reports", "car_insurance_expiration", "logistics"];
+    return ["inventory", "paraphernalia", "car_insurance_expiration", "logistics"];
   }
   return [key];
 }

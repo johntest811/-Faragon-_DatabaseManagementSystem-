@@ -29,13 +29,15 @@ values
   ('client', 'Client', '/Main_Modules/Client/'),
   ('inventory', 'Inventory', '/Main_Modules/Inventory/'),
   ('paraphernalia', 'Paraphernalia', '/Main_Modules/Paraphernalia/'),
-  ('reports', 'Reports', '/Main_Modules/Reports/'),
   ('requests', 'Requests', '/Main_Modules/Requests/'),
   ('audit', 'Audit', '/Main_Modules/Audit/'),
+  ('recent_activities', 'Recent Activities', '/Main_Modules/Audit/'),
   ('settings', 'Settings', '/Main_Modules/Settings/'),
   ('access', 'Admin Accounts', '/Main_Modules/AdminAccounts/'),
   ('logistics', 'Logistics', '/Main_Modules/Logistics/'),
-  ('car_insurance_expiration', 'Car Insurance Expiration', '/Main_Modules/Logistics/CarInsuranceExpiration/')
+  ('car_insurance_expiration', 'Car Insurance Expiration', '/Main_Modules/Logistics/CarInsuranceExpiration/'),
+  ('preview_service_anniversary', 'Preview (1+ year of service)', '/Main_Modules/Employees/'),
+  ('expiring_licenses_records', 'Expiring Licenses and Records', '/Main_Modules/Employees/')
 on conflict (module_key) do update
 set display_name = excluded.display_name,
     path = excluded.path;
@@ -346,13 +348,6 @@ with superadmin_role as (
     ('paraphernalia', 'export_template'),
     ('paraphernalia', 'export_file'),
 
-    ('reports', 'report_type'),
-    ('reports', 'date_from'),
-    ('reports', 'date_to'),
-    ('reports', 'generated_by'),
-    ('reports', 'generated_at'),
-    ('reports', 'total_records'),
-
     ('requests', 'request_scope_row'),
     ('requests', 'request_scope_column'),
     ('requests', 'requested_module_key'),
@@ -391,7 +386,6 @@ with superadmin_role as (
     ('logistics', 'client'),
     ('logistics', 'inventory'),
     ('logistics', 'paraphernalia'),
-    ('logistics', 'reports'),
     ('logistics', 'car_insurance_expiration')
 )
 insert into public.role_column_access (role_id, module_key, column_key, can_read)

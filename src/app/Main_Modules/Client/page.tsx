@@ -13,6 +13,7 @@ import TableZoomWrapper from "@/app/Components/TableZoomWrapper";
 import { useToast } from "@/app/Components/ToastProvider";
 import ImportSummaryModal, { ImportSummaryData } from "../Components/ImportSummaryModal";
 import SpreadsheetImportModal from "@/app/Components/SpreadsheetImportModal";
+import { readSpreadsheetRows } from "@/app/Components/spreadsheetImportUtils";
 import { addBrandedPdfHeader, buildBrandedAoa, buildBrandedWorkbookBuffer } from "../Components/exportBranding";
 
 
@@ -36,21 +37,29 @@ type ClientRow = {
   deployed_guards: number | null;
   remarks: string | null;
   employees: string[];
-  employeeLinks: Array<{ applicant_id: string; name: string }>;
+  employeeLinks: EmployeeLink[];
 };
 
-type ApplicantOption = {
+type AssignedEmployeeRow = {
   applicant_id: string;
+  custom_id: string | null;
   first_name: string | null;
   middle_name: string | null;
   last_name: string | null;
   extn_name: string | null;
+  detachment: string | null;
   status: string | null;
 };
 
 type SaveState = {
   type: "" | "success" | "error";
   message: string;
+};
+
+type EmployeeLink = {
+  applicant_id: string;
+  custom_id: string | null;
+  name: string;
 };
 
 type ContractForm = {
@@ -63,7 +72,6 @@ type ContractForm = {
   contract_start: string;
   contract_end: string;
   contracted_manpower: string;
-  deployed_guards: string;
   status: string;
   created_at: string;
   remarks: string;
@@ -79,7 +87,6 @@ const EMPTY_FORM: ContractForm = {
   contract_start: "",
   contract_end: "",
   contracted_manpower: "",
-  deployed_guards: "",
   status: "ACTIVE",
   created_at: "",
   remarks: "",
@@ -87,6 +94,16 @@ const EMPTY_FORM: ContractForm = {
 
 const inputClass = "w-full rounded-xl border px-3 py-2 text-sm text-black outline-none focus:ring-2 focus:ring-[#FFDA03]";
 const labelClass = "block text-xs font-semibold uppercase tracking-wide text-gray-600 mb-1";
+const CLIENT_SECTORS = [
+  { value: "Metro Manila", label: "1 Metro Manila" },
+  { value: "Northern Luzon", label: "2 Northern Luzon" },
+  { value: "Southern Visayas", label: "3 Southern Visayas" },
+  { value: "Visayas", label: "4 Visayas" },
+  { value: "Mindanao", label: "5 Mindanao" },
+] as const;
+
+type ClientSectorValue = (typeof CLIENT_SECTORS)[number]["value"];
+type ClientSectorFilter = "ALL" | ClientSectorValue;
 
 function ModalShell({
   open,
@@ -157,6 +174,32 @@ function normalizeImportKey(value: unknown) {
     .replace(/\s+/g, " ");
 }
 
+function normalizeSectorKey(value: unknown) {
+  return normalizeImportKey(value).replace(/^\d+\s+/, "");
+}
+
+function clusterMatchesSector(cluster: unknown, sector: ClientSectorValue) {
+  return normalizeSectorKey(cluster) === normalizeSectorKey(sector);
+}
+
+function normalizeAreaKey(value: unknown) {
+  return String(value ?? "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .toLowerCase();
+}
+
+function normalizeStatus(value: unknown) {
+  const status = String(value ?? "").trim().toUpperCase();
+  if (!status) return "ACTIVE";
+  if (status === "REASSIGN") return "AWOL";
+  return status;
+}
+
+function isActiveEmployeeStatus(value: unknown) {
+  return normalizeStatus(value) === "ACTIVE";
+}
+
 function downloadBlob(filename: string, blob: Blob) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -174,7 +217,7 @@ function firstOrNull<T>(value: T | T[] | null | undefined): T | null {
   return value;
 }
 
-function formatApplicantName(a: Partial<ApplicantOption> | null): string {
+function formatApplicantName(a: Partial<AssignedEmployeeRow> | null): string {
   if (!a) return "—";
   const last = String(a.last_name ?? "").trim();
   const first = String(a.first_name ?? "").trim();
@@ -185,6 +228,12 @@ function formatApplicantName(a: Partial<ApplicantOption> | null): string {
   const right = [first, middle, ext].filter((p) => p.length).join(" ");
   const full = `${left} ${right}`.trim();
   return full.length ? full : "—";
+}
+
+function formatEmployeeIdNumber(applicantId: string, customId: string | null | undefined) {
+  const clean = String(customId ?? "").trim();
+  if (clean) return clean;
+  return `EMP-${applicantId.slice(0, 2).toUpperCase()}-${applicantId.slice(2, 5).toUpperCase()}`;
 }
 
 function fmt(v: string | number | null | undefined) {
@@ -205,6 +254,24 @@ function toDatetimeLocalValue(v: string | null) {
   const hh = String(d.getHours()).padStart(2, "0");
   const min = String(d.getMinutes()).padStart(2, "0");
   return `${yyyy}-${mm}-${dd}T${hh}:${min}`;
+}
+
+function omitBlankCreatedAt<T extends Record<string, unknown>>(payload: T) {
+  const next: Record<string, unknown> = { ...payload };
+  if (String(next.created_at ?? "").trim() === "") delete next.created_at;
+  return next;
+}
+
+function toDateInputValue(v: string | null) {
+  const raw = String(v ?? "").trim();
+  if (!raw) return "";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  const d = new Date(raw);
+  if (Number.isNaN(d.getTime())) return "";
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
 }
 
 /* ------------------- Main Page Component ------------------- */
@@ -245,13 +312,15 @@ export default function ClientsPage() {
 
   const [search, setSearch] = useState("");
   const [sortBy, setSortBy] = useState<"created_at" | "contract_no" | "client_name">("created_at");
+  const [sectorFilter, setSectorFilter] = useState<ClientSectorFilter>("ALL");
   const [page, setPage] = useState(1);
 
   const [contractForm, setContractForm] = useState<ContractForm>(EMPTY_FORM);
 
-  const [applicants, setApplicants] = useState<ApplicantOption[]>([]);
-  const [applicantsLoading, setApplicantsLoading] = useState(false);
-  const [applicantsError, setApplicantsError] = useState("");
+  const [employeeLinksByArea, setEmployeeLinksByArea] = useState<Map<string, EmployeeLink[]>>(new Map());
+  const [applicants] = useState<AssignedEmployeeRow[]>([]);
+  const [applicantsLoading] = useState(false);
+  const [applicantsError] = useState("");
   const [applicantSearch, setApplicantSearch] = useState("");
   const [selectedApplicantIds, setSelectedApplicantIds] = useState<string[]>([]);
 
@@ -276,18 +345,15 @@ export default function ClientsPage() {
 
   async function downloadTemplate(format: "xlsx" | "csv") {
     const sample = {
-      contract_no: "CN-2026-001",
-      contract_no_date: "2026-02-01",
+      contract_no: "2026-02-01",
+      cluster: "Metro Manila",
       client_name: "Sample Client",
-      project_name: "Project Alpha",
       specific_area: "Area 1",
-      cluster: "Cluster A",
+      project_name: "Project Alpha",
       contract_start: "2026-02-01",
       contract_end: "2027-02-01",
       contracted_manpower: 10,
-      deployed_guards: 8,
       status: "ACTIVE",
-      created_at: "2026-02-01T08:00",
       remarks: "Optional notes",
     };
 
@@ -320,148 +386,7 @@ export default function ClientsPage() {
 
     setImporting(true);
     try {
-      const buf = await file.arrayBuffer();
-      const wb = XLSX.read(buf, { type: "array" });
-      const firstSheet = wb.SheetNames[0];
-      if (!firstSheet) throw new Error("No sheet found in selected file.");
-      const ws = wb.Sheets[firstSheet];
-      const rawRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: "" });
-      if (!rawRows.length) throw new Error("The selected file has no data rows.");
-
-      const rowErrors: string[] = [];
-      let skipped = 0;
-
-      const importedPayloads = rawRows
-        .map((row, idx) => {
-          const payload = {
-            contract_no: toNullableText(findValueByAliases(row, ["contract_no", "contract number", "contractno", "contract"])),
-            contract_no_date: toNullableText(findValueByAliases(row, ["contract_no_date", "contract no date", "contract date"])),
-            client_name: toNullableText(findValueByAliases(row, ["client_name", "client", "customer"])),
-            project_name: toNullableText(findValueByAliases(row, ["project_name", "project"])),
-            specific_area: toNullableText(findValueByAliases(row, ["specific_area", "area", "specific area"])),
-            cluster: toNullableText(findValueByAliases(row, ["cluster"])),
-            contract_start: toNullableText(findValueByAliases(row, ["contract_start", "start", "start_date", "contract start"])),
-            contract_end: toNullableText(findValueByAliases(row, ["contract_end", "end", "end_date", "contract end"])),
-            contracted_manpower: toNumberOrNull(findValueByAliases(row, ["contracted_manpower", "manpower", "contracted manpower"])),
-            deployed_guards: toNumberOrNull(findValueByAliases(row, ["deployed_guards", "deployed guards", "guards"])),
-            status: toNullableText(findValueByAliases(row, ["status"])),
-            created_at: toNullableText(findValueByAliases(row, ["created_at", "created at", "created"])),
-            remarks: toNullableText(findValueByAliases(row, ["remarks", "note", "notes", "comment"])),
-          };
-
-          const hasIdentity = Boolean(payload.contract_no || payload.client_name || payload.project_name);
-          if (!hasIdentity) {
-            skipped += 1;
-            rowErrors.push(`Row ${idx + 2}: Missing identity fields (contract_no/client_name/project_name).`);
-          }
-          return hasIdentity ? payload : null;
-        })
-        .filter((v): v is {
-          contract_no: string | null;
-          contract_no_date: string | null;
-          client_name: string | null;
-          project_name: string | null;
-          specific_area: string | null;
-          cluster: string | null;
-          contract_start: string | null;
-          contract_end: string | null;
-          contracted_manpower: number | null;
-          deployed_guards: number | null;
-          status: string | null;
-          created_at: string | null;
-          remarks: string | null;
-        } => Boolean(v));
-
-      if (!importedPayloads.length) throw new Error("No valid rows found. Ensure file has identifiable contract/client columns.");
-
-      const { data: existingRows, error: existingErr } = await supabase
-        .from("contracts")
-        .select("contract_id, contract_no, client_name, project_name, contract_start")
-        .limit(10000);
-      if (existingErr) throw existingErr;
-
-      const byContractNo = new Map<string, string>();
-      const byComposite = new Map<string, string>();
-      const byClientProject = new Map<string, string>();
-      const clientProjectCounts = new Map<string, number>();
-      for (const row of ((existingRows ?? []) as Array<Record<string, unknown>>)) {
-        const id = String(row.contract_id ?? "");
-        if (!id) continue;
-        const contractNo = normalizeImportKey(row.contract_no);
-        if (contractNo) byContractNo.set(contractNo, id);
-        const comp = [
-          normalizeImportKey(row.client_name),
-          normalizeImportKey(row.project_name),
-          normalizeImportKey(row.contract_start),
-        ].join("|");
-        if (comp !== "||") byComposite.set(comp, id);
-
-        const cp = [normalizeImportKey(row.client_name), normalizeImportKey(row.project_name)].join("|");
-        if (cp !== "|") {
-          clientProjectCounts.set(cp, (clientProjectCounts.get(cp) ?? 0) + 1);
-          if (!byClientProject.has(cp)) byClientProject.set(cp, id);
-        }
-      }
-
-      for (const [cp, count] of clientProjectCounts.entries()) {
-        if (count > 1) byClientProject.delete(cp);
-      }
-
-      const dedupedMap = new Map<string, (typeof importedPayloads)[number]>();
-      for (const payload of importedPayloads) {
-        const cno = normalizeImportKey(payload.contract_no);
-        const comp = [
-          normalizeImportKey(payload.client_name),
-          normalizeImportKey(payload.project_name),
-          normalizeImportKey(payload.contract_start),
-        ].join("|");
-        const cp = [normalizeImportKey(payload.client_name), normalizeImportKey(payload.project_name)].join("|");
-        const key = cno ? `cno:${cno}` : comp !== "||" ? `cmp:${comp}` : `cp:${cp}`;
-        if (dedupedMap.has(key)) skipped += 1;
-        dedupedMap.set(key, payload);
-      }
-
-      let inserted = 0;
-      let updated = 0;
-
-      for (const payload of dedupedMap.values()) {
-        const cno = normalizeImportKey(payload.contract_no);
-        const comp = [
-          normalizeImportKey(payload.client_name),
-          normalizeImportKey(payload.project_name),
-          normalizeImportKey(payload.contract_start),
-        ].join("|");
-        const cp = [normalizeImportKey(payload.client_name), normalizeImportKey(payload.project_name)].join("|");
-
-        const matchId =
-          (cno ? byContractNo.get(cno) : null) ??
-          byComposite.get(comp) ??
-          (cp !== "|" ? byClientProject.get(cp) : null) ??
-          null;
-        if (matchId) {
-          const upd = await supabase.from("contracts").update(payload).eq("contract_id", matchId);
-          if (upd.error) {
-            skipped += 1;
-            rowErrors.push(`Update failed for contract ${payload.contract_no ?? payload.client_name ?? "(unknown)"}: ${upd.error.message}`);
-            continue;
-          }
-          updated += 1;
-          continue;
-        }
-
-        const ins = await supabase.from("contracts").insert(payload);
-        if (ins.error) {
-          skipped += 1;
-          rowErrors.push(`Insert failed for contract ${payload.contract_no ?? payload.client_name ?? "(unknown)"}: ${ins.error.message}`);
-          continue;
-        }
-        inserted += 1;
-      }
-
-      setImportSummary({ inserted, updated, skipped, errors: rowErrors });
-      setImportSummaryOpen(true);
-      setSaveState({ type: "success", message: `Import complete. Inserted: ${inserted}, Updated (overwritten): ${updated}, Skipped: ${skipped}.` });
-      await loadConnectedData();
+      await handleClientImport(await readSpreadsheetRows(file));
     } catch (e: unknown) {
       setSaveState({ type: "error", message: e instanceof Error ? e.message : "Import failed." });
     } finally {
@@ -481,7 +406,6 @@ export default function ClientsPage() {
       contract_start: toNullableText(findValueByAliases(row, ["contract_start", "start", "start_date", "contract start"])),
       contract_end: toNullableText(findValueByAliases(row, ["contract_end", "end", "end_date", "contract end"])),
       contracted_manpower: toNumberOrNull(findValueByAliases(row, ["contracted_manpower", "manpower", "contracted manpower"])),
-      deployed_guards: toNumberOrNull(findValueByAliases(row, ["deployed_guards", "deployed guards", "guards"])),
       status: toNullableText(findValueByAliases(row, ["status"])),
       created_at: toNullableText(findValueByAliases(row, ["created_at", "created at", "created"])),
       remarks: toNullableText(findValueByAliases(row, ["remarks", "note", "notes", "comment"])),
@@ -569,6 +493,7 @@ export default function ClientsPage() {
     let updated = 0;
 
     for (const payload of dedupedMap.values()) {
+      const safePayload = omitBlankCreatedAt(payload);
       const cno = normalizeImportKey(payload.contract_no);
       const comp = [
         normalizeImportKey(payload.client_name),
@@ -583,7 +508,7 @@ export default function ClientsPage() {
         (cp !== "|" ? byClientProject.get(cp) : null) ??
         null;
       if (matchId) {
-        const upd = await supabase.from("contracts").update(payload).eq("contract_id", matchId);
+        const upd = await supabase.from("contracts").update(safePayload).eq("contract_id", matchId);
         if (upd.error) {
           skipped += 1;
           rowErrors.push(`Update failed for contract ${payload.contract_no ?? payload.client_name ?? "(unknown)"}: ${upd.error.message}`);
@@ -593,7 +518,7 @@ export default function ClientsPage() {
         continue;
       }
 
-      const ins = await supabase.from("contracts").insert(payload);
+      const ins = await supabase.from("contracts").insert(safePayload);
       if (ins.error) {
         skipped += 1;
         rowErrors.push(`Insert failed for contract ${payload.contract_no ?? payload.client_name ?? "(unknown)"}: ${ins.error.message}`);
@@ -622,7 +547,7 @@ export default function ClientsPage() {
 
     const narrowSelect = "contract_id, applicant_id, contract_no, status, created_at";
 
-    const applicantNameSelect = "first_name, middle_name, last_name, extn_name";
+    const applicantNameSelect = "custom_id, first_name, middle_name, last_name, extn_name";
     const directApplicantEmbed = `applicants!contracts_applicant_id_fkey(${applicantNameSelect})`;
     const joinEmployeesEmbed = `contract_employees(applicant_id, applicants!contract_employees_applicant_id_fkey(${applicantNameSelect}))`;
 
@@ -666,12 +591,51 @@ export default function ClientsPage() {
       return;
     }
 
+    const employeeRes = await supabase
+      .from("applicants")
+      .select("applicant_id, custom_id, first_name, middle_name, last_name, extn_name, detachment, status, is_archived, is_trashed")
+      .eq("is_archived", false)
+      .eq("is_trashed", false)
+      .not("detachment", "is", null)
+      .limit(10000);
+
+    const assignedByArea = new Map<string, EmployeeLink[]>();
+    if (!employeeRes.error) {
+      for (const applicant of ((employeeRes.data ?? []) as unknown as AssignedEmployeeRow[])) {
+        if (!isActiveEmployeeStatus(applicant.status)) continue;
+        const areaKey = normalizeAreaKey(applicant.detachment);
+        if (!areaKey) continue;
+        const name = formatApplicantName(applicant);
+        if (!name || name === "â€”") continue;
+        const next = assignedByArea.get(areaKey) ?? [];
+        next.push({
+          applicant_id: String(applicant.applicant_id),
+          custom_id: applicant.custom_id,
+          name,
+        });
+        assignedByArea.set(areaKey, next);
+      }
+
+      for (const [key, links] of assignedByArea.entries()) {
+        assignedByArea.set(
+          key,
+          links
+            .filter((link, index, list) => list.findIndex((candidate) => candidate.applicant_id === link.applicant_id) === index)
+            .sort((a, b) => a.name.localeCompare(b.name))
+        );
+      }
+    } else {
+      console.warn(employeeRes.error);
+    }
+
+    setEmployeeLinksByArea(new Map(assignedByArea));
+
     const merged: ClientRow[] = ((data ?? []) as Record<string, unknown>[]).map((contract) => {
       const contractApplicantId = contract.applicant_id == null ? null : String(contract.applicant_id);
       const directApplicant = firstOrNull(
         contract.applicants as
-          | { first_name?: unknown; middle_name?: unknown; last_name?: unknown; extn_name?: unknown }
-          | { first_name?: unknown; middle_name?: unknown; last_name?: unknown; extn_name?: unknown }[]
+          | { custom_id?: unknown; first_name?: unknown; middle_name?: unknown; last_name?: unknown; extn_name?: unknown }
+          | { custom_id?: unknown; first_name?: unknown; middle_name?: unknown; last_name?: unknown; extn_name?: unknown }[]
           | null
       );
 
@@ -681,8 +645,8 @@ export default function ClientsPage() {
           const applicantId = jr.applicant_id == null ? null : String(jr.applicant_id);
           const applicant = firstOrNull(
             jr.applicants as
-              | { first_name?: unknown; middle_name?: unknown; last_name?: unknown; extn_name?: unknown }
-              | { first_name?: unknown; middle_name?: unknown; last_name?: unknown; extn_name?: unknown }[]
+              | { custom_id?: unknown; first_name?: unknown; middle_name?: unknown; last_name?: unknown; extn_name?: unknown }
+              | { custom_id?: unknown; first_name?: unknown; middle_name?: unknown; last_name?: unknown; extn_name?: unknown }[]
               | null
           );
           const name = formatApplicantName({
@@ -692,9 +656,13 @@ export default function ClientsPage() {
             extn_name: applicant?.extn_name == null ? null : String(applicant.extn_name),
           });
           if (!applicantId || !name || name === "—") return null;
-          return { applicant_id: applicantId, name };
+          return {
+            applicant_id: applicantId,
+            custom_id: applicant?.custom_id == null ? null : String(applicant.custom_id),
+            name,
+          };
         })
-        .filter((v): v is { applicant_id: string; name: string } => Boolean(v));
+        .filter((v): v is EmployeeLink => Boolean(v));
 
       const directName = directApplicant
         ? formatApplicantName({
@@ -705,14 +673,21 @@ export default function ClientsPage() {
           })
         : null;
 
-        const employeeLinksMap = new Map<string, { applicant_id: string; name: string }>();
+        const employeeLinksMap = new Map<string, EmployeeLink>();
         for (const link of joinEmployeeLinks) {
           if (!employeeLinksMap.has(link.applicant_id)) employeeLinksMap.set(link.applicant_id, link);
         }
         if (contractApplicantId && directName && directName !== "—" && !employeeLinksMap.has(contractApplicantId)) {
-          employeeLinksMap.set(contractApplicantId, { applicant_id: contractApplicantId, name: directName });
+          employeeLinksMap.set(contractApplicantId, {
+            applicant_id: contractApplicantId,
+            custom_id: directApplicant?.custom_id == null ? null : String(directApplicant.custom_id),
+            name: directName,
+          });
         }
-        const employeeLinks = Array.from(employeeLinksMap.values());
+        const employeeLinksFromJoin = Array.from(employeeLinksMap.values());
+        const areaKey = normalizeAreaKey(contract.specific_area);
+        const areaEmployeeLinks = areaKey ? assignedByArea.get(areaKey) ?? [] : [];
+        const employeeLinks = areaKey ? areaEmployeeLinks : employeeLinksFromJoin;
 
         const allNames = [
           ...employeeLinks.map((x) => x.name),
@@ -737,10 +712,11 @@ export default function ClientsPage() {
           contract.contracted_manpower == null || contract.contracted_manpower === ""
             ? null
             : Number(contract.contracted_manpower),
-        deployed_guards:
-          contract.deployed_guards == null || contract.deployed_guards === ""
+        deployed_guards: employeeRes.error
+          ? contract.deployed_guards == null || contract.deployed_guards === ""
             ? null
-            : Number(contract.deployed_guards),
+            : Number(contract.deployed_guards)
+          : areaEmployeeLinks.length,
         remarks: contract.remarks == null ? null : String(contract.remarks),
         employees: uniqueNames,
         employeeLinks,
@@ -789,48 +765,26 @@ export default function ClientsPage() {
     }
   }
 
-  async function loadApplicants() {
-    setApplicantsLoading(true);
-    setApplicantsError("");
+  async function countActiveEmployeesForSpecificArea(specificArea: string | null) {
+    const areaKey = normalizeAreaKey(specificArea);
+    if (!areaKey) return 0;
 
-    const all: ApplicantOption[] = [];
-    const pageSizeInternal = 1000;
-    const maxRows = 200000;
-    let offset = 0;
+    const res = await supabase
+      .from("applicants")
+      .select("applicant_id, detachment, status")
+      .eq("is_archived", false)
+      .eq("is_trashed", false)
+      .not("detachment", "is", null)
+      .limit(10000);
 
-    while (true) {
-      const res = await supabase
-        .from("applicants")
-        .select("applicant_id, first_name, middle_name, last_name, extn_name, status")
-        .eq("is_archived", false)
-        .eq("is_trashed", false)
-        .order("last_name", { ascending: true })
-        .range(offset, offset + pageSizeInternal - 1);
-
-      if (res.error) {
-        setApplicants([]);
-        setApplicantsError(res.error.message || "Failed to load applicants");
-        setApplicantsLoading(false);
-        return;
-      }
-
-      const batch = (res.data ?? []).map((a) => ({
-        applicant_id: String(a.applicant_id),
-        first_name: a.first_name == null ? null : String(a.first_name),
-        middle_name: a.middle_name == null ? null : String(a.middle_name),
-        last_name: a.last_name == null ? null : String(a.last_name),
-        extn_name: a.extn_name == null ? null : String(a.extn_name),
-        status: a.status == null ? null : String(a.status),
-      }));
-
-      all.push(...batch);
-      offset += batch.length;
-      if (batch.length < pageSizeInternal) break;
-      if (offset >= maxRows) break;
+    if (res.error) {
+      console.warn(res.error);
+      return employeeLinksByArea.get(areaKey)?.length ?? 0;
     }
 
-    setApplicants(all);
-    setApplicantsLoading(false);
+    return ((res.data ?? []) as Array<Record<string, unknown>>).filter(
+      (row) => isActiveEmployeeStatus(row.status) && normalizeAreaKey(row.detachment) === areaKey
+    ).length;
   }
 
   async function submitContract(e: FormEvent) {
@@ -844,24 +798,27 @@ export default function ClientsPage() {
     setSavingKey("contract");
     setSaveState({ type: "", message: "" });
 
-    const firstApplicantId = selectedApplicantIds[0] ?? null;
+    const specificArea = toNullableText(contractForm.specific_area);
+    const deployedGuards = await countActiveEmployeesForSpecificArea(specificArea);
 
-    const insertPayload = {
-      applicant_id: firstApplicantId,
+    const createdAt = toNullableText(contractForm.created_at);
+    const insertPayload: Record<string, string | number | null> = {
+      applicant_id: null,
       contract_no: toNullableText(contractForm.contract_no),
       contract_no_date: toNullableText(contractForm.contract_no_date),
       client_name: toNullableText(contractForm.client_name),
       project_name: toNullableText(contractForm.project_name),
-      specific_area: toNullableText(contractForm.specific_area),
+      specific_area: specificArea,
       cluster: toNullableText(contractForm.cluster),
       contract_start: toNullableText(contractForm.contract_start),
       contract_end: toNullableText(contractForm.contract_end),
       contracted_manpower: toNumberOrNull(contractForm.contracted_manpower),
-      deployed_guards: toNumberOrNull(contractForm.deployed_guards),
+      deployed_guards: deployedGuards,
       status: toNullableText(contractForm.status) || "ACTIVE",
-      created_at: toNullableText(contractForm.created_at),
       remarks: toNullableText(contractForm.remarks),
     };
+    if (createdAt) insertPayload.created_at = createdAt;
+    const safePayload = omitBlankCreatedAt(insertPayload);
 
     if (editorMode === "edit") {
       if (!editingContractId) {
@@ -872,7 +829,7 @@ export default function ClientsPage() {
 
       const updRes = await supabase
         .from("contracts")
-        .update(insertPayload)
+        .update(safePayload)
         .eq("contract_id", editingContractId);
 
       if (updRes.error) {
@@ -881,40 +838,11 @@ export default function ClientsPage() {
         return;
       }
 
-      const delJoinRes = await supabase.from("contract_employees").delete().eq("contract_id", editingContractId);
-      if (delJoinRes.error) {
-        setSaveState({ type: "error", message: `Contract updated, but employee links cleanup failed: ${delJoinRes.error.message}` });
-        await loadConnectedData();
-        setSavingKey(null);
-        return;
-      }
-
-      if (selectedApplicantIds.length) {
-        const joinRes = await supabase.from("contract_employees").insert(
-          selectedApplicantIds.map((applicant_id) => ({
-            contract_id: editingContractId,
-            applicant_id,
-          }))
-        );
-
-        if (joinRes.error) {
-          setSaveState({
-            type: "error",
-            message:
-              `Contract updated, but assigning employees failed: ${joinRes.error.message}. ` +
-              `If you haven't run the migration yet, run supabase_add_contract_employees.sql in Supabase.`,
-          });
-          await loadConnectedData();
-          setSavingKey(null);
-          return;
-        }
-      }
-
       setSaveState({ type: "success", message: "Contract updated." });
     } else {
       const insertRes = await supabase
         .from("contracts")
-        .insert([insertPayload])
+        .insert([safePayload])
         .select("contract_id")
         .single();
 
@@ -924,34 +852,10 @@ export default function ClientsPage() {
         return;
       }
 
-      const createdContractId = insertRes.data?.contract_id ? String(insertRes.data.contract_id) : null;
-      if (createdContractId && selectedApplicantIds.length) {
-        const joinRes = await supabase.from("contract_employees").insert(
-          selectedApplicantIds.map((applicant_id) => ({
-            contract_id: createdContractId,
-            applicant_id,
-          }))
-        );
-
-        if (joinRes.error) {
-          setSaveState({
-            type: "error",
-            message:
-              `Contract saved, but assigning employees failed: ${joinRes.error.message}. ` +
-              `If you haven't run the migration yet, run supabase_add_contract_employees.sql in Supabase.`,
-          });
-          await loadConnectedData();
-          setSavingKey(null);
-          return;
-        }
-      }
-
       setSaveState({ type: "success", message: "Contract saved." });
     }
 
     setContractForm(EMPTY_FORM);
-    setSelectedApplicantIds([]);
-    setApplicantSearch("");
     setEditingContractId(null);
     setEditorMode("create");
     await loadConnectedData();
@@ -972,32 +876,19 @@ export default function ClientsPage() {
       contract_start: row.contract_start ?? "",
       contract_end: row.contract_end ?? "",
       contracted_manpower: row.contracted_manpower == null ? "" : String(row.contracted_manpower),
-      deployed_guards: row.deployed_guards == null ? "" : String(row.deployed_guards),
       status: row.status ?? "ACTIVE",
       created_at: toDatetimeLocalValue(row.created_at),
       remarks: row.remarks ?? "",
     });
-    setApplicantSearch("");
     setEditorOpen(true);
-
-    const joinRes = await supabase.from("contract_employees").select("applicant_id").eq("contract_id", row.contract_id);
-    if (joinRes.error) {
-      setSelectedApplicantIds(row.applicant_id ? [row.applicant_id] : []);
-      setSaveState({ type: "error", message: `Loaded contract, but failed to load linked employees: ${joinRes.error.message}` });
-      return;
-    }
-
-    const joinIds = ((joinRes.data ?? []) as Array<{ applicant_id: string | null }>)
-      .map((r) => (r.applicant_id == null ? null : String(r.applicant_id)))
-      .filter((v): v is string => Boolean(v));
-    const base = row.applicant_id ? [row.applicant_id] : [];
-    setSelectedApplicantIds(Array.from(new Set([...base, ...joinIds])));
   }
 
   async function openDetails(row: ClientRow) {
     setDetailsRow(row);
 
     const contractId = row.contract_id;
+    const areaKey = normalizeAreaKey(row.specific_area);
+    if (!areaKey) return;
     const idSet = new Set<string>();
     if (row.applicant_id) idSet.add(row.applicant_id);
     for (const link of row.employeeLinks) {
@@ -1005,6 +896,39 @@ export default function ClientsPage() {
     }
 
     try {
+      const areaRes = await supabase
+        .from("applicants")
+        .select("applicant_id, custom_id, first_name, middle_name, last_name, extn_name, detachment, status")
+        .eq("is_archived", false)
+        .eq("is_trashed", false)
+        .not("detachment", "is", null)
+        .limit(10000);
+
+      if (!areaRes.error) {
+        const links = ((areaRes.data ?? []) as unknown as AssignedEmployeeRow[])
+          .filter((applicant) => isActiveEmployeeStatus(applicant.status) && normalizeAreaKey(applicant.detachment) === areaKey)
+          .map((applicant) => {
+            const applicantId = applicant.applicant_id == null ? null : String(applicant.applicant_id);
+            const name = formatApplicantName(applicant);
+            if (!applicantId || !name || name === fmt(null)) return null;
+            return { applicant_id: applicantId, custom_id: applicant.custom_id, name };
+          })
+          .filter((value): value is EmployeeLink => Boolean(value))
+          .sort((a, b) => a.name.localeCompare(b.name));
+
+        setDetailsRow((prev) => {
+          if (!prev) return prev;
+          if (prev.contract_id !== contractId) return prev;
+          return {
+            ...prev,
+            deployed_guards: links.length,
+            employeeLinks: links,
+            employees: links.map((employee) => employee.name),
+          };
+        });
+        return;
+      }
+
       const joinRes = await supabase
         .from("contract_employees")
         .select("applicant_id")
@@ -1021,7 +945,7 @@ export default function ClientsPage() {
 
       const appRes = await supabase
         .from("applicants")
-        .select("applicant_id, first_name, middle_name, last_name, extn_name")
+        .select("applicant_id, custom_id, first_name, middle_name, last_name, extn_name")
         .in("applicant_id", ids);
 
       if (appRes.error) return;
@@ -1036,9 +960,13 @@ export default function ClientsPage() {
             extn_name: a.extn_name == null ? null : String(a.extn_name),
           });
           if (!applicantId || !name || name === "—") return null;
-          return { applicant_id: applicantId, name };
+          return {
+            applicant_id: applicantId,
+            custom_id: a.custom_id == null ? null : String(a.custom_id),
+            name,
+          };
         })
-        .filter((v): v is { applicant_id: string; name: string } => Boolean(v))
+        .filter((v): v is EmployeeLink => Boolean(v))
         .sort((a, b) => a.name.localeCompare(b.name));
 
       setDetailsRow((prev) => {
@@ -1061,6 +989,7 @@ export default function ClientsPage() {
     const channel = supabase
       .channel("realtime:client-connected-tables")
       .on("postgres_changes", { event: "*", schema: "public", table: "contracts" }, loadConnectedData)
+      .on("postgres_changes", { event: "*", schema: "public", table: "applicants" }, loadConnectedData)
       .on("postgres_changes", { event: "*", schema: "public", table: "contract_employees" }, loadConnectedData)
       .subscribe();
 
@@ -1069,14 +998,13 @@ export default function ClientsPage() {
     };
   }, []);
 
-  useEffect(() => {
-    if (!editorOpen) return;
-    void loadApplicants();
-  }, [editorOpen]);
-
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     let list = rows;
+
+    if (sectorFilter !== "ALL") {
+      list = list.filter((r) => clusterMatchesSector(r.cluster, sectorFilter));
+    }
 
     if (q) {
       list = list.filter((r) =>
@@ -1107,7 +1035,7 @@ export default function ClientsPage() {
     });
 
     return sorted;
-  }, [rows, search, sortBy]);
+  }, [rows, search, sectorFilter, sortBy]);
 
   const filteredApplicants = useMemo(() => {
     const q = applicantSearch.trim().toLowerCase();
@@ -1123,18 +1051,16 @@ export default function ClientsPage() {
 
   function clientExportRows() {
     return filtered.map((r) => ({
-      "Contract No.": fmt(r.contract_no),
-      "Contract No Date": fmt(r.contract_no_date),
-      "Client Name": fmt(r.client_name),
-      "Project Name": fmt(r.project_name),
-      "Specific Area": fmt(r.specific_area),
+      "Contract No": fmt(r.contract_no),
       Cluster: fmt(r.cluster),
+      "Client Name": fmt(r.client_name),
+      "Specific Area": fmt(r.specific_area),
+      "Project Name": fmt(r.project_name),
       "Contract Start": fmt(r.contract_start),
       "Contract End": fmt(r.contract_end),
       "Contracted Manpower": fmt(r.contracted_manpower),
-      "Deployed Guards": fmt(r.deployed_guards),
+      "No. Deployed Guards": fmt(r.deployed_guards),
       Status: fmt(r.status),
-      "Created At": fmt(r.created_at),
       Remarks: fmt(r.remarks),
     }));
   }
@@ -1202,6 +1128,29 @@ export default function ClientsPage() {
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const pageClamped = Math.min(page, totalPages);
   const paginated = filtered.slice((pageClamped - 1) * pageSize, pageClamped * pageSize);
+  const deployedGuardsForForm = employeeLinksByArea.get(normalizeAreaKey(contractForm.specific_area))?.length ?? 0;
+  const sectorCounts = useMemo(() => {
+    const counts: Record<ClientSectorValue, number> = {
+      "Metro Manila": 0,
+      "Northern Luzon": 0,
+      "Southern Visayas": 0,
+      Visayas: 0,
+      Mindanao: 0,
+    };
+
+    for (const row of rows) {
+      for (const sector of CLIENT_SECTORS) {
+        if (clusterMatchesSector(row.cluster, sector.value)) counts[sector.value] += 1;
+      }
+    }
+
+    return counts;
+  }, [rows]);
+  const clusterOptions = useMemo(() => {
+    const current = contractForm.cluster.trim();
+    const hasCurrent = current && CLIENT_SECTORS.some((sector) => clusterMatchesSector(current, sector.value));
+    return hasCurrent || !current ? CLIENT_SECTORS : [{ value: current, label: `Current: ${current}` }, ...CLIENT_SECTORS];
+  }, [contractForm.cluster]);
 
   /* ------------------- Render ------------------- */
 
@@ -1238,6 +1187,56 @@ export default function ClientsPage() {
       </div>
 
       <div className="glass-panel animate-slide-up rounded-2xl p-4 space-y-3">
+        <div className="flex flex-col gap-1 md:flex-row md:items-end md:justify-between">
+          <div>
+            <div className="text-sm font-semibold text-black">Sectors</div>
+            <div className="text-xs text-gray-500">Filter contracts by assigned cluster sector.</div>
+          </div>
+          <div className="text-xs text-gray-500">
+            Showing {filtered.length} of {rows.length} contracts
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              setSectorFilter("ALL");
+              setPage(1);
+            }}
+            className={`rounded-2xl border px-4 py-2 text-sm font-semibold transition ${
+              sectorFilter === "ALL"
+                ? "border-[#FFDA03] bg-[#FFDA03] text-black shadow-sm"
+                : "border-gray-200 bg-white text-gray-700 hover:border-[#FFDA03]"
+            }`}
+          >
+            All Sectors
+            <span className="ml-2 rounded-full bg-black/10 px-2 py-0.5 text-xs">{rows.length}</span>
+          </button>
+          {CLIENT_SECTORS.map((sector) => {
+            const selected = sectorFilter === sector.value;
+            return (
+              <button
+                key={sector.value}
+                type="button"
+                onClick={() => {
+                  setSectorFilter(sector.value);
+                  setPage(1);
+                }}
+                className={`rounded-2xl border px-4 py-2 text-sm font-semibold transition ${
+                  selected
+                    ? "border-[#FFDA03] bg-[#FFDA03] text-black shadow-sm"
+                    : "border-gray-200 bg-white text-gray-700 hover:border-[#FFDA03]"
+                }`}
+              >
+                {sector.label}
+                <span className="ml-2 rounded-full bg-black/10 px-2 py-0.5 text-xs">{sectorCounts[sector.value]}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="glass-panel animate-slide-up rounded-2xl p-4 space-y-3">
         <div className="font-semibold text-black">Create Contracts</div>
         <div className="text-sm text-gray-500">Create a connected contract record with full fields.</div>
         <div className="flex flex-wrap gap-2">
@@ -1247,9 +1246,10 @@ export default function ClientsPage() {
               onClick={() => {
                 setEditorMode("create");
                 setEditingContractId(null);
-                setContractForm(EMPTY_FORM);
-                setSelectedApplicantIds([]);
-                setApplicantSearch("");
+                setContractForm({
+                  ...EMPTY_FORM,
+                  cluster: sectorFilter === "ALL" ? "" : sectorFilter,
+                });
                 setEditorOpen(true);
               }}
               className="animated-btn rounded-xl bg-[#FFDA03] px-4 py-2 text-sm font-semibold text-black"
@@ -1327,18 +1327,15 @@ export default function ClientsPage() {
   allowTemplateDownloads={canDownloadTemplate}
   templateFileName="client_import_template"
   templateSampleData={{
-    contract_no: "CN-2026-001",
-    contract_no_date: "2026-02-01",
+    contract_no: "2026-02-01",
+    cluster: "Metro Manila",
     client_name: "Sample Client",
-    project_name: "Project Alpha",
     specific_area: "Area 1",
-    cluster: "Cluster A",
+    project_name: "Project Alpha",
     contract_start: "2026-02-01",
     contract_end: "2027-02-01",
     contracted_manpower: 10,
-    deployed_guards: 8,
     status: "ACTIVE",
-    created_at: "2026-02-01T08:00",
     remarks: "Optional notes",
   }}
   previewColumns={["Contract/Client"]}
@@ -1441,56 +1438,83 @@ export default function ClientsPage() {
             <div className="font-semibold text-black">Contract Information</div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               <div>
-                <label className={labelClass}>Contract No.</label>
-                <input className={inputClass} value={contractForm.contract_no} onChange={(e) => setContractForm((p) => ({ ...p, contract_no: e.target.value }))} />
+                <label className={labelClass}>Contract Date</label>
+                <input
+                  type="date"
+                  className={inputClass}
+                  value={toDateInputValue(contractForm.contract_no)}
+                  onChange={(e) => setContractForm((p) => ({ ...p, contract_no: e.target.value }))}
+                />
+                {contractForm.contract_no && !toDateInputValue(contractForm.contract_no) ? (
+                  <div className="mt-1 text-xs text-gray-500">Current saved value: {contractForm.contract_no}</div>
+                ) : null}
               </div>
               <div>
-                <label className={labelClass}>Contract No Date</label>
-                <input type="date" className={inputClass} value={contractForm.contract_no_date} onChange={(e) => setContractForm((p) => ({ ...p, contract_no_date: e.target.value }))} />
-              </div>
-              <div>
-                <label className={labelClass}>Status</label>
-                <input className={inputClass} value={contractForm.status} onChange={(e) => setContractForm((p) => ({ ...p, status: e.target.value }))} />
+                <label className={labelClass}>Cluster</label>
+                <select
+                  className={`${inputClass} bg-white`}
+                  value={contractForm.cluster}
+                  onChange={(e) => setContractForm((p) => ({ ...p, cluster: e.target.value }))}
+                >
+                  <option value="">-- Select Sector --</option>
+                  {clusterOptions.map((sector) => (
+                    <option key={sector.value} value={sector.value}>
+                      {sector.label}
+                    </option>
+                  ))}
+                </select>
               </div>
               <div>
                 <label className={labelClass}>Client Name</label>
                 <input className={inputClass} value={contractForm.client_name} onChange={(e) => setContractForm((p) => ({ ...p, client_name: e.target.value }))} />
               </div>
               <div>
-                <label className={labelClass}>Project Name</label>
-                <input className={inputClass} value={contractForm.project_name} onChange={(e) => setContractForm((p) => ({ ...p, project_name: e.target.value }))} />
-              </div>
-              <div>
                 <label className={labelClass}>Specific Area</label>
                 <input className={inputClass} value={contractForm.specific_area} onChange={(e) => setContractForm((p) => ({ ...p, specific_area: e.target.value }))} />
               </div>
               <div>
-                <label className={labelClass}>Cluster</label>
-                <input className={inputClass} value={contractForm.cluster} onChange={(e) => setContractForm((p) => ({ ...p, cluster: e.target.value }))} />
-              </div>
-              <div>
-                <label className={labelClass}>Contracted Manpower</label>
-                <input type="number" className={inputClass} value={contractForm.contracted_manpower} onChange={(e) => setContractForm((p) => ({ ...p, contracted_manpower: e.target.value }))} />
-              </div>
-              <div>
-                <label className={labelClass}>Deployed Guards</label>
-                <input type="number" className={inputClass} value={contractForm.deployed_guards} onChange={(e) => setContractForm((p) => ({ ...p, deployed_guards: e.target.value }))} />
-              </div>
-            </div>
-          </div>
-
-          <div className="rounded-2xl border p-4 space-y-3">
-            <div className="font-semibold text-black">Date Fields</div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              <div>
-                <label className={labelClass}>Created At</label>
-                <input type="datetime-local" className={inputClass} value={contractForm.created_at} onChange={(e) => setContractForm((p) => ({ ...p, created_at: e.target.value }))} />
+                <label className={labelClass}>Project Name</label>
+                <input className={inputClass} value={contractForm.project_name} onChange={(e) => setContractForm((p) => ({ ...p, project_name: e.target.value }))} />
               </div>
               <div>
                 <label className={labelClass}>Contract Start</label>
                 <input type="date" className={inputClass} value={contractForm.contract_start} onChange={(e) => setContractForm((p) => ({ ...p, contract_start: e.target.value }))} />
               </div>
               <div>
+                <label className={labelClass}>Contract End</label>
+                <input type="date" className={inputClass} value={contractForm.contract_end} onChange={(e) => setContractForm((p) => ({ ...p, contract_end: e.target.value }))} />
+              </div>
+              <div>
+                <label className={labelClass}>Contracted Manpower</label>
+                <input type="number" className={inputClass} value={contractForm.contracted_manpower} onChange={(e) => setContractForm((p) => ({ ...p, contracted_manpower: e.target.value }))} />
+              </div>
+              <div>
+                <label className={labelClass}>No. Deployed Guards</label>
+                <input type="number" className={`${inputClass} bg-gray-100 cursor-not-allowed`} value={deployedGuardsForForm} readOnly />
+                <div className="mt-1 text-xs text-gray-500">Auto-counted from active employees assigned to this Specific Area.</div>
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border p-4 space-y-3">
+            <div className="font-semibold text-black">Status and Remarks</div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div>
+                <label className={labelClass}>Status</label>
+                <select
+                  className={`${inputClass} bg-white`}
+                  value={(contractForm.status || "ACTIVE").trim().toUpperCase() === "INACTIVE" ? "INACTIVE" : "ACTIVE"}
+                  onChange={(e) => setContractForm((p) => ({ ...p, status: e.target.value }))}
+                >
+                  <option value="ACTIVE">Active</option>
+                  <option value="INACTIVE">Inactive</option>
+                </select>
+              </div>
+              <div className="hidden">
+                <label className={labelClass}>Contract Start</label>
+                <input type="date" className={inputClass} value={contractForm.contract_start} onChange={(e) => setContractForm((p) => ({ ...p, contract_start: e.target.value }))} />
+              </div>
+              <div className="hidden">
                 <label className={labelClass}>Contract End</label>
                 <input type="date" className={inputClass} value={contractForm.contract_end} onChange={(e) => setContractForm((p) => ({ ...p, contract_end: e.target.value }))} />
               </div>
@@ -1501,7 +1525,7 @@ export default function ClientsPage() {
             </div>
           </div>
 
-          <div className="rounded-2xl border p-4 space-y-3">
+          <div className="hidden">
             <div className="flex items-center justify-between gap-3">
               <div className="font-semibold text-black">Assign Employees (Applicants)</div>
               <div className="text-sm text-gray-500">Selected: {selectedApplicantIds.length}</div>
@@ -1569,17 +1593,16 @@ export default function ClientsPage() {
           <thead className="sticky top-0 z-10">
             <tr className="bg-[#FFDA03]">
               {[
-                "Contract No Date",
-                "Client Name",
-                "Project Name",
-                "Specific Area",
+                "Contract No",
                 "Cluster",
+                "Client Name",
+                "Specific Area",
+                "Project Name",
                 "Contract Start",
                 "Contract End",
                 "Contracted Manpower",
-                "Deployed Guards",
+                "No. Deployed Guards",
                 "Status",
-                "Created At",
                 "Remarks",
               ].map((label, idx, arr) => (
                 <th
@@ -1595,7 +1618,7 @@ export default function ClientsPage() {
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan={12} className="px-4 py-8 text-center text-gray-500">
+                <td colSpan={11} className="px-4 py-8 text-center text-gray-500">
                   <LoadingCircle label="Loading contracts..." className="py-2" />
                 </td>
               </tr>
@@ -1606,23 +1629,22 @@ export default function ClientsPage() {
                   onClick={() => void openDetails(row)}
                   className="animated-row border-b border-gray-100 transition hover:shadow-md cursor-pointer"
                 >
-                  <td className="px-4 py-3 rounded-l-xl">{fmt(row.contract_no_date)}</td>
-                  <td className="px-4 py-3">{fmt(row.client_name)}</td>
-                  <td className="px-4 py-3">{fmt(row.project_name)}</td>
-                  <td className="px-4 py-3">{fmt(row.specific_area)}</td>
+                  <td className="px-4 py-3 rounded-l-xl">{fmt(row.contract_no)}</td>
                   <td className="px-4 py-3">{fmt(row.cluster)}</td>
+                  <td className="px-4 py-3">{fmt(row.client_name)}</td>
+                  <td className="px-4 py-3">{fmt(row.specific_area)}</td>
+                  <td className="px-4 py-3">{fmt(row.project_name)}</td>
                   <td className="px-4 py-3">{fmt(row.contract_start)}</td>
                   <td className="px-4 py-3">{fmt(row.contract_end)}</td>
                   <td className="px-4 py-3">{fmt(row.contracted_manpower)}</td>
                   <td className="px-4 py-3">{fmt(row.deployed_guards)}</td>
                   <td className="px-4 py-3">{fmt(row.status)}</td>
-                  <td className="px-4 py-3">{fmt(row.created_at)}</td>
                   <td className="px-4 py-3 rounded-r-xl">{fmt(row.remarks)}</td>
                 </tr>
               ))
             ) : (
               <tr>
-                <td colSpan={12} className="px-4 py-8 text-center text-gray-500">No contracts found.</td>
+                <td colSpan={11} className="px-4 py-8 text-center text-gray-500">No contracts found.</td>
               </tr>
             )}
           </tbody>
@@ -1688,17 +1710,15 @@ export default function ClientsPage() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {[
                   { label: "Contract No", value: fmt(detailsRow.contract_no) },
-                  { label: "Contract No Date", value: fmt(detailsRow.contract_no_date) },
-                  { label: "Client Name", value: fmt(detailsRow.client_name) },
-                  { label: "Project Name", value: fmt(detailsRow.project_name) },
-                  { label: "Specific Area", value: fmt(detailsRow.specific_area) },
                   { label: "Cluster", value: fmt(detailsRow.cluster) },
+                  { label: "Client Name", value: fmt(detailsRow.client_name) },
+                  { label: "Specific Area", value: fmt(detailsRow.specific_area) },
+                  { label: "Project Name", value: fmt(detailsRow.project_name) },
                   { label: "Contract Start", value: fmt(detailsRow.contract_start) },
                   { label: "Contract End", value: fmt(detailsRow.contract_end) },
                   { label: "Contracted Manpower", value: fmt(detailsRow.contracted_manpower) },
-                  { label: "Deployed Guards", value: fmt(detailsRow.deployed_guards) },
+                  { label: "No. Deployed Guards", value: fmt(detailsRow.deployed_guards) },
                   { label: "Status", value: fmt(detailsRow.status) },
-                  { label: "Created At", value: fmt(detailsRow.created_at) },
                 ].map((item) => (
                   <div key={item.label} className="min-w-0">
                     <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">{item.label}</div>
@@ -1718,13 +1738,8 @@ export default function ClientsPage() {
                 <div className="text-xs text-gray-500">Click a name to open the employee details page.</div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                <div className="md:col-span-1">
-                  <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Applicant ID</div>
-                  <div className="mt-1 text-sm text-black font-mono break-all">{fmt(detailsRow.applicant_id)}</div>
-                </div>
-
-                <div className="md:col-span-2">
+              <div className="grid grid-cols-1 gap-3">
+                <div>
                   <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Employees</div>
                   <div className="mt-2">
                     {detailsRow.employeeLinks.length ? (
@@ -1733,9 +1748,12 @@ export default function ClientsPage() {
                           <Link
                             key={employee.applicant_id}
                             href={`/Main_Modules/Employees/details/?id=${encodeURIComponent(employee.applicant_id)}&from=${encodeURIComponent("/Main_Modules/Client/")}`}
-                            className="animated-btn inline-flex items-center rounded-full border bg-white px-3 py-1 text-sm font-medium text-blue-700 hover:bg-blue-50 hover:text-blue-800"
+                            className="animated-btn inline-flex flex-col items-start rounded-2xl border bg-white px-3 py-2 text-sm font-medium text-blue-700 hover:bg-blue-50 hover:text-blue-800"
                           >
-                            {employee.name}
+                            <span>{employee.name}</span>
+                            <span className="text-[11px] font-mono text-gray-500">
+                              ID Number Employee: {formatEmployeeIdNumber(employee.applicant_id, employee.custom_id)}
+                            </span>
                           </Link>
                         ))}
                       </div>

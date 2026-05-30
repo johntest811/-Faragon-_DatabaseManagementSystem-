@@ -42,7 +42,7 @@ const BUCKETS = {
 	profile: "applicants",
 };
 
-const STATUS_FILTERS = ["ALL", "APPLICANT", "ACTIVE", "INACTIVE", "AWOL", "RESIGNED", "RETIRED"] as const;
+const STATUS_FILTERS = ["ALL", "APPLICANT", "ACTIVE", "AWOL", "RESIGNED", "RETIRED"] as const;
 
 type StatusFilter = (typeof STATUS_FILTERS)[number];
 

@@ -184,7 +184,7 @@ function moduleKeysForRequest(moduleKey: string): string[] {
   const key = normalizeModuleKey(moduleKey);
   if (!key) return [];
   if (key === "logistics") {
-    return ["inventory", "paraphernalia", "reports", "car_insurance_expiration", "logistics"];
+    return ["inventory", "paraphernalia", "car_insurance_expiration", "logistics"];
   }
   return [key];
 }

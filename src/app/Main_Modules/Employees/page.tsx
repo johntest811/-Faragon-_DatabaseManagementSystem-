@@ -260,7 +260,7 @@ export default function EmployeesPage() {
 
 
 	const [filtersOpen, setFiltersOpen] = useState(false);
-	const [statusFilter, setStatusFilter] = useState<"ALL" | "ACTIVE" | "APPLICANT" | "INACTIVE" | "AWOL" | "RETIRED">("ALL");
+	const [statusFilter, setStatusFilter] = useState<"ALL" | "ACTIVE" | "APPLICANT" | "AWOL" | "RETIRED">("ALL");
 	const [genderFilter, setGenderFilter] = useState<string>("ALL");
 	const [detachmentFilter, setDetachmentFilter] = useState<string>("ALL");
 	const [positionFilter, setPositionFilter] = useState<string>("ALL");
@@ -407,7 +407,7 @@ export default function EmployeesPage() {
 		const q = search.trim().toLowerCase();
 		let list = employees;
 
-				// By default Employees page shows Active/Inactive.
+				// By default Employees page shows active personnel.
 				// If the admin explicitly filters for AWOL/RETIRED/APPLICANT, allow it.
 		if (statusFilter === "ALL") {
 			list = list.filter((e) => {
@@ -1622,6 +1622,8 @@ if (hiredMonthFilter !== "ALL") {
 				open={editorOpen}
 				mode={editorMode}
 				applicantId={editorApplicantId}
+				idNumberLabel="ID Number Employee"
+				showIdGenerate={false}
 				onClose={() => setEditorOpen(false)}
 				onSaved={onSaved}
 				onDeleted={fetchEmployees}
@@ -1665,16 +1667,13 @@ if (hiredMonthFilter !== "ALL") {
 									<select
 										value={statusFilter}
 										onChange={(e) =>
-											setStatusFilter(
-												e.target.value as "ALL" | "ACTIVE" | "APPLICANT" | "INACTIVE" | "AWOL" | "RETIRED"
-											)
+											setStatusFilter(e.target.value as "ALL" | "ACTIVE" | "APPLICANT" | "AWOL" | "RETIRED")
 										}
 										className="w-full border rounded-xl px-3 py-2 bg-white"
 									>
 										<option value="ALL">All</option>
 										<option value="ACTIVE">ACTIVE</option>
 										<option value="APPLICANT">APPLICANT</option>
-										<option value="INACTIVE">INACTIVE</option>
 										<option value="AWOL">AWOL</option>
 										<option value="RETIRED">RETIRED</option>
 									</select>

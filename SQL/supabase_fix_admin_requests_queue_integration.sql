@@ -28,13 +28,15 @@ values
   ('client', 'Client', '/Main_Modules/Client/'),
   ('inventory', 'Inventory', '/Main_Modules/Inventory/'),
   ('paraphernalia', 'Paraphernalia', '/Main_Modules/Paraphernalia/'),
-  ('reports', 'Reports', '/Main_Modules/Reports/'),
   ('car_insurance_expiration', 'Car Insurance Expiration', '/Main_Modules/Logistics/CarInsuranceExpiration/'),
   ('requests', 'Requests', '/Main_Modules/Requests/'),
   ('audit', 'Audit', '/Main_Modules/Audit/'),
+  ('recent_activities', 'Recent Activities', '/Main_Modules/Audit/'),
   ('settings', 'Settings', '/Main_Modules/Settings/'),
   ('access', 'Admin Accounts', '/Main_Modules/AdminAccounts/'),
-  ('logistics', 'Logistics', '/Main_Modules/Logistics/')
+  ('logistics', 'Logistics', '/Main_Modules/Logistics/'),
+  ('preview_service_anniversary', 'Preview (1+ year of service)', '/Main_Modules/Employees/'),
+  ('expiring_licenses_records', 'Expiring Licenses and Records', '/Main_Modules/Employees/')
 on conflict (module_key) do update
 set display_name = excluded.display_name,
     path = excluded.path;

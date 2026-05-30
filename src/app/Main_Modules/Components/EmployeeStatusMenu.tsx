@@ -7,7 +7,6 @@ import { Check, ChevronDown } from "lucide-react";
 export const EMPLOYEE_STATUS_OPTIONS = [
 	{ value: "ACTIVE", label: "Active" },
 	{ value: "APPLICANT", label: "Applicant" },
-	{ value: "INACTIVE", label: "Inactive" },
 	{ value: "AWOL", label: "AWOL" },
 	{ value: "RESIGNED", label: "Resigned" },
 	{ value: "RETIRED", label: "Retired" },
@@ -24,6 +23,7 @@ type EmployeeStatusMenuProps = {
 function normalizeStatus(value: string | null | undefined) {
 	const normalized = String(value ?? "").trim().toUpperCase();
 	if (normalized === "REASSIGN") return "AWOL" as EmployeeStatusValue;
+	if (normalized === "INACTIVE") return "ACTIVE" as EmployeeStatusValue;
 	return (EMPLOYEE_STATUS_OPTIONS.find((option) => option.value === normalized)?.value ?? "ACTIVE") as EmployeeStatusValue;
 }
 
@@ -40,12 +40,6 @@ function statusTone(status: EmployeeStatusValue) {
 				trigger: "bg-sky-500 text-white border-sky-400 hover:bg-sky-600",
 				dot: "bg-white/90",
 				menuSelected: "bg-sky-50 text-sky-800",
-			};
-		case "INACTIVE":
-			return {
-				trigger: "bg-slate-600 text-white border-slate-500 hover:bg-slate-700",
-				dot: "bg-white/90",
-				menuSelected: "bg-slate-50 text-slate-800",
 			};
 		case "AWOL":
 			return {

@@ -2,6 +2,7 @@
 
 import React, { useMemo, useState } from "react";
 import * as XLSX from "xlsx";
+import { readSpreadsheetRows } from "./spreadsheetImportUtils";
 
 export type SpreadsheetImportModalProps = {
   open: boolean;
@@ -112,20 +113,7 @@ export default function SpreadsheetImportModal({
     setFileName(file.name);
 
     try {
-      const lower = file.name.toLowerCase();
-      const isCsv = lower.endsWith(".csv") || file.type === "text/csv";
-
-      const wb = isCsv
-        ? XLSX.read(await file.text(), { type: "string", cellDates: true })
-        : XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: true });
-      const sheetName = wb.SheetNames[0];
-      if (!sheetName) throw new Error("No sheets found in Excel file");
-      const sheet = wb.Sheets[sheetName];
-      const json = XLSX.utils.sheet_to_json<RowObject>(sheet, {
-        defval: "",
-        raw: false,
-      });
-      setRows(json);
+      setRows(await readSpreadsheetRows(file));
     } catch (e: unknown) {
       setRows([]);
       setParsingError(e instanceof Error ? e.message : "Failed to parse file");

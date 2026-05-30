@@ -11,6 +11,7 @@ import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import ImportSummaryModal, { ImportSummaryData } from "../Components/ImportSummaryModal";
 import SpreadsheetImportModal from "@/app/Components/SpreadsheetImportModal";
+import { readSpreadsheetRows } from "@/app/Components/spreadsheetImportUtils";
 import { addBrandedPdfHeader, buildBrandedAoa, buildBrandedWorkbookBuffer } from "../Components/exportBranding";
 
 type CategoryConfig = {
@@ -26,12 +27,24 @@ type CategoryConfig = {
 
 type InventoryRow = {
   id: string;
+  equipment: string | null;
+  control_number: string | null;
+  serial_plate_number: string | null;
+  maker: string | null;
+  model_number: string | null;
+  detachment: string | null;
   date: string | null;
   particular: string | null;
   quanitity: number | null;
   amount: number | null;
   last_updated_at: string | null;
   remarks: string | null;
+  unit_cost: number | null;
+  date_purchased: string | null;
+  expiration: string | null;
+  last_maintenance: string | null;
+  user_text: string | null;
+  user_attachment: string | null;
   firearms_name: string | null;
   firearms_qty: number | null;
   firearms_price: number | null;
@@ -61,6 +74,12 @@ type InventoryRow = {
 };
 
 type InventoryForm = {
+  equipment: string;
+  control_number: string;
+  serial_plate_number: string;
+  maker: string;
+  model_number: string;
+  detachment: string;
   date: string;
   particular: string;
   quanitity: string;
@@ -83,9 +102,21 @@ type InventoryForm = {
   vehicle_qty: string;
   vehicle_price: string;
   remarks: string;
+  unit_cost: string;
+  date_purchased: string;
+  expiration: string;
+  last_maintenance: string;
+  user_text: string;
+  user_attachment: string;
 };
 
 const EMPTY_FORM: InventoryForm = {
+  equipment: "",
+  control_number: "",
+  serial_plate_number: "",
+  maker: "",
+  model_number: "",
+  detachment: "",
   date: "",
   particular: "",
   quanitity: "",
@@ -108,6 +139,12 @@ const EMPTY_FORM: InventoryForm = {
   vehicle_qty: "",
   vehicle_price: "",
   remarks: "",
+  unit_cost: "",
+  date_purchased: "",
+  expiration: "",
+  last_maintenance: "",
+  user_text: "",
+  user_attachment: "",
 };
 
 const CATEGORY_CONFIGS: CategoryConfig[] = [
@@ -174,11 +211,22 @@ const CATEGORY_CONFIGS: CategoryConfig[] = [
 ];
 
 const INVENTORY_COLUMN_TO_DB_FIELDS: Record<string, string[]> = {
+  equipment: ["equipment"],
+  control_number: ["control_number"],
+  serial_plate_number: ["serial_plate_number"],
+  maker: ["maker"],
+  model_number: ["model_number"],
+  detachment: ["detachment"],
   date: ["date"],
   particular: ["particular"],
   quanitity: ["quanitity"],
   amount: ["amount"],
   remarks: ["remarks"],
+  unit_cost: ["unit_cost"],
+  date_purchased: ["date_purchased"],
+  expiration: ["expiration"],
+  last_maintenance: ["last_maintenance"],
+  user: ["user_text", "user_attachment"],
   firearms_name: ["firearms_name", "firearms_qty", "firearms_price", "firearms_ammunitions"],
   communications_name: ["communications_name", "communications_qty", "communications_price", "communications_equipment"],
   furniture_name: ["furniture_name", "furniture_qty", "furniture_price", "furniture_and_fixtures"],
@@ -187,6 +235,63 @@ const INVENTORY_COLUMN_TO_DB_FIELDS: Record<string, string[]> = {
   vehicle_name: ["vehicle_name", "vehicle_qty", "vehicle_price", "vehicle_and_motorcycle"],
   total_amount: ["total_amount"],
   grand_total: ["grand_total"],
+};
+
+const INVENTORY_BUCKET = "inventory";
+
+const INVENTORY_CONTROL_PREFIXES: Record<string, string> = {
+  AIRCON: "AC",
+  BIKE: "BK",
+  BODYCAMERA: "BC",
+  "BODY SCANNER": "BS",
+  "BP APPRATUS": "BP",
+  CIGNUS: "CIG",
+  KENWOOD: "KEN",
+  MOTOROLA: "M",
+  VERSA: "VER",
+  IQONIC: "IQ",
+  PHONE: "CP",
+  "SATELLITE PHONE": "SP",
+  MEGAPHONE: "MP",
+  BINOCULAR: "BI",
+  "BULLET PROOF VEST": "BPV",
+  DRONE: "DR",
+  "FIRE EXTINGUISHER": "FX",
+  "GUARD TOUR SYSTEM": "GTS",
+  "METAL DETECTOR": "MD",
+  "NIGHT STICK": "NS",
+  "SEARCH LIGHT": "LS",
+  "TRAFFIC CONE": "TC",
+  PISTOL: "PIS",
+  SHOTGUN: "SG",
+  "TASER GUN": "TG",
+  STUNGUN: "SG",
+  MOTORCYCLE: "MC",
+  MOBILE: "MV",
+  SEABOURNE: "SB",
+  "FIRST AID KIT": "FK",
+  "FIRST AID CABINET": "FAC",
+  "OXYGEN TANK": "OX",
+  STRETCHER: "ST",
+  "WHEEL CHAIR": "WC",
+  AIRCONDITIONER: "AC",
+  BIOMETRIC: "BIO",
+  BUNDYCLOCK: "BDC",
+  ELECTRICFAN: "EF",
+  MONITOR: "MON",
+  "OFFICE TABLE": "OT",
+  "OFFICE CHAIR": "OC",
+  PRINTER: "PRN",
+  PROJECTOR: "PJT",
+  "STEEL CABINET": "SC",
+  "STEEL LOCKER": "SL",
+  "SYTEM UNIT": "SU",
+  LAPTOP: "LT",
+  "CIGNUS CHARGER": "CCH",
+  "VERSA CHARGER": "VCH",
+  "SPARE BATTERY": "BAT",
+  "DOUBLE DECK": "DD",
+  "XEROX MACHINE": "XM",
 };
 
 function toNumber(v: string) {
@@ -201,30 +306,78 @@ function normalizeImportKey(value: unknown) {
     .replace(/\s+/g, " ");
 }
 
+function normalizeEquipmentName(value: unknown) {
+  return String(value ?? "").trim().replace(/\s+/g, " ").toUpperCase();
+}
+
+function normalizeControlNumber(value: unknown) {
+  return String(value ?? "").trim().replace(/\s+/g, "").toUpperCase();
+}
+
+function controlPrefixForEquipment(value: unknown) {
+  const equipment = normalizeEquipmentName(value);
+  if (INVENTORY_CONTROL_PREFIXES[equipment]) return INVENTORY_CONTROL_PREFIXES[equipment];
+  const words = equipment.match(/[A-Z0-9]+/g) ?? [];
+  return words.length > 1 ? words.map((word) => word[0]).join("") : equipment.slice(0, 3) || "EQ";
+}
+
+function formatInventoryControlNumber(equipment: unknown, sequence: number, year = new Date().getFullYear()) {
+  return `${controlPrefixForEquipment(equipment)}-${year}-${String(Math.max(1, sequence)).padStart(4, "0")}`;
+}
+
+function parseControlSequence(value: unknown) {
+  const match = normalizeControlNumber(value).match(/-(\d+)$/);
+  return match ? Number(match[1]) || 0 : 0;
+}
+
+function formatDateCell(value: string | null) {
+  return value && value.trim() ? value : "â€”";
+}
+
 function toMoney(value: number) {
   return new Intl.NumberFormat("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value);
 }
 
+function numberValue(value: unknown) {
+  return Number(value ?? 0) || 0;
+}
+
+function lineTotal(quantity: unknown, price: unknown) {
+  return numberValue(quantity) * numberValue(price);
+}
+
+function categoryQuantityFromForm(formData: InventoryForm) {
+  return CATEGORY_CONFIGS.reduce((sum, cfg) => sum + numberValue(formData[cfg.qtyField]), 0);
+}
+
+function categoryQuantityFromRow(row: InventoryRow) {
+  return CATEGORY_CONFIGS.reduce((sum, cfg) => sum + numberValue(row[cfg.qtyRowField]), 0);
+}
+
+function totalQuantityFromForm(formData: InventoryForm) {
+  return numberValue(formData.quanitity) || categoryQuantityFromForm(formData);
+}
+
+function totalQuantityFromRow(row: InventoryRow) {
+  return categoryQuantityFromRow(row) || numberValue(row.quanitity);
+}
+
 function totalFromPrices(formData: InventoryForm) {
-  return (
-    toNumber(formData.firearms_price) +
-    toNumber(formData.communications_price) +
-    toNumber(formData.furniture_price) +
-    toNumber(formData.office_price) +
-    toNumber(formData.sec_price) +
-    toNumber(formData.vehicle_price)
+  const categoryTotal = CATEGORY_CONFIGS.reduce(
+    (sum, cfg) => sum + lineTotal(formData[cfg.qtyField], formData[cfg.priceField]),
+    0
   );
+
+  return categoryTotal || lineTotal(totalQuantityFromForm(formData), formData.unit_cost);
 }
 
 function totalFromRowPrices(row: InventoryRow) {
-  return (
-    (Number(row.firearms_price ?? 0) || 0) +
-    (Number(row.communications_price ?? 0) || 0) +
-    (Number(row.furniture_price ?? 0) || 0) +
-    (Number(row.office_price ?? 0) || 0) +
-    (Number(row.sec_price ?? 0) || 0) +
-    (Number(row.vehicle_price ?? 0) || 0)
+  const categoryTotal = CATEGORY_CONFIGS.reduce(
+    (sum, cfg) => sum + lineTotal(row[cfg.qtyRowField], row[cfg.priceRowField]),
+    0
   );
+
+  return categoryTotal || lineTotal(totalQuantityFromRow(row), row.unit_cost) || numberValue(row.total_amount ?? row.amount);
 }
 
 function formatTimestamp(value: string | null) {
@@ -252,9 +405,20 @@ export default function LogisticsInventoryPage() {
   const canDownloadInventoryTemplate = isAdmin && canViewInventoryColumn("export_template");
   const canExportInventory = isAdmin && canViewInventoryColumn("export_file");
 
+  const showEquipmentColumn = canViewInventoryColumn("equipment");
+  const showControlNumberColumn = canViewInventoryColumn("control_number");
+  const showSerialPlateColumn = canViewInventoryColumn("serial_plate_number");
+  const showMakerColumn = canViewInventoryColumn("maker");
+  const showModelColumn = canViewInventoryColumn("model_number");
+  const showDetachmentColumn = canViewInventoryColumn("detachment");
   const showDateColumn = canViewInventoryColumn("date");
   const showParticularColumn = canViewInventoryColumn("particular");
   const showRemarksColumn = canViewInventoryColumn("remarks");
+  const showUnitCostColumn = canViewInventoryColumn("unit_cost");
+  const showDatePurchasedColumn = canViewInventoryColumn("date_purchased");
+  const showExpirationColumn = canViewInventoryColumn("expiration");
+  const showLastMaintenanceColumn = canViewInventoryColumn("last_maintenance");
+  const showUserColumn = canViewInventoryColumn("user");
   const showRowTotalColumn = canViewInventoryColumn("amount") || canViewInventoryColumn("total_amount");
   const showGrandTotalColumn = canViewInventoryColumn("grand_total");
 
@@ -270,14 +434,43 @@ export default function LogisticsInventoryPage() {
   const inventoryTableColumnCount = useMemo(() => {
     return (
       (showDateColumn ? 1 : 0) +
+      (showEquipmentColumn ? 1 : 0) +
+      (showControlNumberColumn ? 1 : 0) +
+      (showSerialPlateColumn ? 1 : 0) +
+      (showMakerColumn ? 1 : 0) +
+      (showModelColumn ? 1 : 0) +
+      (showDetachmentColumn ? 1 : 0) +
       (showParticularColumn ? 1 : 0) +
       visibleCategoryConfigs.length +
       (showRowTotalColumn ? 1 : 0) +
       1 +
       (showRemarksColumn ? 1 : 0) +
+      (showUnitCostColumn ? 1 : 0) +
+      (showDatePurchasedColumn ? 1 : 0) +
+      (showExpirationColumn ? 1 : 0) +
+      (showLastMaintenanceColumn ? 1 : 0) +
+      (showUserColumn ? 1 : 0) +
       (canMutateInventory ? 1 : 0)
     );
-  }, [showDateColumn, showParticularColumn, visibleCategoryConfigs.length, showRowTotalColumn, showRemarksColumn, canMutateInventory]);
+  }, [
+    showDateColumn,
+    showEquipmentColumn,
+    showControlNumberColumn,
+    showSerialPlateColumn,
+    showMakerColumn,
+    showModelColumn,
+    showDetachmentColumn,
+    showParticularColumn,
+    visibleCategoryConfigs.length,
+    showRowTotalColumn,
+    showRemarksColumn,
+    showUnitCostColumn,
+    showDatePurchasedColumn,
+    showExpirationColumn,
+    showLastMaintenanceColumn,
+    showUserColumn,
+    canMutateInventory,
+  ]);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -287,6 +480,7 @@ export default function LogisticsInventoryPage() {
   const [showAddModal, setShowAddModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [editingRowId, setEditingRowId] = useState<string | null>(null);
+  const [selectedDetailRowId, setSelectedDetailRowId] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [importSummary, setImportSummary] = useState<ImportSummaryData | null>(null);
@@ -300,6 +494,50 @@ export default function LogisticsInventoryPage() {
   const pageSize = 10;
 
   const [formData, setFormData] = useState<InventoryForm>(EMPTY_FORM);
+  const [userAttachmentFile, setUserAttachmentFile] = useState<File | null>(null);
+  const [clientNameOptions, setClientNameOptions] = useState<string[]>([]);
+
+  const detachmentOptions = useMemo(() => {
+    const currentValue = formData.detachment.trim();
+    if (!currentValue || clientNameOptions.some((name) => name.toLowerCase() === currentValue.toLowerCase())) {
+      return clientNameOptions;
+    }
+    return [currentValue, ...clientNameOptions];
+  }, [clientNameOptions, formData.detachment]);
+
+  function nextInventoryControlNumber(equipment: string, offset = 0) {
+    const year = new Date().getFullYear();
+    const prefix = controlPrefixForEquipment(equipment);
+    const prefixKey = `${prefix}-${year}-`;
+    const maxSequence = rows
+      .map((row) => normalizeControlNumber(row.control_number))
+      .filter((value) => value.startsWith(prefixKey))
+      .reduce((max, value) => Math.max(max, parseControlSequence(value)), 0);
+    return formatInventoryControlNumber(equipment, maxSequence + offset + 1, year);
+  }
+
+  const loadClientNameOptions = useCallback(async () => {
+    const res = await supabase
+      .from("contracts")
+      .select("client_name")
+      .order("client_name", { ascending: true })
+      .limit(5000);
+
+    if (res.error) {
+      setClientNameOptions([]);
+      return;
+    }
+
+    const nextOptions = Array.from(
+      new Set(
+        ((res.data as Array<{ client_name: string | null }> | null) ?? [])
+          .map((row) => String(row.client_name ?? "").trim())
+          .filter(Boolean)
+      )
+    ).sort((a, b) => a.localeCompare(b));
+
+    setClientNameOptions(nextOptions);
+  }, []);
 
   const loadData = useCallback(async () => {
     if (loadingInventoryColumns) {
@@ -339,9 +577,24 @@ export default function LogisticsInventoryPage() {
 
     
     const sample = {
+      equipment: "CIGNUS",
+      control_number: "CIG-2026-0001",
+      serial_plate_number: "SN-001",
+      maker: "Sample Maker",
+      model_number: "Model A",
+      detachment: "Sample Client",
       date: "2026-03-01",
       particular: "Sample Particular",
       quanitity: 5,
+      unit_cost: 1000,
+      amount: 5000,
+      total_amount: 5000,
+      grand_total: 5000,
+      date_purchased: "2026-03-01",
+      expiration: "2027-03-01",
+      last_maintenance: "2026-05-01",
+      user_text: "Assigned user or notes",
+      user_attachment: "Optional URL",
       firearms_name: "Sample Firearm",
       firearms_qty: 1,
       firearms_price: 1000,
@@ -403,140 +656,7 @@ function downloadInventoryTemplateXlsx() {
     setImportSummary(null);
 
     try {
-      const buf = await file.arrayBuffer();
-      const wb = XLSX.read(buf, { type: "array" });
-      const firstSheet = wb.SheetNames[0];
-      if (!firstSheet) throw new Error("No sheet found in selected file.");
-
-      const ws = wb.Sheets[firstSheet];
-      const rawRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: "" });
-      if (!rawRows.length) throw new Error("The selected file has no data rows.");
-
-      const rowErrors: string[] = [];
-      let skipped = 0;
-
-      const importedRows = rawRows
-        .map((row, idx) => {
-          const firearmsPrice = toNumber(pickByAliases(row, ["firearms_price", "firearms price", "firearms amount"]));
-          const communicationsPrice = toNumber(pickByAliases(row, ["communications_price", "communications price", "communications amount"]));
-          const furniturePrice = toNumber(pickByAliases(row, ["furniture_price", "furniture price", "furniture amount"]));
-          const officePrice = toNumber(pickByAliases(row, ["office_price", "office price", "office amount"]));
-          const secPrice = toNumber(pickByAliases(row, ["sec_price", "sec price", "security price"]));
-          const vehiclePrice = toNumber(pickByAliases(row, ["vehicle_price", "vehicle price", "vehicle amount"]));
-          const computedAmount = firearmsPrice + communicationsPrice + furniturePrice + officePrice + secPrice + vehiclePrice;
-
-          const payload = {
-            date: pickByAliases(row, ["date"]).trim() || null,
-            particular: pickByAliases(row, ["particular", "description", "item"]).trim() || null,
-            quanitity: toNumber(pickByAliases(row, ["quanitity", "quantity", "total quantity"])),
-            amount: toNumber(pickByAliases(row, ["amount", "row total", "total_amount"])) || computedAmount,
-            remarks: pickByAliases(row, ["remarks", "note", "notes"]).trim() || null,
-            firearms_name: pickByAliases(row, ["firearms_name", "firearms", "firearms ammunitions"]).trim() || null,
-            firearms_qty: toNumber(pickByAliases(row, ["firearms_qty", "firearms quantity"])),
-            firearms_price: firearmsPrice,
-            communications_name: pickByAliases(row, ["communications_name", "communications", "communications equipment"]).trim() || null,
-            communications_qty: toNumber(pickByAliases(row, ["communications_qty", "communications quantity"])),
-            communications_price: communicationsPrice,
-            furniture_name: pickByAliases(row, ["furniture_name", "furniture", "furniture fixtures"]).trim() || null,
-            furniture_qty: toNumber(pickByAliases(row, ["furniture_qty", "furniture quantity"])),
-            furniture_price: furniturePrice,
-            office_name: pickByAliases(row, ["office_name", "office", "office equipment"]).trim() || null,
-            office_qty: toNumber(pickByAliases(row, ["office_qty", "office quantity"])),
-            office_price: officePrice,
-            sec_name: pickByAliases(row, ["sec_name", "security_name", "sec equipment"]).trim() || null,
-            sec_qty: toNumber(pickByAliases(row, ["sec_qty", "security quantity"])),
-            sec_price: secPrice,
-            vehicle_name: pickByAliases(row, ["vehicle_name", "vehicle", "motorcycle"]).trim() || null,
-            vehicle_qty: toNumber(pickByAliases(row, ["vehicle_qty", "vehicle quantity"])),
-            vehicle_price: vehiclePrice,
-            firearms_ammunitions: pickByAliases(row, ["firearms_ammunitions", "firearms_name"]).trim() || null,
-            communications_equipment: pickByAliases(row, ["communications_equipment", "communications_name"]).trim() || null,
-            furniture_and_fixtures: pickByAliases(row, ["furniture_and_fixtures", "furniture_name"]).trim() || null,
-            office_equipments_sec_equipments: pickByAliases(row, ["office_equipments_sec_equipments", "office_name"]).trim() || null,
-            sec_equipments: pickByAliases(row, ["sec_equipments", "sec_name"]).trim() || null,
-            vehicle_and_motorcycle: pickByAliases(row, ["vehicle_and_motorcycle", "vehicle_name"]).trim() || null,
-            total_amount: toNumber(pickByAliases(row, ["total_amount", "amount"])) || computedAmount,
-            grand_total: toNumber(pickByAliases(row, ["grand_total"])) || null,
-          };
-
-          const hasIdentity = Boolean((payload.particular ?? "").trim() || (payload.date ?? "").trim());
-          if (!hasIdentity) {
-            skipped += 1;
-            rowErrors.push(`Row ${idx + 2}: Missing identity fields (particular/date).`);
-          }
-          return hasIdentity ? payload : null;
-        })
-        .filter((v): v is NonNullable<typeof v> => Boolean(v));
-
-      if (!importedRows.length) throw new Error("No valid inventory rows found in file.");
-
-      const { data: existingRows, error: existingErr } = await supabase
-        .from("inventory_fixed_asset")
-        .select("id, date, particular")
-        .limit(10000);
-      if (existingErr) throw existingErr;
-
-      const byComposite = new Map<string, string>();
-      const byParticularUnique = new Map<string, string>();
-      const particularCounts = new Map<string, number>();
-      for (const row of ((existingRows ?? []) as Array<Record<string, unknown>>)) {
-        const id = String(row.id ?? "");
-        if (!id) continue;
-        const particularKey = normalizeImportKey(row.particular);
-        const dateKey = normalizeImportKey(row.date);
-        const key = `${particularKey}|${dateKey}`;
-        if (key !== "|") byComposite.set(key, id);
-
-        if (particularKey) {
-          particularCounts.set(particularKey, (particularCounts.get(particularKey) ?? 0) + 1);
-          if (!byParticularUnique.has(particularKey)) byParticularUnique.set(particularKey, id);
-        }
-      }
-
-      for (const [particularKey, count] of particularCounts.entries()) {
-        if (count > 1) byParticularUnique.delete(particularKey);
-      }
-
-      type InventoryPayload = NonNullable<(typeof importedRows)[number]>;
-      const deduped = new Map<string, InventoryPayload>();
-      for (const payload of importedRows) {
-        const particularKey = normalizeImportKey(payload.particular);
-        const dateKey = normalizeImportKey(payload.date);
-        const key = dateKey ? `${particularKey}|${dateKey}` : `p:${particularKey}`;
-        if (deduped.has(key)) skipped += 1;
-        deduped.set(key, payload);
-      }
-
-      let inserted = 0;
-      let updated = 0;
-      for (const [key, payload] of deduped.entries()) {
-        const particularKey = normalizeImportKey(payload.particular);
-        const dateKey = normalizeImportKey(payload.date);
-        const compositeKey = `${particularKey}|${dateKey}`;
-        const id = byComposite.get(compositeKey) ?? (particularKey ? byParticularUnique.get(particularKey) : undefined);
-        if (id) {
-          const upd = await supabase.from("inventory_fixed_asset").update(payload).eq("id", id);
-          if (upd.error) {
-            skipped += 1;
-            rowErrors.push(`Update failed for key ${key}: ${upd.error.message}`);
-            continue;
-          }
-          updated += 1;
-        } else {
-          const ins = await supabase.from("inventory_fixed_asset").insert(payload);
-          if (ins.error) {
-            skipped += 1;
-            rowErrors.push(`Insert failed for key ${key}: ${ins.error.message}`);
-            continue;
-          }
-          inserted += 1;
-        }
-      }
-
-      setImportSummary({ inserted, updated, skipped, errors: rowErrors });
-      setImportSummaryOpen(true);
-      setSuccess(`Import complete. Inserted: ${inserted}, Updated (overwritten): ${updated}.`);
-      await loadData();
+      await handleInventoryImport(await readSpreadsheetRows(file));
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Import failed.");
     } finally {
@@ -546,37 +666,69 @@ function downloadInventoryTemplateXlsx() {
   }
 
   const parseInventoryImportRow = useCallback((row: Record<string, unknown>) => {
+    const totalQuantityValue = toNumber(pickByAliases(row, ["quanitity", "quantity", "total quantity"]));
+    const unitCostValue = toNumber(pickByAliases(row, ["unit cost", "unit_cost", "cost"]));
+    const firearmsQty = toNumber(pickByAliases(row, ["firearms_qty", "firearms quantity"]));
     const firearmsPrice = toNumber(pickByAliases(row, ["firearms_price", "firearms price", "firearms amount"]));
+    const communicationsQty = toNumber(pickByAliases(row, ["communications_qty", "communications quantity"]));
     const communicationsPrice = toNumber(pickByAliases(row, ["communications_price", "communications price", "communications amount"]));
+    const furnitureQty = toNumber(pickByAliases(row, ["furniture_qty", "furniture quantity"]));
     const furniturePrice = toNumber(pickByAliases(row, ["furniture_price", "furniture price", "furniture amount"]));
+    const officeQty = toNumber(pickByAliases(row, ["office_qty", "office quantity"]));
     const officePrice = toNumber(pickByAliases(row, ["office_price", "office price", "office amount"]));
+    const secQty = toNumber(pickByAliases(row, ["sec_qty", "security quantity"]));
     const secPrice = toNumber(pickByAliases(row, ["sec_price", "sec price", "security price"]));
+    const vehicleQty = toNumber(pickByAliases(row, ["vehicle_qty", "vehicle quantity"]));
     const vehiclePrice = toNumber(pickByAliases(row, ["vehicle_price", "vehicle price", "vehicle amount"]));
-    const computedAmount = firearmsPrice + communicationsPrice + furniturePrice + officePrice + secPrice + vehiclePrice;
+    const categoryQuantityValue = firearmsQty + communicationsQty + furnitureQty + officeQty + secQty + vehicleQty;
+    const effectiveTotalQuantity = totalQuantityValue || categoryQuantityValue;
+    const categoryComputedAmount =
+      lineTotal(firearmsQty, firearmsPrice) +
+      lineTotal(communicationsQty, communicationsPrice) +
+      lineTotal(furnitureQty, furniturePrice) +
+      lineTotal(officeQty, officePrice) +
+      lineTotal(secQty, secPrice) +
+      lineTotal(vehicleQty, vehiclePrice);
+    const computedAmount = categoryComputedAmount || lineTotal(effectiveTotalQuantity, unitCostValue);
+    const equipment = pickByAliases(row, ["equipment", "item", "items"]).trim();
+    const controlNumber = normalizeControlNumber(pickByAliases(row, ["controlnumber", "control number", "control_number", "control no"])) || (equipment ? nextInventoryControlNumber(equipment) : "");
+    const importedAmount = toNumber(pickByAliases(row, ["amount", "row total", "total_amount"])) || computedAmount;
 
     const payload = {
+      equipment: equipment || null,
+      control_number: controlNumber || null,
+      serial_plate_number: pickByAliases(row, ["serial # / plate #", "serial plate number", "serial", "plate", "plate number"]).trim() || null,
+      maker: pickByAliases(row, ["maker", "manufacturer"]).trim() || null,
+      model_number: pickByAliases(row, ["model #", "model number", "model"]).trim() || null,
+      detachment: pickByAliases(row, ["detachment", "specific area", "area"]).trim() || null,
       date: pickByAliases(row, ["date"]).trim() || null,
       particular: pickByAliases(row, ["particular", "description", "item"]).trim() || null,
-      quanitity: toNumber(pickByAliases(row, ["quanitity", "quantity", "total quantity"])),
-      amount: toNumber(pickByAliases(row, ["amount", "row total", "total_amount"])) || computedAmount,
+      quanitity: effectiveTotalQuantity,
+      amount: importedAmount,
       remarks: pickByAliases(row, ["remarks", "note", "notes"]).trim() || null,
+      unit_cost: unitCostValue,
+      date_purchased: pickByAliases(row, ["date of purchased", "date purchased", "date_purchased", "purchase date"]).trim() || null,
+      expiration: pickByAliases(row, ["expiration", "expiry", "expiry date"]).trim() || null,
+      last_maintenance: pickByAliases(row, ["last maintenance", "last_maintenance", "maintenance"]).trim() || null,
+      user_text: pickByAliases(row, ["user", "user text", "assigned user", "user_text"]).trim() || null,
+      user_attachment: pickByAliases(row, ["user attachment", "attachment", "file", "user_attachment"]).trim() || null,
       firearms_name: pickByAliases(row, ["firearms_name", "firearms", "firearms ammunitions"]).trim() || null,
-      firearms_qty: toNumber(pickByAliases(row, ["firearms_qty", "firearms quantity"])),
+      firearms_qty: firearmsQty,
       firearms_price: firearmsPrice,
       communications_name: pickByAliases(row, ["communications_name", "communications", "communications equipment"]).trim() || null,
-      communications_qty: toNumber(pickByAliases(row, ["communications_qty", "communications quantity"])),
+      communications_qty: communicationsQty,
       communications_price: communicationsPrice,
       furniture_name: pickByAliases(row, ["furniture_name", "furniture", "furniture fixtures"]).trim() || null,
-      furniture_qty: toNumber(pickByAliases(row, ["furniture_qty", "furniture quantity"])),
+      furniture_qty: furnitureQty,
       furniture_price: furniturePrice,
       office_name: pickByAliases(row, ["office_name", "office", "office equipment"]).trim() || null,
-      office_qty: toNumber(pickByAliases(row, ["office_qty", "office quantity"])),
+      office_qty: officeQty,
       office_price: officePrice,
       sec_name: pickByAliases(row, ["sec_name", "security_name", "sec equipment"]).trim() || null,
-      sec_qty: toNumber(pickByAliases(row, ["sec_qty", "security quantity"])),
+      sec_qty: secQty,
       sec_price: secPrice,
       vehicle_name: pickByAliases(row, ["vehicle_name", "vehicle", "motorcycle"]).trim() || null,
-      vehicle_qty: toNumber(pickByAliases(row, ["vehicle_qty", "vehicle quantity"])),
+      vehicle_qty: vehicleQty,
       vehicle_price: vehiclePrice,
       firearms_ammunitions: pickByAliases(row, ["firearms_ammunitions", "firearms_name"]).trim() || null,
       communications_equipment: pickByAliases(row, ["communications_equipment", "communications_name"]).trim() || null,
@@ -584,19 +736,19 @@ function downloadInventoryTemplateXlsx() {
       office_equipments_sec_equipments: pickByAliases(row, ["office_equipments_sec_equipments", "office_name"]).trim() || null,
       sec_equipments: pickByAliases(row, ["sec_equipments", "sec_name"]).trim() || null,
       vehicle_and_motorcycle: pickByAliases(row, ["vehicle_and_motorcycle", "vehicle_name"]).trim() || null,
-      total_amount: toNumber(pickByAliases(row, ["total_amount", "amount"])) || computedAmount,
+      total_amount: toNumber(pickByAliases(row, ["total_amount", "amount"])) || importedAmount,
       grand_total: toNumber(pickByAliases(row, ["grand_total"])) || null,
     };
 
-    const hasIdentity = Boolean((payload.particular ?? "").trim() || (payload.date ?? "").trim());
-    const displayName = payload.particular || payload.date || "—";
+    const hasIdentity = Boolean((payload.control_number ?? "").trim() || (payload.equipment ?? "").trim() || (payload.particular ?? "").trim() || (payload.date ?? "").trim());
+    const displayName = payload.control_number || payload.equipment || payload.particular || payload.date || "Inventory row";
 
     if (!hasIdentity) {
-      return { payload: null, displayName, error: "Missing identity fields (particular/date)" };
+      return { payload: null, displayName, error: "Missing identity fields (control number/equipment/particular/date)" };
     }
 
     return { payload, displayName };
-  }, []);
+  }, [rows]);
 
   const handleInventoryImport = useCallback(async (rawRows: Record<string, unknown>[]) => {
     if (!canImportInventory) {
@@ -621,20 +773,31 @@ function downloadInventoryTemplateXlsx() {
 
     const { data: existingRows, error: existingErr } = await supabase
       .from("inventory_fixed_asset")
-      .select("id, date, particular")
+      .select("id, date, particular, equipment, control_number")
       .limit(10000);
     if (existingErr) throw existingErr;
 
     const byComposite = new Map<string, string>();
+    const byControlNumber = new Map<string, string>();
     const byParticularUnique = new Map<string, string>();
+    const byEquipmentUnique = new Map<string, string>();
     const particularCounts = new Map<string, number>();
+    const equipmentCounts = new Map<string, number>();
     for (const row of ((existingRows ?? []) as Array<Record<string, unknown>>)) {
       const id = String(row.id ?? "");
       if (!id) continue;
+      const controlKey = normalizeControlNumber(row.control_number);
+      const equipmentKey = normalizeImportKey(row.equipment);
       const particularKey = normalizeImportKey(row.particular);
       const dateKey = normalizeImportKey(row.date);
       const key = `${particularKey}|${dateKey}`;
       if (key !== "|") byComposite.set(key, id);
+      if (controlKey) byControlNumber.set(controlKey, id);
+
+      if (equipmentKey) {
+        equipmentCounts.set(equipmentKey, (equipmentCounts.get(equipmentKey) ?? 0) + 1);
+        if (!byEquipmentUnique.has(equipmentKey)) byEquipmentUnique.set(equipmentKey, id);
+      }
 
       if (particularKey) {
         particularCounts.set(particularKey, (particularCounts.get(particularKey) ?? 0) + 1);
@@ -645,12 +808,17 @@ function downloadInventoryTemplateXlsx() {
     for (const [particularKey, count] of particularCounts.entries()) {
       if (count > 1) byParticularUnique.delete(particularKey);
     }
+    for (const [equipmentKey, count] of equipmentCounts.entries()) {
+      if (count > 1) byEquipmentUnique.delete(equipmentKey);
+    }
 
     const deduped = new Map<string, Record<string, unknown>>();
     for (const payload of importedRows) {
+      const controlKey = normalizeControlNumber(payload.control_number);
+      const equipmentKey = normalizeImportKey(payload.equipment);
       const particularKey = normalizeImportKey(payload.particular);
       const dateKey = normalizeImportKey(payload.date);
-      const key = dateKey ? `${particularKey}|${dateKey}` : `p:${particularKey}`;
+      const key = controlKey || (dateKey ? `${particularKey}|${dateKey}` : equipmentKey ? `e:${equipmentKey}` : `p:${particularKey}`);
       if (deduped.has(key)) skipped += 1;
       deduped.set(key, payload);
     }
@@ -658,10 +826,15 @@ function downloadInventoryTemplateXlsx() {
     let inserted = 0;
     let updated = 0;
     for (const [key, payload] of deduped.entries()) {
+      const controlKey = normalizeControlNumber(payload.control_number);
+      const equipmentKey = normalizeImportKey(payload.equipment);
       const particularKey = normalizeImportKey(payload.particular);
       const dateKey = normalizeImportKey(payload.date);
       const compositeKey = `${particularKey}|${dateKey}`;
-      const id = byComposite.get(compositeKey) ?? (particularKey ? byParticularUnique.get(particularKey) : undefined);
+      const id = (controlKey ? byControlNumber.get(controlKey) : undefined)
+        ?? byComposite.get(compositeKey)
+        ?? (equipmentKey ? byEquipmentUnique.get(equipmentKey) : undefined)
+        ?? (particularKey ? byParticularUnique.get(particularKey) : undefined);
       if (id) {
         const upd = await supabase.from("inventory_fixed_asset").update(payload).eq("id", id);
         if (upd.error) {
@@ -690,6 +863,20 @@ function downloadInventoryTemplateXlsx() {
   }, [canImportInventory, parseInventoryImportRow, loadData]);
 
   useEffect(() => {
+    void loadClientNameOptions();
+    const channel = supabase
+      .channel("realtime:inventory-client-name-options")
+      .on("postgres_changes", { event: "*", schema: "public", table: "contracts" }, () => {
+        void loadClientNameOptions();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [loadClientNameOptions]);
+
+  useEffect(() => {
     if (loadingInventoryColumns) return;
 
     void loadData();
@@ -715,14 +902,7 @@ function downloadInventoryTemplateXlsx() {
   const totalQuantity = useMemo(
     () =>
       rows.reduce(
-        (sum, r) =>
-          sum +
-          (Number(r.firearms_qty ?? 0) || 0) +
-          (Number(r.communications_qty ?? 0) || 0) +
-          (Number(r.furniture_qty ?? 0) || 0) +
-          (Number(r.office_qty ?? 0) || 0) +
-          (Number(r.sec_qty ?? 0) || 0) +
-          (Number(r.vehicle_qty ?? 0) || 0),
+        (sum, r) => sum + totalQuantityFromRow(r),
         0
       ),
     [rows]
@@ -734,7 +914,7 @@ function downloadInventoryTemplateXlsx() {
         const quantity = rows.reduce((sum, row) => sum + (Number(row[cfg.qtyRowField] ?? 0) || 0), 0);
         const value = rows.reduce(
           (sum, row) =>
-            sum + (Number(row[cfg.priceRowField] ?? 0) || 0),
+            sum + lineTotal(row[cfg.qtyRowField], row[cfg.priceRowField]),
           0
         );
         return { key: cfg.key, label: cfg.label, quantity, value };
@@ -745,10 +925,26 @@ function downloadInventoryTemplateXlsx() {
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const pageClamped = Math.min(page, totalPages);
   const paginated = filtered.slice((pageClamped - 1) * pageSize, pageClamped * pageSize);
+  const selectedDetailRow = useMemo(
+    () => rows.find((row) => row.id === selectedDetailRowId) ?? null,
+    [rows, selectedDetailRowId]
+  );
 
   function inventoryExportRows() {
     return filtered.map((row) => {
       const out: Record<string, string | number> = {};
+      if (showEquipmentColumn) out.Equipment = row.equipment ?? "-";
+      if (showControlNumberColumn) out.CONTROLNUMBER = row.control_number ?? "-";
+      if (showSerialPlateColumn) out["Serial # / Plate #"] = row.serial_plate_number ?? "-";
+      if (showMakerColumn) out.Maker = row.maker ?? "-";
+      if (showModelColumn) out["Model #"] = row.model_number ?? "-";
+      if (showDetachmentColumn) out.Detachment = row.detachment ?? "-";
+      if (showRemarksColumn) out.Remarks = row.remarks ?? "-";
+      if (showUnitCostColumn) out["Unit Cost"] = row.unit_cost ?? "";
+      if (showDatePurchasedColumn) out["Date of Purchased"] = row.date_purchased ?? "-";
+      if (showExpirationColumn) out.Expiration = row.expiration ?? "-";
+      if (showLastMaintenanceColumn) out["Last Maintenance"] = row.last_maintenance ?? "-";
+      if (showUserColumn) out.User = [row.user_text, row.user_attachment].filter(Boolean).join(" | ") || "-";
       if (showDateColumn) out.Date = row.date ?? "—";
       if (showParticularColumn) out.Particular = row.particular ?? "—";
       for (const cfg of visibleCategoryConfigs) {
@@ -758,10 +954,11 @@ function downloadInventoryTemplateXlsx() {
         out[`${cfg.label} Name`] = name;
         out[`${cfg.label} Qty`] = qty;
         out[`${cfg.label} Price`] = price;
+        out[`${cfg.label} Total`] = lineTotal(qty, price);
       }
       if (showRowTotalColumn) out["Row Total"] = totalFromRowPrices(row);
+      if (showGrandTotalColumn) out["Grand Total"] = row.grand_total ?? totalFromRowPrices(row);
       out["Last Updated"] = formatTimestamp(row.last_updated_at);
-      if (showRemarksColumn) out.Remarks = row.remarks ?? "—";
       return out;
     });
   }
@@ -820,6 +1017,12 @@ function downloadInventoryTemplateXlsx() {
 
   function rowToForm(row: InventoryRow): InventoryForm {
     return {
+      equipment: row.equipment ?? "",
+      control_number: row.control_number ?? "",
+      serial_plate_number: row.serial_plate_number ?? "",
+      maker: row.maker ?? "",
+      model_number: row.model_number ?? "",
+      detachment: row.detachment ?? "",
       date: row.date ?? "",
       particular: row.particular ?? "",
       quanitity: String(Number(row.quanitity ?? 0) || 0),
@@ -842,6 +1045,12 @@ function downloadInventoryTemplateXlsx() {
       vehicle_qty: String(Number(row.vehicle_qty ?? 0) || 0),
       vehicle_price: String(Number(row.vehicle_price ?? 0) || 0),
       remarks: row.remarks ?? "",
+      unit_cost: String(Number(row.unit_cost ?? 0) || 0),
+      date_purchased: row.date_purchased ?? "",
+      expiration: row.expiration ?? "",
+      last_maintenance: row.last_maintenance ?? "",
+      user_text: row.user_text ?? "",
+      user_attachment: row.user_attachment ?? "",
     };
   }
 
@@ -849,10 +1058,27 @@ function downloadInventoryTemplateXlsx() {
     if (!canMutateInventory) return;
     setEditingRowId(row.id);
     setFormData(rowToForm(row));
+    setUserAttachmentFile(null);
     setShowEditModal(true);
     setShowAddModal(false);
     setError("");
     setSuccess("");
+  }
+
+  function openDetailsModal(row: InventoryRow) {
+    setSelectedDetailRowId(row.id);
+    setError("");
+    setSuccess("");
+  }
+
+  function closeDetailsModal() {
+    setSelectedDetailRowId(null);
+  }
+
+  function editSelectedDetailRow() {
+    if (!selectedDetailRow) return;
+    closeDetailsModal();
+    openEditModal(selectedDetailRow);
   }
 
   function closeModals() {
@@ -860,30 +1086,45 @@ function downloadInventoryTemplateXlsx() {
     setShowEditModal(false);
     setEditingRowId(null);
     setFormData(EMPTY_FORM);
+    setUserAttachmentFile(null);
   }
 
-  async function addRow() {
-    if (!canMutateInventory || saving) return;
-    setSaving(true);
-    setError("");
-    setSuccess("");
+  async function uploadInventoryAttachment(file: File) {
+    const safeName = file.name.replace(/[^a-zA-Z0-9._-]+/g, "_");
+    const path = `inventory/${Date.now()}-${safeName}`;
+    const { error: uploadError } = await supabase.storage.from(INVENTORY_BUCKET).upload(path, file, {
+      cacheControl: "3600",
+      upsert: true,
+    });
+    if (uploadError) throw uploadError;
+    const { data } = supabase.storage.from(INVENTORY_BUCKET).getPublicUrl(path);
+    return data.publicUrl || path;
+  }
 
-    const totalAmount = totalFromPrices(formData);
-    const totalQuantity = toNumber(formData.quanitity);
-    const nextGrandTotal = grandTotal + totalAmount;
+  async function buildInventoryPayload(totalAmount: number, totalQuantity: number, grandTotalValue?: number) {
+    const uploadedAttachment = userAttachmentFile ? await uploadInventoryAttachment(userAttachmentFile) : null;
+    const controlNumber =
+      normalizeControlNumber(formData.control_number) ||
+      (formData.equipment.trim() ? nextInventoryControlNumber(formData.equipment.trim()) : "");
 
-    if (!formData.date || !formData.particular.trim()) {
-      setSaving(false);
-      setError("Date and Particular are required.");
-      return;
-    }
-
-    const payload = {
+    return {
+      equipment: formData.equipment.trim() || null,
+      control_number: controlNumber || null,
+      serial_plate_number: formData.serial_plate_number.trim() || null,
+      maker: formData.maker.trim() || null,
+      model_number: formData.model_number.trim() || null,
+      detachment: formData.detachment.trim() || null,
       date: formData.date,
       particular: formData.particular.trim(),
       quanitity: totalQuantity,
       amount: totalAmount,
       remarks: formData.remarks.trim() || null,
+      unit_cost: toNumber(formData.unit_cost),
+      date_purchased: formData.date_purchased || null,
+      expiration: formData.expiration || null,
+      last_maintenance: formData.last_maintenance || null,
+      user_text: formData.user_text.trim() || null,
+      user_attachment: uploadedAttachment || formData.user_attachment.trim() || null,
       firearms_name: formData.firearms_name.trim() || null,
       firearms_qty: toNumber(formData.firearms_qty),
       firearms_price: toNumber(formData.firearms_price),
@@ -909,7 +1150,30 @@ function downloadInventoryTemplateXlsx() {
       sec_equipments: formData.sec_name.trim() || null,
       vehicle_and_motorcycle: formData.vehicle_name.trim() || null,
       total_amount: totalAmount,
-      grand_total: nextGrandTotal,
+      ...(grandTotalValue == null ? {} : { grand_total: grandTotalValue }),
+    };
+  }
+
+  async function addRow() {
+    if (!canMutateInventory || saving) return;
+    setSaving(true);
+    setError("");
+    setSuccess("");
+
+    const totalAmount = totalFromPrices(formData);
+    const totalQuantity = totalQuantityFromForm(formData);
+    const nextGrandTotal = grandTotal + totalAmount;
+
+    if (!formData.particular.trim() && !formData.equipment.trim()) {
+      setSaving(false);
+      setError("Equipment or Particular is required.");
+      return;
+    }
+
+    const payload = {
+      ...(await buildInventoryPayload(totalAmount, totalQuantity, nextGrandTotal)),
+      date: formData.date || null,
+      particular: formData.particular.trim() || formData.equipment.trim(),
       last_updated_at: null,
     };
 
@@ -932,46 +1196,19 @@ function downloadInventoryTemplateXlsx() {
     setError("");
     setSuccess("");
 
-    if (!formData.date || !formData.particular.trim()) {
+    if (!formData.particular.trim() && !formData.equipment.trim()) {
       setSaving(false);
-      setError("Date and Particular are required.");
+      setError("Equipment or Particular is required.");
       return;
     }
 
     const totalAmount = totalFromPrices(formData);
-    const totalQuantity = toNumber(formData.quanitity);
+    const totalQuantity = totalQuantityFromForm(formData);
 
     const payload = {
-      date: formData.date,
-      particular: formData.particular.trim(),
-      quanitity: totalQuantity,
-      amount: totalAmount,
-      remarks: formData.remarks.trim() || null,
-      firearms_name: formData.firearms_name.trim() || null,
-      firearms_qty: toNumber(formData.firearms_qty),
-      firearms_price: toNumber(formData.firearms_price),
-      communications_name: formData.communications_name.trim() || null,
-      communications_qty: toNumber(formData.communications_qty),
-      communications_price: toNumber(formData.communications_price),
-      furniture_name: formData.furniture_name.trim() || null,
-      furniture_qty: toNumber(formData.furniture_qty),
-      furniture_price: toNumber(formData.furniture_price),
-      office_name: formData.office_name.trim() || null,
-      office_qty: toNumber(formData.office_qty),
-      office_price: toNumber(formData.office_price),
-      sec_name: formData.sec_name.trim() || null,
-      sec_qty: toNumber(formData.sec_qty),
-      sec_price: toNumber(formData.sec_price),
-      vehicle_name: formData.vehicle_name.trim() || null,
-      vehicle_qty: toNumber(formData.vehicle_qty),
-      vehicle_price: toNumber(formData.vehicle_price),
-      firearms_ammunitions: formData.firearms_name.trim() || null,
-      communications_equipment: formData.communications_name.trim() || null,
-      furniture_and_fixtures: formData.furniture_name.trim() || null,
-      office_equipments_sec_equipments: formData.office_name.trim() || null,
-      sec_equipments: formData.sec_name.trim() || null,
-      vehicle_and_motorcycle: formData.vehicle_name.trim() || null,
-      total_amount: totalAmount,
+      ...(await buildInventoryPayload(totalAmount, totalQuantity)),
+      date: formData.date || null,
+      particular: formData.particular.trim() || formData.equipment.trim(),
       last_updated_at: new Date().toISOString(),
     };
 
@@ -1163,6 +1400,18 @@ function downloadInventoryTemplateXlsx() {
           <table className="w-full text-sm text-black min-w-[1500px] border-separate border-spacing-y-2">
             <thead className="sticky top-0 z-10">
               <tr className="bg-[#FFDA03]">
+                {showEquipmentColumn ? <th className="px-4 py-3 text-left font-semibold text-black whitespace-nowrap rounded-l-xl">EQUIPMENT</th> : null}
+                {showControlNumberColumn ? <th className="px-4 py-3 text-left font-semibold text-black whitespace-nowrap">CONTROLNUMBER</th> : null}
+                {showSerialPlateColumn ? <th className="px-4 py-3 text-left font-semibold text-black whitespace-nowrap">SERIAL # / PLATE #</th> : null}
+                {showMakerColumn ? <th className="px-4 py-3 text-left font-semibold text-black whitespace-nowrap">MAKER</th> : null}
+                {showModelColumn ? <th className="px-4 py-3 text-left font-semibold text-black whitespace-nowrap">MODEL #</th> : null}
+                {showDetachmentColumn ? <th className="px-4 py-3 text-left font-semibold text-black whitespace-nowrap">DETACHMENT</th> : null}
+                {showRemarksColumn ? <th className="px-4 py-3 text-left font-semibold text-black whitespace-nowrap">REMARKS</th> : null}
+                {showUnitCostColumn ? <th className="px-4 py-3 text-right font-semibold text-black whitespace-nowrap">UNIT COST</th> : null}
+                {showDatePurchasedColumn ? <th className="px-4 py-3 text-left font-semibold text-black whitespace-nowrap">DATE OF PURCHASED</th> : null}
+                {showExpirationColumn ? <th className="px-4 py-3 text-left font-semibold text-black whitespace-nowrap">EXPIRATION</th> : null}
+                {showLastMaintenanceColumn ? <th className="px-4 py-3 text-left font-semibold text-black whitespace-nowrap">LAST MAINTENANCE</th> : null}
+                {showUserColumn ? <th className="px-4 py-3 text-left font-semibold text-black whitespace-nowrap">USER</th> : null}
                 {showDateColumn ? <th className="px-4 py-3 text-left font-semibold text-black whitespace-nowrap rounded-l-xl">Date</th> : null}
                 {showParticularColumn ? <th className="px-4 py-3 text-left font-semibold text-black whitespace-nowrap">Particular</th> : null}
                 {visibleCategoryConfigs.map((cfg) => (
@@ -1172,7 +1421,7 @@ function downloadInventoryTemplateXlsx() {
                 ))}
                 {showRowTotalColumn ? <th className="px-4 py-3 text-right font-semibold text-black whitespace-nowrap">Row Total</th> : null}
                 <th className="px-4 py-3 text-left font-semibold text-black whitespace-nowrap">Last Updated</th>
-                {showRemarksColumn ? (
+                {false ? (
                   <th className={`px-4 py-3 text-left font-semibold text-black whitespace-nowrap ${canMutateInventory ? "" : "rounded-r-xl"}`}>Remarks</th>
                 ) : null}
                 {canMutateInventory ? <th className="px-4 py-3 text-center font-semibold text-black whitespace-nowrap rounded-r-xl">Action</th> : null}
@@ -1190,23 +1439,40 @@ function downloadInventoryTemplateXlsx() {
                 paginated.map((row) => (
                   <tr
                     key={row.id}
-                    role={canMutateInventory ? "button" : undefined}
-                    tabIndex={canMutateInventory ? 0 : -1}
+                    role="button"
+                    tabIndex={0}
                     onClick={() => {
-                      if (!canMutateInventory) return;
-                      openEditModal(row);
+                      openDetailsModal(row);
                     }}
                     onKeyDown={(e) => {
-                      if (!canMutateInventory) return;
                       if (e.key === "Enter" || e.key === " ") {
                         e.preventDefault();
-                        openEditModal(row);
+                        openDetailsModal(row);
                       }
                     }}
-                    className={`animated-row border-b border-gray-100 transition hover:shadow-md ${
-                      canMutateInventory ? "cursor-pointer" : ""
-                    }`}
+                    className="animated-row cursor-pointer border-b border-gray-100 transition hover:shadow-md"
                   >
+                    {showEquipmentColumn ? <td className="px-4 py-3 font-semibold whitespace-nowrap rounded-l-xl">{row.equipment || "-"}</td> : null}
+                    {showControlNumberColumn ? <td className="px-4 py-3 whitespace-nowrap">{row.control_number || "-"}</td> : null}
+                    {showSerialPlateColumn ? <td className="px-4 py-3 whitespace-nowrap">{row.serial_plate_number || "-"}</td> : null}
+                    {showMakerColumn ? <td className="px-4 py-3 whitespace-nowrap">{row.maker || "-"}</td> : null}
+                    {showModelColumn ? <td className="px-4 py-3 whitespace-nowrap">{row.model_number || "-"}</td> : null}
+                    {showDetachmentColumn ? <td className="px-4 py-3 whitespace-nowrap">{row.detachment || "-"}</td> : null}
+                    {showRemarksColumn ? <td className="px-4 py-3 min-w-[180px]">{row.remarks || "-"}</td> : null}
+                    {showUnitCostColumn ? <td className="px-4 py-3 text-right whitespace-nowrap">PHP {toMoney(Number(row.unit_cost ?? 0) || 0)}</td> : null}
+                    {showDatePurchasedColumn ? <td className="px-4 py-3 whitespace-nowrap">{formatDateCell(row.date_purchased)}</td> : null}
+                    {showExpirationColumn ? <td className="px-4 py-3 whitespace-nowrap">{formatDateCell(row.expiration)}</td> : null}
+                    {showLastMaintenanceColumn ? <td className="px-4 py-3 whitespace-nowrap">{formatDateCell(row.last_maintenance)}</td> : null}
+                    {showUserColumn ? (
+                      <td className="px-4 py-3 min-w-[220px]">
+                        <div>{row.user_text || "-"}</div>
+                        {row.user_attachment ? (
+                          <a href={row.user_attachment} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} className="text-xs font-semibold text-blue-700 underline">
+                            View file
+                          </a>
+                        ) : null}
+                      </td>
+                    ) : null}
                     {showDateColumn ? <td className="px-4 py-3 whitespace-nowrap rounded-l-xl">{row.date || "—"}</td> : null}
                     {showParticularColumn ? <td className="px-4 py-3">{row.particular || "—"}</td> : null}
                     {visibleCategoryConfigs.map((cfg) => {
@@ -1228,7 +1494,7 @@ function downloadInventoryTemplateXlsx() {
                     })}
                     {showRowTotalColumn ? <td className="px-4 py-3 text-right font-semibold whitespace-nowrap">₱ {toMoney(totalFromRowPrices(row))}</td> : null}
                     <td className="px-4 py-3 text-xs text-gray-600 whitespace-nowrap">{formatTimestamp(row.last_updated_at)}</td>
-                    {showRemarksColumn ? <td className={`px-4 py-3 ${canMutateInventory ? "" : "rounded-r-xl"}`}>{row.remarks || "—"}</td> : null}
+                    {false ? <td className={`px-4 py-3 ${canMutateInventory ? "" : "rounded-r-xl"}`}>{row.remarks || "—"}</td> : null}
                     {canMutateInventory ? (
                       <td className="px-4 py-3 text-center rounded-r-xl">
                         <div className="inline-flex items-center gap-2">
@@ -1410,46 +1676,327 @@ function downloadInventoryTemplateXlsx() {
         </div>
       )}
       
+      {selectedDetailRow ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center overflow-hidden bg-black/40 p-4"
+          onClick={closeDetailsModal}
+        >
+          <div
+            className="glass-panel flex max-h-[90vh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl shadow-2xl animate-scale-in"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="shrink-0 border-b border-black/10 bg-[#fff9e6] px-6 py-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h2 className="text-xl font-semibold text-black">
+                    {selectedDetailRow.equipment || selectedDetailRow.particular || selectedDetailRow.control_number || "Inventory Record"}
+                  </h2>
+                  <p className="mt-1 text-sm text-gray-600">
+                    {selectedDetailRow.control_number ? `CONTROLNUMBER: ${selectedDetailRow.control_number}` : "Inventory information and computed totals"}
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center justify-end gap-3">
+                  {canMutateInventory ? (
+                    <button
+                      type="button"
+                      onClick={editSelectedDetailRow}
+                      className="rounded-xl bg-black px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-gray-800"
+                    >
+                      Edit Information
+                    </button>
+                  ) : null}
+                  {showRowTotalColumn ? (
+                    <div className="rounded-2xl bg-[#FFDA03] px-4 py-3 text-right text-black">
+                      <div className="text-xs font-semibold uppercase tracking-wide">Row Total</div>
+                      <div className="text-xl font-bold">PHP {toMoney(totalFromRowPrices(selectedDetailRow))}</div>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto px-6 py-5">
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+                {showEquipmentColumn ? (
+                  <div className="rounded-2xl border bg-white p-4">
+                    <div className="text-xs font-semibold uppercase tracking-wide text-gray-500">Equipment</div>
+                    <div className="mt-1 font-semibold text-black">{selectedDetailRow.equipment || "-"}</div>
+                  </div>
+                ) : null}
+                {showControlNumberColumn ? (
+                  <div className="rounded-2xl border bg-white p-4">
+                    <div className="text-xs font-semibold uppercase tracking-wide text-gray-500">CONTROLNUMBER</div>
+                    <div className="mt-1 font-semibold text-black">{selectedDetailRow.control_number || "-"}</div>
+                  </div>
+                ) : null}
+                {showSerialPlateColumn ? (
+                  <div className="rounded-2xl border bg-white p-4">
+                    <div className="text-xs font-semibold uppercase tracking-wide text-gray-500">Serial / Plate</div>
+                    <div className="mt-1 font-semibold text-black">{selectedDetailRow.serial_plate_number || "-"}</div>
+                  </div>
+                ) : null}
+                {showMakerColumn ? (
+                  <div className="rounded-2xl border bg-white p-4">
+                    <div className="text-xs font-semibold uppercase tracking-wide text-gray-500">Maker</div>
+                    <div className="mt-1 font-semibold text-black">{selectedDetailRow.maker || "-"}</div>
+                  </div>
+                ) : null}
+                {showModelColumn ? (
+                  <div className="rounded-2xl border bg-white p-4">
+                    <div className="text-xs font-semibold uppercase tracking-wide text-gray-500">Model #</div>
+                    <div className="mt-1 font-semibold text-black">{selectedDetailRow.model_number || "-"}</div>
+                  </div>
+                ) : null}
+                {showDetachmentColumn ? (
+                  <div className="rounded-2xl border bg-white p-4">
+                    <div className="text-xs font-semibold uppercase tracking-wide text-gray-500">Detachment / Client Name</div>
+                    <div className="mt-1 font-semibold text-black">{selectedDetailRow.detachment || "-"}</div>
+                  </div>
+                ) : null}
+                {showParticularColumn ? (
+                  <div className="rounded-2xl border bg-white p-4">
+                    <div className="text-xs font-semibold uppercase tracking-wide text-gray-500">Particular</div>
+                    <div className="mt-1 font-semibold text-black">{selectedDetailRow.particular || "-"}</div>
+                  </div>
+                ) : null}
+                {canViewInventoryColumn("quanitity") ? (
+                  <div className="rounded-2xl border bg-white p-4">
+                    <div className="text-xs font-semibold uppercase tracking-wide text-gray-500">Total Quantity</div>
+                    <div className="mt-1 font-semibold text-black">{totalQuantityFromRow(selectedDetailRow).toLocaleString()}</div>
+                  </div>
+                ) : null}
+                {showUnitCostColumn ? (
+                  <div className="rounded-2xl border bg-white p-4">
+                    <div className="text-xs font-semibold uppercase tracking-wide text-gray-500">Unit Cost</div>
+                    <div className="mt-1 font-semibold text-black">PHP {toMoney(Number(selectedDetailRow.unit_cost ?? 0) || 0)}</div>
+                  </div>
+                ) : null}
+                {showDatePurchasedColumn ? (
+                  <div className="rounded-2xl border bg-white p-4">
+                    <div className="text-xs font-semibold uppercase tracking-wide text-gray-500">Date of Purchased</div>
+                    <div className="mt-1 font-semibold text-black">{formatDateCell(selectedDetailRow.date_purchased)}</div>
+                  </div>
+                ) : null}
+                {showExpirationColumn ? (
+                  <div className="rounded-2xl border bg-white p-4">
+                    <div className="text-xs font-semibold uppercase tracking-wide text-gray-500">Expiration</div>
+                    <div className="mt-1 font-semibold text-black">{formatDateCell(selectedDetailRow.expiration)}</div>
+                  </div>
+                ) : null}
+                {showLastMaintenanceColumn ? (
+                  <div className="rounded-2xl border bg-white p-4">
+                    <div className="text-xs font-semibold uppercase tracking-wide text-gray-500">Last Maintenance</div>
+                    <div className="mt-1 font-semibold text-black">{formatDateCell(selectedDetailRow.last_maintenance)}</div>
+                  </div>
+                ) : null}
+              </div>
+
+              {visibleCategoryConfigs.length ? (
+                <div className="mt-5">
+                  <h3 className="mb-3 text-base font-semibold text-black">Category Breakdown</h3>
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+                    {visibleCategoryConfigs.map((cfg) => {
+                      const name = String(selectedDetailRow[cfg.nameRowField] ?? "").trim();
+                      const qty = Number(selectedDetailRow[cfg.qtyRowField] ?? 0) || 0;
+                      const price = Number(selectedDetailRow[cfg.priceRowField] ?? 0) || 0;
+                      return (
+                        <div key={`${selectedDetailRow.id}-${cfg.key}-detail`} className="rounded-2xl border bg-white p-4">
+                          <div className="font-semibold text-black">{cfg.label}</div>
+                          <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
+                            <div className="col-span-2">
+                              <div className="text-xs font-semibold uppercase tracking-wide text-gray-500">Name</div>
+                              <div className="font-medium text-black">{name || "-"}</div>
+                            </div>
+                            <div>
+                              <div className="text-xs font-semibold uppercase tracking-wide text-gray-500">Qty</div>
+                              <div className="font-medium text-black">{qty.toLocaleString()}</div>
+                            </div>
+                            <div>
+                              <div className="text-xs font-semibold uppercase tracking-wide text-gray-500">Price</div>
+                              <div className="font-medium text-black">PHP {toMoney(price)}</div>
+                            </div>
+                            <div className="col-span-2 rounded-xl bg-[#fff9e6] px-3 py-2">
+                              <div className="text-xs font-semibold uppercase tracking-wide text-gray-600">Total</div>
+                              <div className="font-semibold text-black">PHP {toMoney(lineTotal(qty, price))}</div>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : null}
+
+              <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2">
+                {showRemarksColumn ? (
+                  <div className="rounded-2xl border bg-white p-4">
+                    <div className="text-xs font-semibold uppercase tracking-wide text-gray-500">Remarks</div>
+                    <div className="mt-1 whitespace-pre-wrap text-black">{selectedDetailRow.remarks || "-"}</div>
+                  </div>
+                ) : null}
+                {showUserColumn ? (
+                  <div className="rounded-2xl border bg-white p-4">
+                    <div className="text-xs font-semibold uppercase tracking-wide text-gray-500">User</div>
+                    <div className="mt-1 text-black">{selectedDetailRow.user_text || "-"}</div>
+                    {selectedDetailRow.user_attachment ? (
+                      <a href={selectedDetailRow.user_attachment} target="_blank" rel="noreferrer" className="mt-2 inline-flex text-sm font-semibold text-blue-700 underline">
+                        View attached file
+                      </a>
+                    ) : null}
+                  </div>
+                ) : null}
+                <div className="rounded-2xl border bg-white p-4">
+                  <div className="text-xs font-semibold uppercase tracking-wide text-gray-500">Last Updated</div>
+                  <div className="mt-1 text-black">{formatTimestamp(selectedDetailRow.last_updated_at)}</div>
+                </div>
+              </div>
+            </div>
+
+            <div className="shrink-0 border-t border-black/10 bg-white/90 px-6 py-4">
+              <div className="flex flex-wrap items-center justify-end gap-3">
+                <button type="button" onClick={closeDetailsModal} className="rounded-xl border px-4 py-2 text-black hover:bg-gray-50">
+                  Close
+                </button>
+                {canMutateInventory ? (
+                  <button type="button" onClick={editSelectedDetailRow} className="rounded-xl bg-[#FFDA03] px-4 py-2 font-semibold text-black hover:brightness-95">
+                    Edit Information
+                  </button>
+                ) : null}
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
 
       {(showAddModal || showEditModal) && canMutateInventory ? (
         <div
-          className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
+          className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4 overflow-hidden"
           onClick={closeModals}
         >
           <div
-            className="glass-panel rounded-2xl shadow-2xl p-6 w-full max-w-5xl space-y-4 animate-scale-in"
+            className="glass-panel rounded-2xl shadow-2xl w-full max-w-5xl max-h-[88vh] overflow-hidden animate-scale-in flex flex-col"
             onClick={(e) => e.stopPropagation()}
           >
-            <h2 className="text-lg font-semibold text-black">
-              {showEditModal ? "Edit Inventory Row" : "Insert Inventory Information"}
-            </h2>
+            <div className="shrink-0 border-b border-black/10 px-6 py-4">
+              <h2 className="text-lg font-semibold text-black">
+                {showEditModal ? "Edit Inventory Row" : "Insert Inventory Information"}
+              </h2>
+              <p className="mt-1 text-sm text-gray-500">
+                Scroll inside this popup to complete all inventory details.
+              </p>
+            </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {showDateColumn ? (
-                <input type="date" className="border rounded-xl px-3 py-2" value={formData.date} onChange={(e) => setFormData((prev) => ({ ...prev, date: e.target.value }))} />
+            <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {showEquipmentColumn ? (
+                <label className="text-sm text-gray-700">
+                  <span className="mb-1 block text-xs uppercase tracking-wide">EQUIPMENT</span>
+                  <input
+                    className="border rounded-xl px-3 py-2 w-full"
+                    value={formData.equipment}
+                    onChange={(e) =>
+                      setFormData((prev) => ({
+                        ...prev,
+                        equipment: e.target.value,
+                        control_number: prev.control_number || (e.target.value.trim() ? nextInventoryControlNumber(e.target.value) : ""),
+                      }))
+                    }
+                  />
+                </label>
+              ) : null}
+              {showControlNumberColumn ? (
+                <label className="text-sm text-gray-700">
+                  <span className="mb-1 block text-xs uppercase tracking-wide">CONTROLNUMBER</span>
+                  <input
+                    className="border rounded-xl px-3 py-2 w-full"
+                    value={formData.control_number}
+                    onChange={(e) => setFormData((prev) => ({ ...prev, control_number: normalizeControlNumber(e.target.value) }))}
+                  />
+                </label>
+              ) : null}
+              {showSerialPlateColumn ? (
+                <label className="text-sm text-gray-700">
+                  <span className="mb-1 block text-xs uppercase tracking-wide">SERIAL / PLATE</span>
+                  <input className="border rounded-xl px-3 py-2 w-full" value={formData.serial_plate_number} onChange={(e) => setFormData((prev) => ({ ...prev, serial_plate_number: e.target.value }))} />
+                </label>
+              ) : null}
+              {showMakerColumn ? (
+                <label className="text-sm text-gray-700">
+                  <span className="mb-1 block text-xs uppercase tracking-wide">MAKER</span>
+                  <input className="border rounded-xl px-3 py-2 w-full" value={formData.maker} onChange={(e) => setFormData((prev) => ({ ...prev, maker: e.target.value }))} />
+                </label>
+              ) : null}
+              {showModelColumn ? (
+                <label className="text-sm text-gray-700">
+                  <span className="mb-1 block text-xs uppercase tracking-wide">MODEL #</span>
+                  <input className="border rounded-xl px-3 py-2 w-full" value={formData.model_number} onChange={(e) => setFormData((prev) => ({ ...prev, model_number: e.target.value }))} />
+                </label>
+              ) : null}
+              {showDetachmentColumn ? (
+                <label className="text-sm text-gray-700">
+                  <span className="mb-1 block text-xs uppercase tracking-wide">DETACHMENT (CLIENT NAME)</span>
+                  <select className="border rounded-xl px-3 py-2 w-full bg-white" value={formData.detachment} onChange={(e) => setFormData((prev) => ({ ...prev, detachment: e.target.value }))}>
+                    <option value="">Select Client Name</option>
+                    {detachmentOptions.map((clientName) => (
+                      <option key={clientName} value={clientName}>
+                        {clientName}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
+              {showUnitCostColumn ? (
+                <label className="text-sm text-gray-700">
+                  <span className="mb-1 block text-xs uppercase tracking-wide">UNIT COST</span>
+                  <input type="number" min="0" step="0.01" className="border rounded-xl px-3 py-2 w-full" value={formData.unit_cost} onChange={(e) => setFormData((prev) => ({ ...prev, unit_cost: e.target.value }))} />
+                </label>
+              ) : null}
+              {showDatePurchasedColumn ? (
+                <label className="text-sm text-gray-700">
+                  <span className="mb-1 block text-xs uppercase tracking-wide">DATE OF PURCHASED</span>
+                  <input type="date" className="border rounded-xl px-3 py-2 w-full" value={formData.date_purchased} onChange={(e) => setFormData((prev) => ({ ...prev, date_purchased: e.target.value }))} />
+                </label>
+              ) : null}
+              {showExpirationColumn ? (
+                <label className="text-sm text-gray-700">
+                  <span className="mb-1 block text-xs uppercase tracking-wide">EXPIRATION</span>
+                  <input type="date" className="border rounded-xl px-3 py-2 w-full" value={formData.expiration} onChange={(e) => setFormData((prev) => ({ ...prev, expiration: e.target.value }))} />
+                </label>
+              ) : null}
+              {showLastMaintenanceColumn ? (
+                <label className="text-sm text-gray-700">
+                  <span className="mb-1 block text-xs uppercase tracking-wide">LAST MAINTENANCE</span>
+                  <input type="date" className="border rounded-xl px-3 py-2 w-full" value={formData.last_maintenance} onChange={(e) => setFormData((prev) => ({ ...prev, last_maintenance: e.target.value }))} />
+                </label>
               ) : null}
               {showParticularColumn ? (
-                <input placeholder="Particular" className="border rounded-xl px-3 py-2" value={formData.particular} onChange={(e) => setFormData((prev) => ({ ...prev, particular: e.target.value }))} />
+                <label className="text-sm text-gray-700">
+                  <span className="mb-1 block text-xs uppercase tracking-wide">PARTICULAR</span>
+                  <input className="border rounded-xl px-3 py-2 w-full" value={formData.particular} onChange={(e) => setFormData((prev) => ({ ...prev, particular: e.target.value }))} />
+                </label>
               ) : null}
               {canViewInventoryColumn("quanitity") ? (
-                <input
-                  type="number"
-                  min="0"
-                  placeholder="Total Quantity"
-                  className="border rounded-xl px-3 py-2"
-                  value={formData.quanitity}
-                  onChange={(e) => setFormData((prev) => ({ ...prev, quanitity: e.target.value }))}
-                />
+                <label className="text-sm text-gray-700">
+                  <span className="mb-1 block text-xs uppercase tracking-wide">TOTAL QUANTITY</span>
+                  <input
+                    type="number"
+                    min="0"
+                    className="border rounded-xl px-3 py-2 w-full"
+                    value={formData.quanitity}
+                    onChange={(e) => setFormData((prev) => ({ ...prev, quanitity: e.target.value }))}
+                  />
+                </label>
               ) : null}
               {showRowTotalColumn ? (
                 <div className="border rounded-xl px-3 py-2 bg-white text-sm text-gray-700">
-                  Row Total (sum of all prices):
+                  Row Total (quantity x price):
                   <span className="ml-2 font-semibold text-black">₱ {toMoney(totalFromPrices(formData))}</span>
                 </div>
               ) : null}
-            </div>
+              </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
               {visibleCategoryConfigs.map((cfg) => {
                 return (
                   <div key={cfg.key} className="rounded-2xl border bg-white p-4 space-y-3">
@@ -1489,33 +2036,66 @@ function downloadInventoryTemplateXlsx() {
                   </div>
                 );
               })}
+              </div>
+
+              {showRemarksColumn ? (
+                <label className="block text-sm text-gray-700">
+                  <span className="mb-1 block text-xs uppercase tracking-wide">REMARKS</span>
+                  <input className="border rounded-xl px-3 py-2 w-full" value={formData.remarks} onChange={(e) => setFormData((prev) => ({ ...prev, remarks: e.target.value }))} />
+                </label>
+              ) : null}
+
+              {showUserColumn ? (
+                <div className="rounded-2xl border bg-white p-4 space-y-3">
+                  <div className="font-medium text-gray-900">USER</div>
+                  <input
+                    placeholder="User text / assigned user"
+                    className="border rounded-xl px-3 py-2 w-full"
+                    value={formData.user_text}
+                    onChange={(e) => setFormData((prev) => ({ ...prev, user_text: e.target.value }))}
+                  />
+                  <input
+                    placeholder="Existing file URL"
+                    className="border rounded-xl px-3 py-2 w-full"
+                    value={formData.user_attachment}
+                    onChange={(e) => setFormData((prev) => ({ ...prev, user_attachment: e.target.value }))}
+                  />
+                  <label className="flex flex-wrap items-center gap-3 rounded-xl border bg-gray-50 px-3 py-2 text-sm text-black">
+                    <Upload className="h-4 w-4" />
+                    <span>{userAttachmentFile ? userAttachmentFile.name : "Upload file/image to inventory bucket"}</span>
+                    <input
+                      type="file"
+                      className="hidden"
+                      onChange={(e) => setUserAttachmentFile(e.target.files?.[0] ?? null)}
+                    />
+                  </label>
+                </div>
+              ) : null}
             </div>
 
-            {showRemarksColumn ? (
-              <input placeholder="Remarks" className="border rounded-xl px-3 py-2 w-full" value={formData.remarks} onChange={(e) => setFormData((prev) => ({ ...prev, remarks: e.target.value }))} />
-            ) : null}
-
-            <div className="flex items-center justify-between gap-3 pt-2">
-              <div>
-                {showEditModal ? (
+            <div className="shrink-0 border-t border-black/10 bg-white/90 px-6 py-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  {showEditModal ? (
+                    <button
+                      onClick={() => void deleteEditingRow()}
+                      disabled={saving}
+                      className="px-4 py-2 rounded-xl border border-red-300 bg-red-50 text-red-700 font-semibold disabled:opacity-60"
+                    >
+                      Delete
+                    </button>
+                  ) : null}
+                </div>
+                <div className="flex items-center gap-3">
+                  <button onClick={closeModals} className="px-4 py-2 rounded-xl border">Cancel</button>
                   <button
-                    onClick={() => void deleteEditingRow()}
+                    onClick={showEditModal ? updateRow : addRow}
                     disabled={saving}
-                    className="px-4 py-2 rounded-xl border border-red-300 bg-red-50 text-red-700 font-semibold disabled:opacity-60"
+                    className="px-4 py-2 rounded-xl bg-[#FFDA03] font-semibold text-black disabled:opacity-60"
                   >
-                    Delete
+                    {saving ? "Saving..." : showEditModal ? "Update" : "Save"}
                   </button>
-                ) : null}
-              </div>
-              <div className="flex items-center gap-3">
-                <button onClick={closeModals} className="px-4 py-2 rounded-xl border">Cancel</button>
-                <button
-                  onClick={showEditModal ? updateRow : addRow}
-                  disabled={saving}
-                  className="px-4 py-2 rounded-xl bg-[#FFDA03] font-semibold text-black disabled:opacity-60"
-                >
-                  {saving ? "Saving..." : showEditModal ? "Update" : "Save"}
-                </button>
+                </div>
               </div>
             </div>
           </div>
@@ -1530,9 +2110,24 @@ function downloadInventoryTemplateXlsx() {
         allowTemplateDownloads={canDownloadInventoryTemplate}
         templateFileName="inventory_import_template"
         templateSampleData={{
+          equipment: "CIGNUS",
+          control_number: "CIG-2026-0001",
+          serial_plate_number: "SN-001",
+          maker: "Sample Maker",
+          model_number: "Model A",
+          detachment: "Sample Client",
           date: "2026-03-01",
           particular: "Sample Particular",
           quanitity: 5,
+          unit_cost: 1000,
+          amount: 5000,
+          total_amount: 5000,
+          grand_total: 5000,
+          date_purchased: "2026-03-01",
+          expiration: "2027-03-01",
+          last_maintenance: "2026-05-01",
+          user_text: "Assigned user or notes",
+          user_attachment: "Optional URL",
           firearms_name: "Sample Firearm",
           firearms_qty: 1,
           firearms_price: 1000,
@@ -1553,7 +2148,7 @@ function downloadInventoryTemplateXlsx() {
           vehicle_price: 2000,
           remarks: "Optional remarks",
         }}
-        previewColumns={["Particular/Date"]}
+        previewColumns={["CONTROLNUMBER / Equipment"]}
         parseRow={parseInventoryImportRow}
         onImport={handleInventoryImport}
       />

@@ -132,13 +132,12 @@ BEGIN
   END IF;
 END $$;
 
--- 3) Connect Client / Inventory / Reports / Requests pages to module tables
+-- 3) Connect Client / Inventory / Car Insurance / Requests pages to module tables
 INSERT INTO public.modules (module_key, display_name, path)
 VALUES
   ('logistics', 'Logistics', '/Main_Modules/Logistics/'),
   ('client', 'Client', '/Main_Modules/Client/'),
   ('inventory', 'Inventory', '/Main_Modules/Inventory/'),
-  ('reports', 'Reports', '/Main_Modules/Reports/'),
   ('car_insurance_expiration', 'Car Insurance Expiration', '/Main_Modules/Logistics/CarInsuranceExpiration/'),
   ('requests', 'Requests', '/Main_Modules/Requests/')
 ON CONFLICT (module_key) DO UPDATE
@@ -151,7 +150,7 @@ INSERT INTO public.role_module_access (role_id, module_key, can_read, can_write)
 SELECT r.role_id, m.module_key, true, true
 FROM public.app_roles r
 JOIN public.modules m
-  ON m.module_key IN ('client', 'inventory', 'reports', 'requests', 'logistics', 'car_insurance_expiration')
+  ON m.module_key IN ('client', 'inventory', 'requests', 'logistics', 'car_insurance_expiration')
 WHERE r.role_name IN ('superadmin', 'admin')
 ON CONFLICT (role_id, module_key) DO UPDATE
 SET

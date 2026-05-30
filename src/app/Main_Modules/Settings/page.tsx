@@ -276,8 +276,8 @@ function buildTemplateNotes(subject: string, bodyHtml: string) {
 	return JSON.stringify({ subject: sub || null, bodyHtml: body || null });
 }
 
-const DEFAULT_NOTICE_SUBJECT = "NOTICE: LICENSE EXPIRATION ALERT ({count})";
-const DEFAULT_NOTICE_BODY = `<div><b>To all concerned,</b></div><div>This serves as a formal notice that the records listed below are nearing expiration.</div><div>Please review each item and coordinate the appropriate renewal action before the listed date.</div><div>If renewal has already been completed, you may disregard this message.</div>`;
+const DEFAULT_NOTICE_SUBJECT = "Faragon Security: Expiring Record Alert ({count})";
+const DEFAULT_NOTICE_BODY = `<div><strong>To all concerned,</strong></div><div>This is a formal reminder that the listed records are approaching expiration.</div><div>Please review each item, coordinate the required renewal action, and complete any updates before the stated expiration date.</div><div>If the renewal has already been processed, you may disregard this message.</div>`;
 const LOG_RETENTION_OPTIONS = [
 	{ value: 7, label: "1 week" },
 	{ value: 30, label: "1 month" },
