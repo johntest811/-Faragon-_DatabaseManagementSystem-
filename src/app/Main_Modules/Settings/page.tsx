@@ -532,6 +532,103 @@ export default function SettingsPage() {
 	const [profileUploading, setProfileUploading] = useState(false);
 	const [profileRemoving, setProfileRemoving] = useState(false);
 
+	// Auto updater state
+	const [updaterState, setUpdaterState] = useState<"idle" | "checking" | "available" | "downloading" | "downloaded" | "no-update" | "error">("idle");
+	const [updateVersion, setUpdateVersion] = useState<string | null>(null);
+	const [currentVersion, setCurrentVersion] = useState<string | null>(null);
+	const [downloadPercent, setDownloadPercent] = useState<number>(0);
+	const [updaterError, setUpdaterError] = useState<string | null>(null);
+
+	// Load current app version on mount
+	useEffect(() => {
+		async function fetchVersion() {
+			const anyWin = typeof window !== "undefined" ? (window as any) : null;
+			if (anyWin?.electronAPI?.invoke) {
+				try {
+					const ver = await anyWin.electronAPI.invoke("app:getVersion");
+					setCurrentVersion(ver);
+				} catch {
+					// ignore web fallback
+				}
+			}
+		}
+		void fetchVersion();
+	}, []);
+
+	// Handle download progress and completion events from Electron
+	useEffect(() => {
+		const anyWin = typeof window !== "undefined" ? (window as any) : null;
+		if (!anyWin?.electronAPI?.app?.onUpdateProgress) return;
+
+		const unsubscribeProgress = anyWin.electronAPI.app.onUpdateProgress((progress: { percent: number }) => {
+			setUpdaterState("downloading");
+			setDownloadPercent(Math.round(progress?.percent ?? 0));
+		});
+
+		const unsubscribeDownloaded = anyWin.electronAPI.app.onUpdateDownloaded((info: { version: string }) => {
+			setUpdaterState("downloaded");
+			setUpdateVersion(info.version);
+		});
+
+		return () => {
+			unsubscribeProgress();
+			unsubscribeDownloaded();
+		};
+	}, []);
+
+	async function handleCheckForUpdates() {
+		const anyWin = typeof window !== "undefined" ? (window as any) : null;
+		if (!anyWin?.electronAPI?.invoke) return;
+		setUpdaterState("checking");
+		setUpdaterError(null);
+		try {
+			const res = await anyWin.electronAPI.invoke("app:checkForUpdates");
+			if (res.success) {
+				if (res.updateAvailable) {
+					setUpdaterState("available");
+					setUpdateVersion(res.version);
+				} else {
+					setUpdaterState("no-update");
+				}
+			} else {
+				setUpdaterState("error");
+				setUpdaterError(res.error || "Failed to check for updates.");
+			}
+		} catch (err: any) {
+			setUpdaterState("error");
+			setUpdaterError(err?.message || "Communication error with main process.");
+		}
+	}
+
+	async function handleDownloadUpdate() {
+		const anyWin = typeof window !== "undefined" ? (window as any) : null;
+		if (!anyWin?.electronAPI?.invoke) return;
+		setUpdaterState("downloading");
+		setDownloadPercent(0);
+		setUpdaterError(null);
+		try {
+			const res = await anyWin.electronAPI.invoke("app:downloadUpdate");
+			if (!res.success) {
+				setUpdaterState("error");
+				setUpdaterError(res.error || "Failed to start download.");
+			}
+		} catch (err: any) {
+			setUpdaterState("error");
+			setUpdaterError(err?.message || "Communication error during download.");
+		}
+	}
+
+	async function handleInstallUpdate() {
+		const anyWin = typeof window !== "undefined" ? (window as any) : null;
+		if (!anyWin?.electronAPI?.invoke) return;
+		try {
+			await anyWin.electronAPI.invoke("app:installUpdate");
+		} catch (err: any) {
+			setUpdaterState("error");
+			setUpdaterError(err?.message || "Failed to execute installer.");
+		}
+	}
+
 	// Email settings (gmail)
 	const [gmailUser, setGmailUser] = useState("");
 	const [isActive, setIsActive] = useState(true);
@@ -1669,6 +1766,136 @@ export default function SettingsPage() {
 							}}
 						/>
 					</div>
+
+					{/* System Updates */}
+					{isDesktop ? (
+						<div className="glass-panel animate-scale-in rounded-2xl border-none p-4">
+							<div className="flex flex-wrap items-start justify-between gap-3 mb-3">
+								<div>
+									<div className="font-semibold text-black">System Updates</div>
+									<div className="text-xs text-gray-500">
+										Check for software updates and install them instantly.
+									</div>
+								</div>
+								{currentVersion && (
+									<div className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">
+										Current Version: v{currentVersion}
+									</div>
+								)}
+							</div>
+
+							<div className="mt-4 flex flex-col gap-4">
+								{updaterState === "idle" && (
+									<div>
+										<p className="text-sm text-gray-600">
+											Keep your application up to date with the latest features, security patches, and database optimizations.
+										</p>
+										<button
+											type="button"
+											onClick={handleCheckForUpdates}
+											className="mt-3 min-h-10 rounded-xl bg-[#FFDA03] px-5 py-2 text-sm font-bold text-black hover:brightness-95 transition-all duration-200"
+										>
+											Check for Updates
+										</button>
+									</div>
+								)}
+
+								{updaterState === "checking" && (
+									<div className="flex items-center gap-3">
+										<div className="h-5 w-5 animate-spin rounded-full border-2 border-[#FFDA03] border-t-transparent"></div>
+										<span className="text-sm text-gray-700 font-medium">Checking for updates on GitHub...</span>
+									</div>
+								)}
+
+								{updaterState === "no-update" && (
+									<div>
+										<div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800 font-medium">
+											Your application is up to date! You are running the latest version.
+										</div>
+										<button
+											type="button"
+											onClick={handleCheckForUpdates}
+											className="mt-3 min-h-10 rounded-xl bg-slate-100 border border-slate-200 px-5 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-200 transition-all duration-200"
+										>
+											Check Again
+										</button>
+									</div>
+								)}
+
+								{updaterState === "available" && (
+									<div>
+										<div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+											<div className="font-semibold mb-1">New Version Available!</div>
+											A new update (v{updateVersion}) is available. Would you like to download it now?
+										</div>
+										<div className="mt-3 flex gap-2">
+											<button
+												type="button"
+												onClick={handleDownloadUpdate}
+												className="min-h-10 rounded-xl bg-black px-5 py-2 text-sm font-bold text-white hover:bg-gray-800 transition-all duration-200"
+											>
+												Download Update
+											</button>
+											<button
+												type="button"
+												onClick={() => setUpdaterState("idle")}
+												className="min-h-10 rounded-xl bg-white border px-5 py-2 text-sm font-semibold text-black hover:bg-gray-50 transition-all duration-200"
+											>
+												Later
+											</button>
+										</div>
+									</div>
+								)}
+
+								{updaterState === "downloading" && (
+									<div>
+										<div className="flex justify-between text-sm text-gray-700 font-medium mb-1.5">
+											<span>Downloading latest version...</span>
+											<span>{downloadPercent}%</span>
+										</div>
+										<div className="w-full bg-slate-100 rounded-full h-2.5 overflow-hidden">
+											<div
+												className="bg-[#FFDA03] h-2.5 rounded-full transition-all duration-300"
+												style={{ width: `${downloadPercent}%` }}
+											></div>
+										</div>
+									</div>
+								)}
+
+								{updaterState === "downloaded" && (
+									<div>
+										<div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800 mb-3">
+											<div className="font-semibold mb-1">Download Complete!</div>
+											The update has been downloaded. Restart the application to install and run the new version.
+										</div>
+										<button
+											type="button"
+											onClick={handleInstallUpdate}
+											className="min-h-10 rounded-xl bg-black px-6 py-2.5 text-sm font-bold text-white hover:bg-gray-800 transition-all duration-200 shadow-md"
+										>
+											Restart and Install
+										</button>
+									</div>
+								)}
+
+								{updaterState === "error" && (
+									<div>
+										<div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 mb-3">
+											<div className="font-semibold mb-1">Update Failed</div>
+											{updaterError || "An error occurred during update process."}
+										</div>
+										<button
+											type="button"
+											onClick={handleCheckForUpdates}
+											className="min-h-10 rounded-xl bg-[#FFDA03] px-5 py-2 text-sm font-bold text-black hover:brightness-95 transition-all duration-200"
+										>
+											Try Again
+										</button>
+									</div>
+								)}
+							</div>
+						</div>
+					) : null}
 
 					<div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
 						<div className="glass-panel animate-scale-in rounded-2xl border-none p-4">

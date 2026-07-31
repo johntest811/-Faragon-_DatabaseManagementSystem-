@@ -2,7 +2,7 @@
 
 import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { Download, FileDown, FileText, Search, Trash2, Upload } from "lucide-react";
+import { Download, FileDown, FileText, PencilLine, Plus, Search, Trash2, Upload } from "lucide-react";
 import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -33,6 +33,7 @@ type ClientRow = {
   project_name: string | null;
   contract_start: string | null;
   contract_end: string | null;
+  notification_recipient_email: string | null;
   contracted_manpower: number | null;
   deployed_guards: number | null;
   remarks: string | null;
@@ -62,15 +63,23 @@ type EmployeeLink = {
   name: string;
 };
 
+type ContractNotificationRecipientRow = {
+  id: number;
+  email: string;
+  is_active: boolean;
+  notes: string | null;
+  created_at: string;
+};
+
 type ContractForm = {
   contract_no: string;
-  contract_no_date: string;
   client_name: string;
   project_name: string;
   specific_area: string;
   cluster: string;
   contract_start: string;
   contract_end: string;
+  notification_recipient_email: string;
   contracted_manpower: string;
   status: string;
   created_at: string;
@@ -79,13 +88,13 @@ type ContractForm = {
 
 const EMPTY_FORM: ContractForm = {
   contract_no: "",
-  contract_no_date: "",
   client_name: "",
   project_name: "",
   specific_area: "",
   cluster: "",
   contract_start: "",
   contract_end: "",
+  notification_recipient_email: "",
   contracted_manpower: "",
   status: "ACTIVE",
   created_at: "",
@@ -140,6 +149,46 @@ function ModalShell({
 function toNullableText(value: string) {
   const clean = value.trim();
   return clean.length ? clean : null;
+}
+
+function normalizeRecipientEmail(value: unknown) {
+  return String(value ?? "").trim().toLowerCase();
+}
+
+function toNullableRecipientEmail(value: unknown) {
+  const email = normalizeRecipientEmail(value);
+  return email || null;
+}
+
+function isValidRecipientEmail(value: unknown) {
+  const email = normalizeRecipientEmail(value);
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+function contractMutationError(action: "insert" | "update", error: unknown) {
+  const message = String((error as { message?: unknown })?.message ?? error ?? "Unknown database error");
+  if (/contracts_notification_recipient_email_check|notification_recipient_email.*check/i.test(message)) {
+    return "Contract notification Gmail must be blank or a valid Gmail/email address.";
+  }
+  if (message.toLowerCase().includes("notification_recipient_email")) {
+    return "Run SQL/supabase_contract_expiration_notifications.sql in the Supabase SQL Editor, then try again.";
+  }
+  return `Contract ${action} failed: ${message}`;
+}
+
+function contractRecipientError(error: unknown, fallback: string) {
+  const message = String((error as { message?: unknown })?.message ?? error ?? fallback);
+  const code = String((error as { code?: unknown })?.code ?? "");
+  if (code === "42501" || /row-level security|permission denied/i.test(message)) {
+    return "Client recipient access is blocked by Supabase RLS. Run SQL/supabase_fix_contract_notification_recipients_rls.sql in the Supabase SQL Editor, then try again.";
+  }
+  if (/contract_notification_recipients|relation .* does not exist/i.test(message)) {
+    return "Run SQL/supabase_contract_expiration_notifications.sql in the Supabase SQL Editor, then try again.";
+  }
+  if (/duplicate key|unique constraint/i.test(message)) {
+    return "That Gmail address is already in the Client notification recipient list.";
+  }
+  return message || fallback;
 }
 
 function toNumberOrNull(value: string) {
@@ -262,18 +311,6 @@ function omitBlankCreatedAt<T extends Record<string, unknown>>(payload: T) {
   return next;
 }
 
-function toDateInputValue(v: string | null) {
-  const raw = String(v ?? "").trim();
-  if (!raw) return "";
-  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
-  const d = new Date(raw);
-  if (Number.isNaN(d.getTime())) return "";
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return `${yyyy}-${mm}-${dd}`;
-}
-
 /* ------------------- Main Page Component ------------------- */
 
 export default function ClientsPage() {
@@ -287,6 +324,8 @@ export default function ClientsPage() {
   const canImportFile = isAdmin && canViewColumnPermission("import_file");
   const canDownloadTemplate = isAdmin && canViewColumnPermission("export_template");
   const canExportFile = isAdmin && canViewColumnPermission("export_file");
+  const canViewNotificationRecipients = canViewColumnPermission("notification_recipient_email");
+  const canEditNotificationRecipients = isAdmin && canViewNotificationRecipients;
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -332,6 +371,15 @@ export default function ClientsPage() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [importSummary, setImportSummary] = useState<ImportSummaryData | null>(null);
   const [importSummaryOpen, setImportSummaryOpen] = useState(false);
+  const [recipientRows, setRecipientRows] = useState<ContractNotificationRecipientRow[]>([]);
+  const [recipientSaving, setRecipientSaving] = useState(false);
+  const [addRecipientOpen, setAddRecipientOpen] = useState(false);
+  const [recipientEmail, setRecipientEmail] = useState("");
+  const [recipientNotes, setRecipientNotes] = useState("");
+  const [editingRecipientId, setEditingRecipientId] = useState<number | null>(null);
+  const [editRecipientEmail, setEditRecipientEmail] = useState("");
+  const [editRecipientNotes, setEditRecipientNotes] = useState("");
+  const [editRecipientActive, setEditRecipientActive] = useState(true);
 
   /* NEW: Modal state for exports/templates */
   const [exportModalOpen, setExportModalOpen] = useState(false);
@@ -345,7 +393,7 @@ export default function ClientsPage() {
 
   async function downloadTemplate(format: "xlsx" | "csv") {
     const sample = {
-      contract_no: "2026-02-01",
+      contract_no: "2026 SERIES 001",
       cluster: "Metro Manila",
       client_name: "Sample Client",
       specific_area: "Area 1",
@@ -397,14 +445,14 @@ export default function ClientsPage() {
 
   const parseClientImportRow = useCallback((row: Record<string, unknown>) => {
     const payload = {
-      contract_no: toNullableText(findValueByAliases(row, ["contract_no", "contract number", "contractno", "contract"])),
-      contract_no_date: toNullableText(findValueByAliases(row, ["contract_no_date", "contract no date", "contract date"])),
+      contract_no: toNullableText(findValueByAliases(row, ["contract_no", "contract series", "contract date", "contract number", "contractno", "contract"])),
       client_name: toNullableText(findValueByAliases(row, ["client_name", "client", "customer"])),
       project_name: toNullableText(findValueByAliases(row, ["project_name", "project"])),
       specific_area: toNullableText(findValueByAliases(row, ["specific_area", "area", "specific area"])),
       cluster: toNullableText(findValueByAliases(row, ["cluster"])),
       contract_start: toNullableText(findValueByAliases(row, ["contract_start", "start", "start_date", "contract start"])),
       contract_end: toNullableText(findValueByAliases(row, ["contract_end", "end", "end_date", "contract end"])),
+      notification_recipient_email: toNullableRecipientEmail(findValueByAliases(row, ["notification_recipient_email", "notification recipient gmail", "notification email", "recipient email", "gmail"])),
       contracted_manpower: toNumberOrNull(findValueByAliases(row, ["contracted_manpower", "manpower", "contracted manpower"])),
       status: toNullableText(findValueByAliases(row, ["status"])),
       created_at: toNullableText(findValueByAliases(row, ["created_at", "created at", "created"])),
@@ -538,11 +586,148 @@ export default function ClientsPage() {
   /* --- loadConnectedData, loadApplicants, submitContract, openEditModal, openDetails etc.
          unchanged — include them as in your original file. For brevity here I keep the original implementations. --- */
 
+  const loadContractRecipientRows = useCallback(async () => {
+    if (!canViewNotificationRecipients) {
+      setRecipientRows([]);
+      return;
+    }
+
+    const result = await supabase
+      .from("contract_notification_recipients")
+      .select("id, email, is_active, notes, created_at")
+      .order("created_at", { ascending: true });
+
+    if (result.error) {
+      setRecipientRows([]);
+      setError(contractRecipientError(result.error, "Failed to load Client notification recipients."));
+      return;
+    }
+
+    setRecipientRows((result.data as ContractNotificationRecipientRow[]) ?? []);
+  }, [canViewNotificationRecipients]);
+
+  function resetRecipientForm() {
+    setRecipientEmail("");
+    setRecipientNotes("");
+    setAddRecipientOpen(false);
+  }
+
+  function openRecipientEditor(row: ContractNotificationRecipientRow) {
+    setEditingRecipientId(row.id);
+    setEditRecipientEmail(row.email);
+    setEditRecipientNotes(row.notes ?? "");
+    setEditRecipientActive(Boolean(row.is_active));
+    setError("");
+    setSaveState({ type: "", message: "" });
+  }
+
+  function closeRecipientEditor() {
+    setEditingRecipientId(null);
+    setEditRecipientEmail("");
+    setEditRecipientNotes("");
+    setEditRecipientActive(true);
+  }
+
+  async function addContractRecipient() {
+    if (!canEditNotificationRecipients || recipientSaving) return;
+    const email = normalizeRecipientEmail(recipientEmail);
+    if (!isValidRecipientEmail(email)) {
+      setSaveState({ type: "error", message: "Enter a valid Gmail or email address." });
+      return;
+    }
+
+    setRecipientSaving(true);
+    setError("");
+    setSaveState({ type: "", message: "" });
+    try {
+      const result = await supabase
+        .from("contract_notification_recipients")
+        .insert({
+          email,
+          notes: toNullableText(recipientNotes),
+          is_active: true,
+        })
+        .select("id, email, is_active, notes, created_at")
+        .single();
+      if (result.error) throw result.error;
+      if (!result.data) throw new Error("Supabase did not return the saved Client notification recipient.");
+      resetRecipientForm();
+      setSaveState({ type: "success", message: "Client notification recipient added." });
+      await loadContractRecipientRows();
+    } catch (recipientError: unknown) {
+      setSaveState({ type: "error", message: contractRecipientError(recipientError, "Failed to add Client notification recipient.") });
+    } finally {
+      setRecipientSaving(false);
+    }
+  }
+
+  async function saveContractRecipient() {
+    if (!canEditNotificationRecipients || !editingRecipientId || recipientSaving) return;
+    const email = normalizeRecipientEmail(editRecipientEmail);
+    if (!isValidRecipientEmail(email)) {
+      setSaveState({ type: "error", message: "Enter a valid Gmail or email address." });
+      return;
+    }
+
+    setRecipientSaving(true);
+    setError("");
+    setSaveState({ type: "", message: "" });
+    try {
+      const result = await supabase
+        .from("contract_notification_recipients")
+        .update({
+          email,
+          notes: toNullableText(editRecipientNotes),
+          is_active: editRecipientActive,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", editingRecipientId);
+      if (result.error) throw result.error;
+      closeRecipientEditor();
+      setSaveState({ type: "success", message: "Client notification recipient updated." });
+      await loadContractRecipientRows();
+    } catch (recipientError: unknown) {
+      setSaveState({ type: "error", message: contractRecipientError(recipientError, "Failed to update Client notification recipient.") });
+    } finally {
+      setRecipientSaving(false);
+    }
+  }
+
+  async function toggleContractRecipient(id: number, isActive: boolean) {
+    if (!canEditNotificationRecipients) return;
+    const result = await supabase
+      .from("contract_notification_recipients")
+      .update({ is_active: isActive, updated_at: new Date().toISOString() })
+      .eq("id", id);
+    if (result.error) {
+      setSaveState({ type: "error", message: contractRecipientError(result.error, "Failed to update recipient status.") });
+      return;
+    }
+    await loadContractRecipientRows();
+  }
+
+  async function removeContractRecipient(id: number) {
+    if (!canEditNotificationRecipients) return;
+    if (!window.confirm("Remove this Client contract notification recipient?")) return;
+
+    const result = await supabase.from("contract_notification_recipients").delete().eq("id", id);
+    if (result.error) {
+      setSaveState({ type: "error", message: contractRecipientError(result.error, "Failed to remove Client notification recipient.") });
+      return;
+    }
+    if (editingRecipientId === id) closeRecipientEditor();
+    setSaveState({ type: "success", message: "Client notification recipient removed." });
+    await loadContractRecipientRows();
+  }
+
   async function loadConnectedData() {
     setLoading(true);
     setError("");
 
     const wideSelect =
+      "contract_id, applicant_id, contract_no, status, created_at, contract_no_date, cluster, client_name, specific_area, project_name, contract_start, contract_end, notification_recipient_email, contracted_manpower, deployed_guards, remarks";
+
+    const legacyWideSelect =
       "contract_id, applicant_id, contract_no, status, created_at, contract_no_date, cluster, client_name, specific_area, project_name, contract_start, contract_end, contracted_manpower, deployed_guards, remarks";
 
     const narrowSelect = "contract_id, applicant_id, contract_no, status, created_at";
@@ -558,6 +743,10 @@ export default function ClientsPage() {
       `${wideSelect}, ${joinEmployeesEmbed}`,
       `${wideSelect}, ${joinEmployeesEmbedRelaxed}`,
       `${wideSelect}`,
+      `${legacyWideSelect}, ${directApplicantEmbed}, ${joinEmployeesEmbed}`,
+      `${legacyWideSelect}, ${joinEmployeesEmbed}`,
+      `${legacyWideSelect}, ${joinEmployeesEmbedRelaxed}`,
+      `${legacyWideSelect}`,
       `${narrowSelect}, ${directApplicantEmbed}, ${joinEmployeesEmbed}`,
       `${narrowSelect}, ${joinEmployeesEmbed}`,
       `${narrowSelect}, ${joinEmployeesEmbedRelaxed}`,
@@ -606,7 +795,7 @@ export default function ClientsPage() {
         const areaKey = normalizeAreaKey(applicant.detachment);
         if (!areaKey) continue;
         const name = formatApplicantName(applicant);
-        if (!name || name === "â€”") continue;
+        if (!name || name === "—") continue;
         const next = assignedByArea.get(areaKey) ?? [];
         next.push({
           applicant_id: String(applicant.applicant_id),
@@ -708,6 +897,8 @@ export default function ClientsPage() {
         project_name: contract.project_name == null ? null : String(contract.project_name),
         contract_start: contract.contract_start == null ? null : String(contract.contract_start),
         contract_end: contract.contract_end == null ? null : String(contract.contract_end),
+        notification_recipient_email:
+          contract.notification_recipient_email == null ? null : String(contract.notification_recipient_email),
         contracted_manpower:
           contract.contracted_manpower == null || contract.contracted_manpower === ""
             ? null
@@ -800,18 +991,19 @@ export default function ClientsPage() {
 
     const specificArea = toNullableText(contractForm.specific_area);
     const deployedGuards = await countActiveEmployeesForSpecificArea(specificArea);
+    const notificationRecipientEmail = toNullableRecipientEmail(contractForm.notification_recipient_email);
 
     const createdAt = toNullableText(contractForm.created_at);
     const insertPayload: Record<string, string | number | null> = {
       applicant_id: null,
       contract_no: toNullableText(contractForm.contract_no),
-      contract_no_date: toNullableText(contractForm.contract_no_date),
       client_name: toNullableText(contractForm.client_name),
       project_name: toNullableText(contractForm.project_name),
       specific_area: specificArea,
       cluster: toNullableText(contractForm.cluster),
       contract_start: toNullableText(contractForm.contract_start),
       contract_end: toNullableText(contractForm.contract_end),
+      notification_recipient_email: notificationRecipientEmail,
       contracted_manpower: toNumberOrNull(contractForm.contracted_manpower),
       deployed_guards: deployedGuards,
       status: toNullableText(contractForm.status) || "ACTIVE",
@@ -833,7 +1025,7 @@ export default function ClientsPage() {
         .eq("contract_id", editingContractId);
 
       if (updRes.error) {
-        setSaveState({ type: "error", message: `Contract update failed: ${updRes.error.message}` });
+        setSaveState({ type: "error", message: contractMutationError("update", updRes.error) });
         setSavingKey(null);
         return;
       }
@@ -847,7 +1039,7 @@ export default function ClientsPage() {
         .single();
 
       if (insertRes.error) {
-        setSaveState({ type: "error", message: `Contracts insert failed: ${insertRes.error.message}` });
+        setSaveState({ type: "error", message: contractMutationError("insert", insertRes.error) });
         setSavingKey(null);
         return;
       }
@@ -868,13 +1060,13 @@ export default function ClientsPage() {
     setEditingContractId(row.contract_id);
     setContractForm({
       contract_no: row.contract_no ?? "",
-      contract_no_date: row.contract_no_date ?? "",
       client_name: row.client_name ?? "",
       project_name: row.project_name ?? "",
       specific_area: row.specific_area ?? "",
       cluster: row.cluster ?? "",
       contract_start: row.contract_start ?? "",
       contract_end: row.contract_end ?? "",
+      notification_recipient_email: row.notification_recipient_email ?? "",
       contracted_manpower: row.contracted_manpower == null ? "" : String(row.contracted_manpower),
       status: row.status ?? "ACTIVE",
       created_at: toDatetimeLocalValue(row.created_at),
@@ -998,6 +1190,18 @@ export default function ClientsPage() {
     };
   }, []);
 
+  useEffect(() => {
+    void loadContractRecipientRows();
+    const recipientChannel = supabase
+      .channel("realtime:client-contract-notification-recipients")
+      .on("postgres_changes", { event: "*", schema: "public", table: "contract_notification_recipients" }, loadContractRecipientRows)
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(recipientChannel);
+    };
+  }, [loadContractRecipientRows]);
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     let list = rows;
@@ -1017,6 +1221,7 @@ export default function ClientsPage() {
           r.cluster,
           r.contract_start,
           r.contract_end,
+          r.notification_recipient_email,
           r.status,
           r.created_at,
           r.remarks,
@@ -1051,7 +1256,7 @@ export default function ClientsPage() {
 
   function clientExportRows() {
     return filtered.map((r) => ({
-      "Contract No": fmt(r.contract_no),
+      "Contract Series": fmt(r.contract_no),
       Cluster: fmt(r.cluster),
       "Client Name": fmt(r.client_name),
       "Specific Area": fmt(r.specific_area),
@@ -1180,7 +1385,7 @@ export default function ClientsPage() {
             className="px-4 py-2 rounded-full bg-white text-black font-medium border border-gray-300"
           >
             <option value="created_at">Newest Date</option>
-            <option value="contract_no">Contract No</option>
+            <option value="contract_no">Contract Series</option>
             <option value="client_name">Client Name</option>
           </select>
         </div>
@@ -1235,6 +1440,96 @@ export default function ClientsPage() {
           })}
         </div>
       </div>
+
+      {canViewNotificationRecipients ? (
+        <section className="rounded-2xl border border-white/70 bg-white/90 p-4 shadow-sm space-y-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <div className="text-lg font-semibold text-black">Contract notification recipients</div>
+              <div className="text-sm text-gray-500">
+                Separate from Settings and Car Insurance. Expiring contract reminders are sent only to active inboxes listed here.
+              </div>
+            </div>
+
+            {canEditNotificationRecipients ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setAddRecipientOpen(true);
+                  setError("");
+                  setSaveState({ type: "", message: "" });
+                }}
+                className="inline-flex items-center gap-2 rounded-xl bg-[#FFDA03] px-4 py-2 text-sm font-semibold text-black hover:brightness-95"
+              >
+                <Plus className="h-4 w-4" />
+                Add recipient
+              </button>
+            ) : null}
+          </div>
+
+          <div className="overflow-auto rounded-2xl border border-gray-100">
+            <table className="min-w-[640px] w-full text-sm text-black">
+              <thead className="bg-[#FFDA03]">
+                <tr>
+                  <th className="border-b border-[#E2C100] px-3 py-3 text-left text-xs font-semibold uppercase tracking-wide text-black">Email</th>
+                  <th className="border-b border-[#E2C100] px-3 py-3 text-left text-xs font-semibold uppercase tracking-wide text-black">Active</th>
+                  <th className="border-b border-[#E2C100] px-3 py-3 text-left text-xs font-semibold uppercase tracking-wide text-black">Notes</th>
+                  <th className="border-b border-[#E2C100] px-3 py-3 text-left text-xs font-semibold uppercase tracking-wide text-black">Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {recipientRows.length ? (
+                  recipientRows.map((recipient, index) => (
+                    <tr key={recipient.id} className={index % 2 === 0 ? "bg-white" : "bg-gray-50/60"}>
+                      <td className="border-b border-gray-100 px-3 py-3 font-medium">{recipient.email}</td>
+                      <td className="border-b border-gray-100 px-3 py-3">
+                        <input
+                          type="checkbox"
+                          checked={recipient.is_active}
+                          disabled={!canEditNotificationRecipients}
+                          onChange={(event) => void toggleContractRecipient(recipient.id, event.target.checked)}
+                          aria-label={`${recipient.email} active`}
+                        />
+                      </td>
+                      <td className="border-b border-gray-100 px-3 py-3 text-gray-700">{recipient.notes || "-"}</td>
+                      <td className="border-b border-gray-100 px-3 py-3">
+                        {canEditNotificationRecipients ? (
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => openRecipientEditor(recipient)}
+                              className="inline-flex items-center gap-1 rounded-xl border bg-white px-3 py-2 text-xs font-medium text-black hover:bg-gray-50"
+                            >
+                              <PencilLine className="h-3.5 w-3.5" />
+                              Edit
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void removeContractRecipient(recipient.id)}
+                              className="inline-flex items-center gap-1 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-medium text-red-700 hover:bg-red-100"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                              Remove
+                            </button>
+                          </div>
+                        ) : (
+                          <span className="text-xs text-gray-500">View only</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan={4} className="px-4 py-8 text-center text-sm text-gray-500">
+                      No Client notification recipients configured.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      ) : null}
 
       <div className="glass-panel animate-slide-up rounded-2xl p-4 space-y-3">
         <div className="font-semibold text-black">Create Contracts</div>
@@ -1327,7 +1622,7 @@ export default function ClientsPage() {
   allowTemplateDownloads={canDownloadTemplate}
   templateFileName="client_import_template"
   templateSampleData={{
-    contract_no: "2026-02-01",
+    contract_no: "2026 SERIES 001",
     cluster: "Metro Manila",
     client_name: "Sample Client",
     specific_area: "Area 1",
@@ -1438,16 +1733,14 @@ export default function ClientsPage() {
             <div className="font-semibold text-black">Contract Information</div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               <div>
-                <label className={labelClass}>Contract Date</label>
+                <label className={labelClass}>Contract Series</label>
                 <input
-                  type="date"
+                  type="text"
                   className={inputClass}
-                  value={toDateInputValue(contractForm.contract_no)}
+                  value={contractForm.contract_no}
+                  placeholder="Enter contract series"
                   onChange={(e) => setContractForm((p) => ({ ...p, contract_no: e.target.value }))}
                 />
-                {contractForm.contract_no && !toDateInputValue(contractForm.contract_no) ? (
-                  <div className="mt-1 text-xs text-gray-500">Current saved value: {contractForm.contract_no}</div>
-                ) : null}
               </div>
               <div>
                 <label className={labelClass}>Cluster</label>
@@ -1593,7 +1886,7 @@ export default function ClientsPage() {
           <thead className="sticky top-0 z-10">
             <tr className="bg-[#FFDA03]">
               {[
-                "Contract No",
+                "Contract Series",
                 "Cluster",
                 "Client Name",
                 "Specific Area",
@@ -1709,7 +2002,7 @@ export default function ClientsPage() {
             <div className="glass-panel rounded-2xl p-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {[
-                  { label: "Contract No", value: fmt(detailsRow.contract_no) },
+                  { label: "Contract Series", value: fmt(detailsRow.contract_no) },
                   { label: "Cluster", value: fmt(detailsRow.cluster) },
                   { label: "Client Name", value: fmt(detailsRow.client_name) },
                   { label: "Specific Area", value: fmt(detailsRow.specific_area) },
@@ -1769,6 +2062,112 @@ export default function ClientsPage() {
           </div>
         ) : null}
       </ModalShell>
+
+      {addRecipientOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={resetRecipientForm}>
+          <div className="w-full max-w-lg rounded-3xl border border-white/60 bg-white shadow-2xl" onClick={(event) => event.stopPropagation()}>
+            <div className="flex items-start justify-between gap-3 border-b px-6 py-4">
+              <div>
+                <div className="text-lg font-semibold text-black">Add contract recipient</div>
+                <div className="text-sm text-gray-500">Add an inbox that should receive expiring contract reminders.</div>
+              </div>
+              <button type="button" onClick={resetRecipientForm} className="rounded-xl border bg-white px-4 py-2 text-sm font-medium text-black hover:bg-gray-50">
+                Close
+              </button>
+            </div>
+
+            <div className="space-y-4 px-6 py-6">
+              <label className="block space-y-1">
+                <span className="text-sm font-medium text-black">Recipient email</span>
+                <input
+                  type="email"
+                  value={recipientEmail}
+                  onChange={(event) => setRecipientEmail(event.target.value)}
+                  placeholder="name@example.com"
+                  className={inputClass}
+                />
+              </label>
+              <label className="block space-y-1">
+                <span className="text-sm font-medium text-black">Notes</span>
+                <textarea
+                  rows={3}
+                  value={recipientNotes}
+                  onChange={(event) => setRecipientNotes(event.target.value)}
+                  placeholder="Optional notes"
+                  className={inputClass}
+                />
+              </label>
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-xs text-gray-500">This list is used for every expiring Client contract.</div>
+                <button
+                  type="button"
+                  onClick={() => void addContractRecipient()}
+                  disabled={recipientSaving}
+                  className="inline-flex items-center gap-2 rounded-xl bg-[#FFDA03] px-4 py-2 text-sm font-semibold text-black disabled:opacity-50 hover:brightness-95"
+                >
+                  {recipientSaving ? "Saving..." : "Add recipient"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {editingRecipientId !== null ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={closeRecipientEditor}>
+          <div className="w-full max-w-lg rounded-3xl border border-white/60 bg-white shadow-2xl" onClick={(event) => event.stopPropagation()}>
+            <div className="flex items-start justify-between gap-3 border-b px-6 py-4">
+              <div>
+                <div className="text-lg font-semibold text-black">Edit contract recipient</div>
+                <div className="text-sm text-gray-500">Update the inbox, status, or notes for contract reminders.</div>
+              </div>
+              <button type="button" onClick={closeRecipientEditor} className="rounded-xl border bg-white px-4 py-2 text-sm font-medium text-black hover:bg-gray-50">
+                Close
+              </button>
+            </div>
+
+            <div className="space-y-4 px-6 py-6">
+              <label className="block space-y-1">
+                <span className="text-sm font-medium text-black">Recipient email</span>
+                <input
+                  type="email"
+                  value={editRecipientEmail}
+                  onChange={(event) => setEditRecipientEmail(event.target.value)}
+                  className={inputClass}
+                />
+              </label>
+              <label className="block space-y-1">
+                <span className="text-sm font-medium text-black">Notes</span>
+                <textarea
+                  rows={3}
+                  value={editRecipientNotes}
+                  onChange={(event) => setEditRecipientNotes(event.target.value)}
+                  placeholder="Optional notes"
+                  className={inputClass}
+                />
+              </label>
+              <label className="inline-flex items-center gap-2 text-sm font-medium text-black">
+                <input
+                  type="checkbox"
+                  checked={editRecipientActive}
+                  onChange={(event) => setEditRecipientActive(event.target.checked)}
+                />
+                Active recipient
+              </label>
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => void saveContractRecipient()}
+                  disabled={recipientSaving}
+                  className="rounded-xl bg-[#FFDA03] px-4 py-2 text-sm font-semibold text-black disabled:opacity-50 hover:brightness-95"
+                >
+                  {recipientSaving ? "Saving..." : "Save changes"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       <ImportSummaryModal
         open={importSummaryOpen}

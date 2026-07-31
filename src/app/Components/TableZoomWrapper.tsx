@@ -30,10 +30,12 @@ export default function TableZoomWrapper({
   useEffect(() => {
     try {
       const raw = localStorage.getItem(`table-zoom:${storageKey}`);
-      if (!raw) return;
-      const parsed = Number(raw);
-      if (!Number.isFinite(parsed)) return;
-      setZoom(clampZoom(parsed, minZoom, maxZoom));
+      if (raw) {
+        const parsed = Number(raw);
+        if (Number.isFinite(parsed)) {
+          setZoom(clampZoom(parsed, minZoom, maxZoom));
+        }
+      }
     } catch {
     }
     setHasLoadedStoredZoom(true);

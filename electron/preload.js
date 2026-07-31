@@ -5,6 +5,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   app: {
     readBundledTextFile: (fileName) => ipcRenderer.invoke('app:readBundledTextFile', { fileName }),
+    onUpdateProgress: (callback) => {
+      const subscription = (_event, value) => callback(value);
+      ipcRenderer.on('app:updateDownloadProgress', subscription);
+      return () => ipcRenderer.off('app:updateDownloadProgress', subscription);
+    },
+    onUpdateDownloaded: (callback) => {
+      const subscription = (_event, value) => callback(value);
+      ipcRenderer.on('app:updateDownloaded', subscription);
+      return () => ipcRenderer.off('app:updateDownloaded', subscription);
+    }
   },
 
   admin: {

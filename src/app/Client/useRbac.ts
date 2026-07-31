@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { supabase } from "./SupabaseClients";
 
-export type RoleName = "superadmin" | "admin" | "employee" | null;
+export type RoleName = string | null;
 
 type AdminSession = {
   id: string;
@@ -29,8 +29,7 @@ function readAdminSession(): AdminSession | null {
 
 export function normalizeRoleName(value: unknown): RoleName {
   const r = String(value ?? "").trim().toLowerCase();
-  if (r === "superadmin" || r === "admin" || r === "employee") return r;
-  return null;
+  return r || null;
 }
 
 export function useAuthRole() {
@@ -126,6 +125,12 @@ export function useAuthRole() {
     const { data: authSub } = supabase.auth.onAuthStateChange(() => {
       run();
     });
+    const permissionChannel = supabase
+      .channel(`my-modules-access-${Math.random().toString(36).slice(2)}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "admins" }, () => void run())
+      .on("postgres_changes", { event: "*", schema: "public", table: "role_module_access" }, () => void run())
+      .on("postgres_changes", { event: "*", schema: "public", table: "admin_module_access_overrides" }, () => void run())
+      .subscribe();
 
     const onStorage = (e: StorageEvent) => {
       if (e.key === "adminSession") run();
@@ -145,6 +150,7 @@ export function useAuthRole() {
     return () => {
       cancelled = true;
       authSub.subscription.unsubscribe();
+      void supabase.removeChannel(permissionChannel);
       window.removeEventListener("storage", onStorage);
       window.removeEventListener("focus", onFocus);
       document.removeEventListener("visibilitychange", onVisibility);
@@ -240,7 +246,7 @@ export function useMyModules() {
 
           const { data: roleRow, error: roleErr } = await roleRowPromise;
 
-          const [roleModulesRes, adminOverridesRes] = await Promise.all([
+          const [roleModulesRes, adminOverridesRes, assignmentRes] = await Promise.all([
             roleRow?.role_id
               ? supabase.from("role_module_access").select("module_key, can_read").eq("role_id", roleRow.role_id)
               : Promise.resolve({ data: [] as Array<{ module_key: string; can_read: boolean | null }>, error: null }),
@@ -248,6 +254,11 @@ export function useMyModules() {
               .from("admin_module_access_overrides")
               .select("module_key, can_read")
               .eq("admin_id", legacySession.id),
+            supabase
+              .from("admins")
+              .select("assigned_detachment")
+              .eq("id", legacySession.id)
+              .maybeSingle(),
           ]);
 
           if (roleErr && legacyRole) throw roleErr;
@@ -262,7 +273,12 @@ export function useMyModules() {
             .filter((row) => row && row.can_read)
             .map((row) => row.module_key);
 
-          const allKeys = Array.from(new Set([...roleKeys, ...overrideKeys]));
+          const assignedDetachment = String(assignmentRes.data?.assigned_detachment ?? "").trim();
+          const allKeys = Array.from(new Set([
+            ...roleKeys,
+            ...overrideKeys,
+            ...(assignedDetachment ? ["paraphernalia"] : []),
+          ]));
           if (!allKeys.length) {
             if (!cancelled) {
               setModules([]);
@@ -1180,4 +1196,219 @@ export function useMyApplicantRowAccess(moduleKey: string, applicantId: string |
   }, [moduleKey, applicantId]);
 
   return { hasAccess, restricted, loading, error };
+}
+
+export type ParaphernaliaDetachmentAccessResult = {
+  allowedDetachments: Set<string>;
+  restricted: boolean;
+  canStockOut: boolean;
+  faragonAccess: boolean;
+  loading: boolean;
+  error: string;
+};
+
+function normalizedAccessValue(value: unknown) {
+  return String(value ?? "").trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function isMissingAccessTableError(error: { code?: string | null; message?: string | null } | null | undefined) {
+  const code = String(error?.code ?? "").toUpperCase();
+  const message = String(error?.message ?? "").toLowerCase();
+  return code === "42P01" || code === "PGRST205" || message.includes("could not find the table");
+}
+
+export function useMyParaphernaliaDetachmentAccess(): ParaphernaliaDetachmentAccessResult {
+  const [allowedDetachments, setAllowedDetachments] = useState<Set<string>>(new Set());
+  const [restricted, setRestricted] = useState(false);
+  const [canStockOut, setCanStockOut] = useState(false);
+  const [faragonAccess, setFaragonAccess] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function run() {
+      setLoading(true);
+      setError("");
+
+      try {
+        const legacySession = readAdminSession();
+        if (!legacySession) {
+          if (!cancelled) {
+            setAllowedDetachments(new Set());
+            setRestricted(false);
+            setCanStockOut(false);
+            setFaragonAccess(false);
+            setLoading(false);
+          }
+          return;
+        }
+
+        const roleKey = normalizedAccessValue(legacySession.role);
+        if (roleKey === "superadmin") {
+          if (!cancelled) {
+            setAllowedDetachments(new Set());
+            setRestricted(false);
+            setCanStockOut(true);
+            setFaragonAccess(true);
+            setLoading(false);
+          }
+          return;
+        }
+
+        const [settingsRes, adminScopeRes, roleRes, adminRes] = await Promise.all([
+          supabase
+            .from("admin_paraphernalia_access_settings")
+            .select("use_custom_detachments")
+            .eq("admin_id", legacySession.id)
+            .maybeSingle(),
+          supabase
+            .from("admin_paraphernalia_detachment_access")
+            .select("detachment, can_stock_out")
+            .eq("admin_id", legacySession.id),
+          (async () => {
+            const roleLookup = await supabase.from("app_roles").select("role_id").eq("role_name", roleKey).maybeSingle();
+            if (roleLookup.error || !roleLookup.data?.role_id) return { data: [], error: roleLookup.error };
+            return supabase
+              .from("role_paraphernalia_detachment_access")
+              .select("detachment, can_stock_out")
+              .eq("role_id", roleLookup.data.role_id);
+          })(),
+          supabase
+            .from("admins")
+            .select("applicant_id, employee_number, full_name, username, assigned_detachment")
+            .eq("id", legacySession.id)
+            .maybeSingle(),
+        ]);
+
+        const scopeTablesMissing =
+          isMissingAccessTableError(settingsRes.error) ||
+          isMissingAccessTableError(adminScopeRes.error) ||
+          isMissingAccessTableError(roleRes.error);
+        if (settingsRes.error && !isMissingAccessTableError(settingsRes.error)) throw settingsRes.error;
+        if (adminScopeRes.error && !isMissingAccessTableError(adminScopeRes.error)) throw adminScopeRes.error;
+        if (roleRes.error && !isMissingAccessTableError(roleRes.error)) throw roleRes.error;
+
+        const adminRow = adminRes.data as {
+          applicant_id?: string | null;
+          employee_number?: string | null;
+          full_name?: string | null;
+          username?: string | null;
+          assigned_detachment?: string | null;
+        } | null;
+        const assignedDetachment = String(adminRow?.assigned_detachment ?? "").trim().replace(/\s+/g, " ");
+        const assignedKey = normalizedAccessValue(assignedDetachment);
+        const assignedToFaragon = assignedKey === "faragon" || assignedKey === "faragon main logistics";
+        if (assignedToFaragon) {
+          if (!cancelled) {
+            setAllowedDetachments(new Set());
+            setRestricted(false);
+            setCanStockOut(true);
+            setFaragonAccess(true);
+            setError(scopeTablesMissing ? "Run the Paraphernalia access SQL migration to manage detachment scopes in Admin Accounts." : "");
+            setLoading(false);
+          }
+          return;
+        }
+
+        const customScope = settingsRes.data?.use_custom_detachments === true;
+        const adminRows = (adminScopeRes.data ?? []) as Array<{ detachment: string | null; can_stock_out: boolean | null }>;
+        const roleRows = (roleRes.data ?? []) as Array<{ detachment: string | null; can_stock_out: boolean | null }>;
+        let effectiveRows = assignedDetachment
+          ? [{ detachment: assignedDetachment, can_stock_out: true }]
+          : customScope
+            ? adminRows
+            : roleRows;
+        let employeeFallback = false;
+        const employeeLikeRole = roleKey === "employee" || roleKey.includes("guard") || roleKey.includes("security");
+
+        if (!assignedDetachment && !customScope && effectiveRows.length === 0 && employeeLikeRole) {
+          employeeFallback = true;
+          const applicantsRes = await supabase
+            .from("applicants")
+            .select("applicant_id, custom_id, first_name, middle_name, last_name, extn_name, client_email, detachment, status, is_archived, is_trashed")
+            .eq("is_archived", false)
+            .eq("is_trashed", false)
+            .limit(5000);
+          if (applicantsRes.error) throw applicantsRes.error;
+
+          const employeeNumber = normalizedAccessValue(adminRow?.employee_number);
+          const linkedApplicantId = normalizedAccessValue(adminRow?.applicant_id);
+          const fullName = normalizedAccessValue(adminRow?.full_name);
+          const username = normalizedAccessValue(adminRow?.username || legacySession.username);
+          const matchingRows = ((applicantsRes.data ?? []) as Array<Record<string, unknown>>).filter((row) => {
+            if (normalizedAccessValue(row.status) !== "active") return false;
+            const firstLast = normalizedAccessValue(`${row.first_name ?? ""} ${row.middle_name ?? ""} ${row.last_name ?? ""} ${row.extn_name ?? ""}`);
+            const lastFirst = normalizedAccessValue(`${row.last_name ?? ""}, ${row.first_name ?? ""} ${row.middle_name ?? ""} ${row.extn_name ?? ""}`);
+            return Boolean(
+              (linkedApplicantId && normalizedAccessValue(row.applicant_id) === linkedApplicantId) ||
+              (employeeNumber && normalizedAccessValue(row.custom_id) === employeeNumber) ||
+              (username && normalizedAccessValue(row.client_email) === username) ||
+              (fullName && (firstLast === fullName || lastFirst === fullName))
+            );
+          });
+          effectiveRows = matchingRows.map((row) => ({ detachment: String(row.detachment ?? ""), can_stock_out: true }));
+        }
+
+        const effectiveFaragonAccess = effectiveRows.some((row) => {
+          const key = normalizedAccessValue(row.detachment);
+          return key === "faragon" || key === "faragon main logistics";
+        });
+        if (effectiveFaragonAccess) {
+          if (!cancelled) {
+            setAllowedDetachments(new Set());
+            setRestricted(false);
+            setCanStockOut(true);
+            setFaragonAccess(true);
+            setError(scopeTablesMissing ? "Run the Paraphernalia access SQL migration to manage detachment scopes in Admin Accounts." : "");
+            setLoading(false);
+          }
+          return;
+        }
+
+        const nextDetachments = new Set(
+          effectiveRows
+            .map((row) => String(row.detachment ?? "").trim().replace(/\s+/g, " "))
+            .filter(Boolean)
+        );
+        const nextRestricted = Boolean(assignedDetachment) || customScope || roleRows.length > 0 || employeeFallback;
+        const nextCanStockOut = !nextRestricted || effectiveRows.some((row) => row.can_stock_out !== false);
+
+        if (!cancelled) {
+          setAllowedDetachments(nextDetachments);
+          setRestricted(nextRestricted);
+          setCanStockOut(nextCanStockOut);
+          setFaragonAccess(false);
+          setError(scopeTablesMissing ? "Run the Paraphernalia access SQL migration to manage detachment scopes in Admin Accounts." : "");
+          setLoading(false);
+        }
+      } catch (e: unknown) {
+        if (!cancelled) {
+          setAllowedDetachments(new Set());
+          setRestricted(true);
+          setCanStockOut(false);
+          setFaragonAccess(false);
+          setError(e instanceof Error ? e.message : "Unable to load Paraphernalia detachment access.");
+          setLoading(false);
+        }
+      }
+    }
+
+    void run();
+    const channel = supabase
+      .channel(`paraphernalia-detachment-access-${Math.random().toString(36).slice(2)}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "role_paraphernalia_detachment_access" }, () => void run())
+      .on("postgres_changes", { event: "*", schema: "public", table: "admin_paraphernalia_detachment_access" }, () => void run())
+      .on("postgres_changes", { event: "*", schema: "public", table: "admin_paraphernalia_access_settings" }, () => void run())
+      .on("postgres_changes", { event: "*", schema: "public", table: "admins" }, () => void run())
+      .subscribe();
+
+    return () => {
+      cancelled = true;
+      void supabase.removeChannel(channel);
+    };
+  }, []);
+
+  return { allowedDetachments, restricted, canStockOut, faragonAccess, loading, error };
 }

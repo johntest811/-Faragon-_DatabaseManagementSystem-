@@ -103,3 +103,64 @@ body {
 .font-brand-serif {
   font-family: "Times New Roman", Times, serif;
 }
+
+/* ==========================================================================
+   Low-Spec Hardware & Windows 7 Performance Optimizations
+   ========================================================================== */
+
+/* Fallback for legacy graphics drivers / software rasterization */
+@supports not (backdrop-filter: blur(1px)) {
+  .glass-panel {
+    background-color: #ffffff !important;
+  }
+}
+
+/* Hardware compositing & rendering containment hints for smooth table & grid scrolling */
+.glass-panel {
+  transform: translateZ(0);
+  backface-visibility: hidden;
+}
+
+table, .overflow-x-auto, .grid {
+  contain: layout style;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* ==========================================================================
+   Mobile & Tablet Responsive Utilities
+   ========================================================================== */
+
+/* Touch screen target size optimization */
+@media (max-width: 768px) {
+  button, select, input[type="text"], input[type="search"], input[type="date"], input[type="number"] {
+    min-height: 40px;
+  }
+}
+
+/* Responsive custom smooth scrollbar for overflow containers */
+.overflow-x-auto::-webkit-scrollbar,
+.overflow-y-auto::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.overflow-x-auto::-webkit-scrollbar-thumb,
+.overflow-y-auto::-webkit-scrollbar-thumb {
+  background: rgba(156, 163, 175, 0.4);
+  border-radius: 9999px;
+}
+
+.overflow-x-auto::-webkit-scrollbar-thumb:hover,
+.overflow-y-auto::-webkit-scrollbar-thumb:hover {
+  background: rgba(107, 114, 128, 0.7);
+}
+
+/* Reduced motion optimization for low-end CPUs */
+@media (prefers-reduced-motion: reduce) {
+  *, ::before, ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

@@ -65,7 +65,7 @@ type ExpiringSummaryRow = {
   last_name: string | null;
   record_name?: string | null;
   recipient_email?: string | null;
-  source_kind?: "licensure" | "other";
+  source_kind?: "licensure" | "other" | "contract";
   license_type: string;
   expires_on: string;
   days_until_expiry: number;
@@ -142,6 +142,13 @@ function isCarInsuranceExpiringRow(row: ExpiringSummaryRow) {
   const licenseType = String(row?.license_type ?? "").trim().toUpperCase();
   if (!(row?.source_kind === "other" || applicantId.startsWith("other:"))) return false;
   return licenseType === "OTHER: POLICY TERM" || licenseType === "OTHER: CAR REGISTRATION DATE";
+}
+
+function isContractExpiringRow(row: ExpiringSummaryRow) {
+  const applicantId = String(row?.applicant_id ?? "").trim();
+  const licenseType = String(row?.license_type ?? "").trim().toUpperCase();
+  if (!(row?.source_kind === "contract" || applicantId.startsWith("contract:"))) return false;
+  return licenseType === "CONTRACT EXPIRATION";
 }
 
 function readDismissedExpiringSummaryKeys() {
@@ -587,6 +594,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
   const [previewOpen, setPreviewOpen] = useState(false);
   const [expiringOpen, setExpiringOpen] = useState(false);
   const [carInsuranceExpiringOpen, setCarInsuranceExpiringOpen] = useState(false);
+  const [contractExpiringOpen, setContractExpiringOpen] = useState(false);
   const [, setAdminAlertOpen] = useState(false);
   const [activityCount, setActivityCount] = useState(0);
   const [activityMissingTable, setActivityMissingTable] = useState(false);
@@ -596,6 +604,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
   const [recentActivity, setRecentActivity] = useState<RecentActivityRow[]>([]);
   const [expiringCount, setExpiringCount] = useState(0);
   const [carInsuranceExpiringCount, setCarInsuranceExpiringCount] = useState(0);
+  const [contractExpiringCount, setContractExpiringCount] = useState(0);
   const [previewCount, setPreviewCount] = useState(0);
   function badgeText(n: number) {
     if (!Number.isFinite(n) || n <= 0) return "";
@@ -661,11 +670,15 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
   const [expiringRows, setExpiringRows] = useState<ExpiringSummaryRow[]>([]);
   const [expiringEmailByApplicantId, setExpiringEmailByApplicantId] = useState<Record<string, string | null>>({});
   const generalExpiringRows = useMemo(
-    () => expiringRows.filter((row) => !isCarInsuranceExpiringRow(row)),
+    () => expiringRows.filter((row) => !isCarInsuranceExpiringRow(row) && !isContractExpiringRow(row)),
     [expiringRows]
   );
   const carInsuranceExpiringRows = useMemo(
     () => expiringRows.filter((row) => isCarInsuranceExpiringRow(row)),
+    [expiringRows]
+  );
+  const contractExpiringRows = useMemo(
+    () => expiringRows.filter((row) => isContractExpiringRow(row)),
     [expiringRows]
   );
   const { role: sessionRole } = useAuthRole();
@@ -678,14 +691,18 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
   const canViewRecentActivitiesWidget = sessionRole === "superadmin" || grantedModuleKeys.has("recent_activities");
   const canViewExpiringWidget = sessionRole === "superadmin" || grantedModuleKeys.has("expiring_licenses_records");
   const canViewCarInsuranceWidget = sessionRole === "superadmin" || grantedModuleKeys.has("car_insurance_expiration");
+  const canViewContractExpiringWidget = sessionRole === "superadmin" || grantedModuleKeys.has("expiring_contracts");
 
   const applyVisibleExpiringRows = useCallback((rows: ExpiringSummaryRow[]) => {
     setExpiringRows(rows);
     setExpiringCount(
-      rows.filter((row) => !isCarInsuranceExpiringRow(row) && Number(row.sent_count ?? 0) <= 0).length
+      rows.filter((row) => !isCarInsuranceExpiringRow(row) && !isContractExpiringRow(row) && Number(row.sent_count ?? 0) <= 0).length
     );
     setCarInsuranceExpiringCount(
       rows.filter((row) => isCarInsuranceExpiringRow(row) && Number(row.sent_count ?? 0) <= 0).length
+    );
+    setContractExpiringCount(
+      rows.filter((row) => isContractExpiringRow(row) && Number(row.sent_count ?? 0) <= 0).length
     );
   }, []);
 
@@ -887,12 +904,14 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
         t.closest?.("[data-preview-menu]") ||
         t.closest?.("[data-expiring-menu]") ||
         t.closest?.("[data-car-insurance-expiring-menu]") ||
+        t.closest?.("[data-contract-expiring-menu]") ||
         t.closest?.("[data-admin-alert-menu]")
       ) return;
       setActivityOpen(false);
       setPreviewOpen(false);
       setExpiringOpen(false);
       setCarInsuranceExpiringOpen(false);
+      setContractExpiringOpen(false);
       setAdminAlertOpen(false);
     }
     document.addEventListener("mousedown", onDocDown);
@@ -903,8 +922,9 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
     if (!canViewRecentActivitiesWidget) setActivityOpen(false);
     if (!canViewExpiringWidget) setExpiringOpen(false);
     if (!canViewCarInsuranceWidget) setCarInsuranceExpiringOpen(false);
+    if (!canViewContractExpiringWidget) setContractExpiringOpen(false);
     if (!canViewPreviewWidget) setPreviewOpen(false);
-  }, [canViewCarInsuranceWidget, canViewExpiringWidget, canViewPreviewWidget, canViewRecentActivitiesWidget]);
+  }, [canViewCarInsuranceWidget, canViewExpiringWidget, canViewContractExpiringWidget, canViewPreviewWidget, canViewRecentActivitiesWidget]);
 
   const refreshPreview = useCallback(async () => {
     if (!canViewPreviewWidget) {
@@ -999,7 +1019,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
   }, [api, canViewRecentActivitiesWidget]);
 
   const refreshExpiring = useCallback(async () => {
-    if (!canViewExpiringWidget && !canViewCarInsuranceWidget) {
+    if (!canViewExpiringWidget && !canViewCarInsuranceWidget && !canViewContractExpiringWidget) {
       applyVisibleExpiringRows([]);
       setExpiringEmailByApplicantId({});
       return;
@@ -1010,6 +1030,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
       await refreshNotificationPrefs();
       const res = await api.notifications.getExpiringSummary({ limit: 100 });
       const permittedRows = [...(res?.rows ?? [])].filter((row) => {
+        if (isContractExpiringRow(row)) return canViewContractExpiringWidget;
         if (isCarInsuranceExpiringRow(row)) return canViewCarInsuranceWidget;
         return canViewExpiringWidget;
       });
@@ -1043,9 +1064,10 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
 
         for (const row of allRows) {
           const key = String(row?.applicant_id || "");
-          if (!key.startsWith("other:")) continue;
-          const recipient = String(row?.recipient_email ?? "").trim();
-          map[key] = recipient || null;
+          if (key.startsWith("other:") || key.startsWith("contract:")) {
+            const recipient = String(row?.recipient_email ?? "").trim();
+            map[key] = recipient || null;
+          }
         }
 
         const ids = Array.from(
@@ -1053,7 +1075,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
             allRows
               .map((r) => String(r.applicant_id || ""))
               .filter(Boolean)
-              .filter((id) => !id.startsWith("other:"))
+              .filter((id) => !id.startsWith("other:") && !id.startsWith("contract:"))
           )
         );
 
@@ -1169,6 +1191,24 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
     refreshPreview();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api]);
+
+  useEffect(() => {
+    if (canViewRecentActivitiesWidget) {
+      void refreshActivity();
+    }
+  }, [canViewRecentActivitiesWidget, refreshActivity]);
+
+  useEffect(() => {
+    if (canViewExpiringWidget || canViewCarInsuranceWidget || canViewContractExpiringWidget) {
+      void refreshExpiring();
+    }
+  }, [canViewExpiringWidget, canViewCarInsuranceWidget, canViewContractExpiringWidget, refreshExpiring]);
+
+  useEffect(() => {
+    if (canViewPreviewWidget) {
+      void refreshPreview();
+    }
+  }, [canViewPreviewWidget, refreshPreview]);
 
   const fromParam = searchParams?.get("from") ?? null;
 
@@ -1817,64 +1857,67 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
                       setPreviewOpen(false);
                       setExpiringOpen(false);
                       setCarInsuranceExpiringOpen(false);
+                      setContractExpiringOpen(false);
                       setAdminAlertOpen(false);
                       refreshActivity();
                     }}
-                    className="relative h-10 w-10 rounded-xl bg-[#FFDA03] text-black flex items-center justify-center"
+                    className="relative h-10 w-10 rounded-xl bg-[#FFDA03] text-black flex items-center justify-center hover:bg-[#ffe552] active:scale-95 transition-all duration-200 shadow-sm"
                     aria-label="Recent Activities"
                     title="Recent Activities"
                   >
                     <Activity className="w-5 h-5" />
-						{activityCount > 0 ? (
-							<span
-								className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-red-600 text-white text-[10px] font-bold leading-[18px] text-center shadow"
-								aria-label={`Activity count ${activityCount}`}
-							>
-								{badgeText(activityCount)}
-							</span>
-						) : null}
+                    {activityCount > 0 ? (
+                      <span
+                        className="absolute -top-1.5 -right-1.5 min-w-[20px] h-[20px] px-1 rounded-full bg-red-600 text-white text-[10px] font-black leading-[20px] text-center shadow-md animate-pulse border-2 border-white"
+                        aria-label={`Activity count ${activityCount}`}
+                      >
+                        {badgeText(activityCount)}
+                      </span>
+                    ) : null}
                   </button>
 
                   {activityOpen ? (
-                    <div className="absolute right-0 mt-2 w-[360px] max-w-[90vw] rounded-2xl border bg-white shadow-lg overflow-hidden z-50">
-                      <div className="px-4 py-3 border-b flex items-center justify-between">
-                        <div className="text-sm font-semibold text-black">Recent Activities</div>
+                    <div className="absolute right-0 mt-3 w-[380px] max-w-[90vw] rounded-2xl border-2 border-slate-200 bg-white shadow-2xl overflow-hidden z-50 animate-slide-up">
+                      <div className="px-5 py-3.5 border-b bg-gradient-to-r from-amber-50 to-orange-50/40 flex items-center justify-between">
+                        <div className="text-sm font-black text-slate-900 tracking-wide">Recent Activities</div>
                         <Link
                           href="/Main_Modules/Audit/"
-                          className="text-xs text-blue-600 hover:underline"
+                          className="text-xs font-bold text-blue-600 hover:text-blue-800 transition-colors"
                           onClick={() => setActivityOpen(false)}
                         >
-                          View all
+                          View all logs
                         </Link>
                       </div>
 
                       {activityMissingTable ? (
-                        <div className="px-4 py-3 text-sm text-yellow-800 bg-white">
-                          Install the audit table (Supabase_database.sql).
+                        <div className="px-5 py-3 text-xs font-bold text-amber-800 bg-amber-50 border-b border-amber-100">
+                          Please install the audit table (Supabase_database.sql).
                         </div>
                       ) : null}
 
-                      <div className="max-h-[320px] overflow-auto">
+                      <div className="max-h-[340px] overflow-y-auto divide-y divide-slate-100 custom-scrollbar">
                         {recentActivity.length ? (
                           recentActivity.map((r) => (
-                            <div key={r.id} className="px-4 py-3 border-b last:border-b-0">
-                              <div className="text-xs text-gray-500">{new Date(r.created_at).toLocaleString()}</div>
-                              <div className="text-sm text-black font-medium">{r.action}</div>
-                              <div className="text-xs text-gray-600">{r.page || "—"}</div>
-                              <div className="text-[11px] text-gray-500">
-                                Actor: {r.actor_name || r.actor_email || r.actor_user_id || "—"}
+                            <div key={r.id} className="px-5 py-3.5 hover:bg-slate-50/60 transition-all duration-200 flex flex-col gap-1">
+                              <div className="flex items-center justify-between gap-2">
+                                <div className="text-[10px] font-extrabold text-slate-400">{new Date(r.created_at).toLocaleString()}</div>
+                                <div className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 uppercase border border-slate-200/60 truncate max-w-[120px]">{r.page || "System"}</div>
+                              </div>
+                              <div className="text-sm text-slate-900 font-bold leading-tight">{r.action}</div>
+                              <div className="text-[11px] font-semibold text-slate-500">
+                                Actor: <span className="text-slate-700">{r.actor_name || r.actor_email || r.actor_user_id || "—"}</span>
                               </div>
                             </div>
                           ))
                         ) : (
-                          <div className="px-4 py-6 text-sm text-gray-500">No activity yet.</div>
+                          <div className="px-5 py-8 text-center text-slate-400 font-semibold">No recent activity logs.</div>
                         )}
                       </div>
 
-                      <div className="px-4 py-3 border-t bg-white">
+                      <div className="px-5 py-3 border-t bg-slate-50/60 flex items-center justify-between">
                         <button
                           type="button"
-                          className="text-xs text-gray-700 hover:underline"
+                          className="text-xs font-bold text-slate-600 hover:text-slate-800 hover:underline transition-all"
                           onClick={() => {
                             try {
                               localStorage.setItem("auditLastSeenAt", new Date().toISOString());
@@ -1885,7 +1928,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
                             setActivityOpen(false);
                           }}
                         >
-                          Mark as seen
+                          ✓ Mark all as seen
                         </button>
                       </div>
                     </div>
@@ -1900,18 +1943,20 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
                     onClick={() => {
                       setExpiringOpen((v) => !v);
                       setCarInsuranceExpiringOpen(false);
+                      setContractExpiringOpen(false);
                       setActivityOpen(false);
                       setPreviewOpen(false);
                       setAdminAlertOpen(false);
                       refreshExpiring();
                     }}
-                    className="relative h-10 w-10 rounded-xl bg-[#FFDA03] text-black flex items-center justify-center"
+                    className="relative h-10 w-10 rounded-xl bg-[#FFDA03] text-black flex items-center justify-center hover:bg-[#ffe552] active:scale-95 transition-all duration-200 shadow-sm"
                     aria-label="Expiring Licenses and Records"
+                    title="Expiring Licenses and Records"
                   >
                     <CreditCard className="w-5 h-5" />
                     {expiringCount > 0 ? (
                       <span
-                        className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-red-600 text-white text-[10px] font-bold leading-[18px] text-center shadow"
+                        className="absolute -top-1.5 -right-1.5 min-w-[20px] h-[20px] px-1 rounded-full bg-red-600 text-white text-[10px] font-black leading-[20px] text-center shadow-md animate-pulse border-2 border-white"
                         aria-label={`Expiring licenses and records count ${expiringCount}`}
                       >
                         {badgeText(expiringCount)}
@@ -1920,13 +1965,13 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
                   </button>
 
                   {expiringOpen ? (
-                    <div className="absolute right-0 mt-2 w-[420px] max-w-[92vw] rounded-2xl border bg-white shadow-lg overflow-hidden z-50">
-                      <div className="px-4 py-3 border-b flex items-center justify-between">
-                        <div className="text-sm font-semibold text-black">Expiring Licenses and Records</div>
+                    <div className="absolute right-0 mt-3 w-[420px] max-w-[92vw] rounded-2xl border-2 border-slate-200 bg-white shadow-2xl overflow-hidden z-50 animate-slide-up">
+                      <div className="px-5 py-3.5 border-b bg-gradient-to-r from-amber-50 to-orange-50/40 flex items-center justify-between">
+                        <div className="text-sm font-black text-slate-900 tracking-wide">Expiring Licenses</div>
                         <div className="flex items-center gap-3">
                           <button
                             type="button"
-                            className="text-xs text-red-600 hover:underline disabled:opacity-50"
+                            className="text-xs font-bold text-red-600 hover:text-red-800 disabled:opacity-50 transition-colors"
                             disabled={!generalExpiringRows.length || clearingAllExpiring}
                             onClick={() => {
                               void clearExpiringNotifications(generalExpiringRows, "expiring licenses and records");
@@ -1936,7 +1981,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
                           </button>
                           <Link
                             href="/Main_Modules/Settings/"
-                            className="text-xs text-blue-600 hover:underline"
+                            className="text-xs font-bold text-blue-600 hover:text-blue-800 transition-colors"
                             onClick={() => setExpiringOpen(false)}
                           >
                             Settings
@@ -1944,7 +1989,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
                         </div>
                       </div>
 
-                      <div className="max-h-[360px] overflow-auto">
+                      <div className="max-h-[340px] overflow-y-auto divide-y divide-slate-100 custom-scrollbar">
                         {generalExpiringRows.length ? (
                           generalExpiringRows.map((r, idx) => {
                             const isOtherRow = r.source_kind === "other" || String(r.applicant_id).startsWith("other:");
@@ -1980,25 +2025,25 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
                                   );
                                   setExpiringOpen(false);
                                 }}
-                                className={`px-4 py-3 border-b last:border-b-0 ${canOpenDetails ? "cursor-pointer hover:bg-white" : "cursor-default"}`}
+                                className={`px-5 py-3.5 hover:bg-[#fffbf0] hover:scale-[1.005] transition-all duration-200 flex flex-col gap-1.5 ${canOpenDetails ? "cursor-pointer" : "cursor-default"}`}
                                 title={canOpenDetails ? "Open employee details" : "Other expiration record"}
                               >
                                 <div className="flex items-center justify-between gap-3">
-                                  <div className="text-sm font-medium text-black">{r.license_type}</div>
-                                  <div className="text-xs text-gray-600 whitespace-nowrap">{r.expires_on}</div>
+                                  <div className="text-sm font-extrabold text-slate-900">{r.license_type}</div>
+                                  <div className="text-xs font-bold text-slate-500">{r.expires_on}</div>
                                 </div>
-                                <div className="text-xs text-gray-600">{displayName}</div>
+                                <div className="text-xs font-semibold text-slate-600">{displayName}</div>
                                 <div className="mt-1 flex items-center justify-between gap-3">
-                                  <div className="text-[11px] text-gray-500">Days: {r.days_until_expiry}</div>
+                                  <div className="text-[11px] font-extrabold text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200/60">Days: {r.days_until_expiry}</div>
                                   <div className="flex items-center gap-2">
                                     {(() => {
                                       const badge = emailBadge(expiringEmailByApplicantId[String(r.applicant_id)] ?? null);
                                       const isSent = Number(r.sent_count ?? 0) > 0;
                                       const badgeClassName = isSent
-                                        ? "bg-emerald-100 text-emerald-800"
-                                        : badge.className;
+                                        ? "bg-emerald-100 text-emerald-800 border-emerald-200"
+                                        : `${badge.className} border-slate-200`;
                                       return (
-                                        <span className={`text-[11px] px-2 py-0.5 rounded-full border ${badgeClassName}`}>
+                                        <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full border ${badgeClassName}`}>
                                           {badge.label}
                                         </span>
                                       );
@@ -2006,8 +2051,8 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
                                     <span
                                       className={
                                         (Number(r.sent_count ?? 0) > 0)
-                                          ? "text-[11px] px-2 py-0.5 rounded-full bg-green-50 text-green-700 border border-green-200"
-                                          : "text-[11px] px-2 py-0.5 rounded-full bg-white text-gray-700 border"
+                                          ? "text-[11px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200"
+                                          : "text-[11px] font-bold px-2 py-0.5 rounded-full bg-slate-50 text-slate-600 border border-slate-200"
                                       }
                                     >
                                       {(Number(r.sent_count ?? 0) > 0) ? `Sent ${r.sent_count}x` : "Not sent"}
@@ -2017,7 +2062,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
                                       <button
                                         type="button"
                                         disabled={!api?.notifications?.resendLicensureNotice || resendingKey === `${r.applicant_id}:${r.license_type}:${r.expires_on}`}
-                                        className="text-[11px] px-2 py-0.5 rounded-full border bg-white text-gray-800 hover:bg-white disabled:opacity-50"
+                                        className="text-[11px] font-bold px-2.5 py-0.5 rounded-md border border-slate-300 bg-white text-slate-800 hover:bg-slate-50 active:scale-95 disabled:opacity-50 transition-all"
                                         onClick={async (ev) => {
                                           ev.stopPropagation();
                                           const k = `${r.applicant_id}:${r.license_type}:${r.expires_on}`;
@@ -2031,7 +2076,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
                                             });
                                             await refreshExpiring();
                                           } catch {
-                                            // ignore (Electron main logs failures)
+                                            // ignore
                                           } finally {
                                             setResendingKey(null);
                                           }
@@ -2043,13 +2088,13 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
                                   </div>
                                 </div>
                                 {r.last_sent_at ? (
-                                  <div className="text-[11px] text-gray-400 mt-1">Last sent: {new Date(r.last_sent_at).toLocaleString()}</div>
+                                  <div className="text-[11px] font-medium text-slate-400 mt-1">Last sent: {new Date(r.last_sent_at).toLocaleString()}</div>
                                 ) : null}
                               </div>
                             );
                           })
                         ) : (
-                          <div className="px-4 py-6 text-sm text-gray-500">No expiring licenses or non-car-insurance records found.</div>
+                          <div className="px-5 py-8 text-center text-slate-400 font-semibold">No expiring licenses.</div>
                         )}
                       </div>
                     </div>
@@ -2064,19 +2109,20 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
                     onClick={() => {
                       setCarInsuranceExpiringOpen((v) => !v);
                       setExpiringOpen(false);
+                      setContractExpiringOpen(false);
                       setActivityOpen(false);
                       setPreviewOpen(false);
                       setAdminAlertOpen(false);
                       refreshExpiring();
                     }}
-                    className="relative h-10 w-10 rounded-xl bg-[#FFDA03] text-black flex items-center justify-center"
+                    className="relative h-10 w-10 rounded-xl bg-[#FFDA03] text-black flex items-center justify-center hover:bg-[#ffe552] active:scale-95 transition-all duration-200 shadow-sm"
                     aria-label="Car Insurance Expiration"
                     title="Car Insurance Expiration"
                   >
                     <Truck className="w-5 h-5" />
                     {carInsuranceExpiringCount > 0 ? (
                       <span
-                        className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-red-600 text-white text-[10px] font-bold leading-[18px] text-center shadow"
+                        className="absolute -top-1.5 -right-1.5 min-w-[20px] h-[20px] px-1 rounded-full bg-red-600 text-white text-[10px] font-black leading-[20px] text-center shadow-md animate-pulse border-2 border-white"
                         aria-label={`Car insurance expiration count ${carInsuranceExpiringCount}`}
                       >
                         {badgeText(carInsuranceExpiringCount)}
@@ -2085,13 +2131,13 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
                   </button>
 
                   {carInsuranceExpiringOpen ? (
-                    <div className="absolute right-0 mt-2 w-[420px] max-w-[92vw] rounded-2xl border bg-white shadow-lg overflow-hidden z-50">
-                      <div className="px-4 py-3 border-b flex items-center justify-between">
-                        <div className="text-sm font-semibold text-black">Car Insurance Expiration</div>
+                    <div className="absolute right-0 mt-3 w-[420px] max-w-[92vw] rounded-2xl border-2 border-slate-200 bg-white shadow-2xl overflow-hidden z-50 animate-slide-up">
+                      <div className="px-5 py-3.5 border-b bg-gradient-to-r from-amber-50 to-orange-50/40 flex items-center justify-between">
+                        <div className="text-sm font-black text-slate-900 tracking-wide">Car Insurance Expiration</div>
                         <div className="flex items-center gap-3">
                           <button
                             type="button"
-                            className="text-xs text-red-600 hover:underline disabled:opacity-50"
+                            className="text-xs font-bold text-red-600 hover:text-red-800 disabled:opacity-50 transition-colors"
                             disabled={!carInsuranceExpiringRows.length || clearingAllExpiring}
                             onClick={() => {
                               void clearExpiringNotifications(carInsuranceExpiringRows, "car insurance expiration records");
@@ -2101,7 +2147,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
                           </button>
                           <Link
                             href="/Main_Modules/Logistics/CarInsuranceExpiration/"
-                            className="text-xs text-blue-600 hover:underline"
+                            className="text-xs font-bold text-blue-600 hover:text-blue-800 transition-colors"
                             onClick={() => setCarInsuranceExpiringOpen(false)}
                           >
                             Open module
@@ -2109,7 +2155,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
                         </div>
                       </div>
 
-                      <div className="max-h-[360px] overflow-auto">
+                      <div className="max-h-[340px] overflow-y-auto divide-y divide-slate-100 custom-scrollbar">
                         {carInsuranceExpiringRows.length ? (
                           carInsuranceExpiringRows.map((r, idx) => {
                             const displayName = String(r.record_name ?? "").trim() || "Car Insurance Record";
@@ -2128,25 +2174,25 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
                                   router.push("/Main_Modules/Logistics/CarInsuranceExpiration/");
                                   setCarInsuranceExpiringOpen(false);
                                 }}
-                                className="px-4 py-3 border-b last:border-b-0 cursor-pointer hover:bg-white"
+                                className="px-5 py-3.5 hover:bg-[#fffbf0] hover:scale-[1.005] transition-all duration-200 flex flex-col gap-1.5 cursor-pointer"
                                 title="Open car insurance expiration module"
                               >
                                 <div className="flex items-center justify-between gap-3">
-                                  <div className="text-sm font-medium text-black">{r.license_type}</div>
-                                  <div className="text-xs text-gray-600 whitespace-nowrap">{r.expires_on}</div>
+                                  <div className="text-sm font-extrabold text-slate-900">{r.license_type}</div>
+                                  <div className="text-xs font-bold text-slate-500">{r.expires_on}</div>
                                 </div>
-                                <div className="text-xs text-gray-600">{displayName}</div>
+                                <div className="text-xs font-semibold text-slate-600">{displayName}</div>
                                 <div className="mt-1 flex items-center justify-between gap-3">
-                                  <div className="text-[11px] text-gray-500">Days: {r.days_until_expiry}</div>
+                                  <div className="text-[11px] font-extrabold text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200/60">Days: {r.days_until_expiry}</div>
                                   <div className="flex items-center gap-2">
                                     {(() => {
                                       const badge = emailBadge(expiringEmailByApplicantId[String(r.applicant_id)] ?? null);
                                       const isSent = Number(r.sent_count ?? 0) > 0;
                                       const badgeClassName = isSent
-                                        ? "bg-emerald-100 text-emerald-800"
-                                        : badge.className;
+                                        ? "bg-emerald-100 text-emerald-800 border-emerald-200"
+                                        : `${badge.className} border-slate-200`;
                                       return (
-                                        <span className={`text-[11px] px-2 py-0.5 rounded-full border ${badgeClassName}`}>
+                                        <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full border ${badgeClassName}`}>
                                           {badge.label}
                                         </span>
                                       );
@@ -2154,8 +2200,8 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
                                     <span
                                       className={
                                         (Number(r.sent_count ?? 0) > 0)
-                                          ? "text-[11px] px-2 py-0.5 rounded-full bg-green-50 text-green-700 border border-green-200"
-                                          : "text-[11px] px-2 py-0.5 rounded-full bg-white text-gray-700 border"
+                                          ? "text-[11px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200"
+                                          : "text-[11px] font-bold px-2 py-0.5 rounded-full bg-slate-50 text-slate-600 border border-slate-200"
                                       }
                                     >
                                       {(Number(r.sent_count ?? 0) > 0) ? `Sent ${r.sent_count}x` : "Not sent"}
@@ -2163,13 +2209,141 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
                                   </div>
                                 </div>
                                 {r.last_sent_at ? (
-                                  <div className="text-[11px] text-gray-400 mt-1">Last sent: {new Date(r.last_sent_at).toLocaleString()}</div>
+                                  <div className="text-[11px] font-medium text-slate-400 mt-1">Last sent: {new Date(r.last_sent_at).toLocaleString()}</div>
                                 ) : null}
                               </div>
                             );
                           })
                         ) : (
-                          <div className="px-4 py-6 text-sm text-gray-500">No expiring car insurance records found.</div>
+                          <div className="px-5 py-8 text-center text-slate-400 font-semibold">No expiring car insurance records.</div>
+                        )}
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+                ) : null}
+
+                {canViewContractExpiringWidget ? (
+                <div className="relative" data-contract-expiring-menu>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setContractExpiringOpen((v) => !v);
+                      setExpiringOpen(false);
+                      setCarInsuranceExpiringOpen(false);
+                      setActivityOpen(false);
+                      setPreviewOpen(false);
+                      setAdminAlertOpen(false);
+                      refreshExpiring();
+                    }}
+                    className="relative h-10 w-10 rounded-xl bg-[#FFDA03] text-black flex items-center justify-center hover:bg-[#ffe552] active:scale-95 transition-all duration-200 shadow-sm"
+                    aria-label="Expiring Contracts"
+                    title="Expiring Contracts"
+                  >
+                    <ClipboardCheck className="w-5 h-5" />
+                    {contractExpiringCount > 0 ? (
+                      <span
+                        className="absolute -top-1.5 -right-1.5 min-w-[20px] h-[20px] px-1 rounded-full bg-red-600 text-white text-[10px] font-black leading-[20px] text-center shadow-md animate-pulse border-2 border-white"
+                        aria-label={`Expiring contracts count ${contractExpiringCount}`}
+                      >
+                        {badgeText(contractExpiringCount)}
+                      </span>
+                    ) : null}
+                  </button>
+
+                  {contractExpiringOpen ? (
+                    <div className="absolute right-0 mt-3 w-[420px] max-w-[92vw] rounded-2xl border-2 border-slate-200 bg-white shadow-2xl overflow-hidden z-50 animate-slide-up">
+                      <div className="px-5 py-3.5 border-b bg-gradient-to-r from-amber-50 to-orange-50/40 flex items-center justify-between">
+                        <div className="text-sm font-black text-slate-900 tracking-wide">Expiring Contracts</div>
+                        <div className="flex items-center gap-3">
+                          <button
+                            type="button"
+                            className="text-xs font-bold text-red-600 hover:text-red-800 disabled:opacity-50 transition-colors"
+                            disabled={!contractExpiringRows.length || clearingAllExpiring}
+                            onClick={() => {
+                              void clearExpiringNotifications(contractExpiringRows, "expiring contracts");
+                            }}
+                          >
+                            {clearingAllExpiring ? "Clearing..." : "Clear all"}
+                          </button>
+                          <Link
+                            href="/Main_Modules/Client/"
+                            className="text-xs font-bold text-blue-600 hover:text-blue-800 transition-colors"
+                            onClick={() => setContractExpiringOpen(false)}
+                          >
+                            Open Client
+                          </Link>
+                        </div>
+                      </div>
+
+                      <div className="max-h-[340px] overflow-y-auto divide-y divide-slate-100 custom-scrollbar">
+                        {contractExpiringRows.length ? (
+                          contractExpiringRows.map((r, idx) => {
+                            const displayName = String(r.record_name ?? "").trim() || "Contract";
+                            const isUrgent = Number(r.days_until_expiry) <= 10;
+                            return (
+                              <div
+                                key={`${r.applicant_id}:${r.expires_on}:${idx}`}
+                                role="button"
+                                tabIndex={0}
+                                onKeyDown={(ev) => {
+                                  if (ev.key !== "Enter" && ev.key !== " ") return;
+                                  ev.preventDefault();
+                                  router.push("/Main_Modules/Client/");
+                                  setContractExpiringOpen(false);
+                                }}
+                                onClick={() => {
+                                  router.push("/Main_Modules/Client/");
+                                  setContractExpiringOpen(false);
+                                }}
+                                className="px-5 py-3.5 hover:bg-[#fffbf0] hover:scale-[1.005] transition-all duration-200 flex flex-col gap-1.5 cursor-pointer"
+                                title="Open Client module"
+                              >
+                                <div className="flex items-center justify-between gap-3">
+                                  <div className="text-sm font-extrabold text-slate-900">{r.license_type}</div>
+                                  <div className="text-xs font-bold text-slate-500">{r.expires_on}</div>
+                                </div>
+                                <div className="text-xs font-semibold text-slate-600">{displayName}</div>
+                                <div className="mt-1 flex items-center justify-between gap-3">
+                                  <div className={`text-[11px] font-extrabold px-2 py-0.5 rounded-md border ${
+                                    isUrgent
+                                      ? "bg-red-50 text-red-700 border-red-200"
+                                      : "bg-amber-50 text-amber-700 border-amber-200"
+                                  }`}>
+                                    Days: {r.days_until_expiry}
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    {(() => {
+                                      const badge = emailBadge(expiringEmailByApplicantId[String(r.applicant_id)] ?? null);
+                                      const isSent = Number(r.sent_count ?? 0) > 0;
+                                      const badgeClassName = isSent
+                                        ? "bg-emerald-100 text-emerald-800 border-emerald-200"
+                                        : `${badge.className} border-slate-200`;
+                                      return (
+                                        <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full border ${badgeClassName}`}>
+                                          {badge.label}
+                                        </span>
+                                      );
+                                    })()}
+                                    <span
+                                      className={
+                                        (Number(r.sent_count ?? 0) > 0)
+                                          ? "text-[11px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200"
+                                          : "text-[11px] font-bold px-2 py-0.5 rounded-full bg-slate-50 text-slate-600 border border-slate-200"
+                                      }
+                                    >
+                                      {(Number(r.sent_count ?? 0) > 0) ? `Sent ${r.sent_count}x` : "Not sent"}
+                                    </span>
+                                  </div>
+                                </div>
+                                {r.last_sent_at ? (
+                                  <div className="text-[11px] font-medium text-slate-400 mt-1">Last sent: {new Date(r.last_sent_at).toLocaleString()}</div>
+                                ) : null}
+                              </div>
+                            );
+                          })
+                        ) : (
+                          <div className="px-5 py-8 text-center text-slate-400 font-semibold">No expiring contracts.</div>
                         )}
                       </div>
                     </div>
@@ -2186,17 +2360,18 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
                       setActivityOpen(false);
                       setExpiringOpen(false);
                       setCarInsuranceExpiringOpen(false);
+                      setContractExpiringOpen(false);
                       setAdminAlertOpen(false);
                       refreshPreview();
                     }}
-                    className="relative h-10 w-10 rounded-xl bg-[#FFDA03] text-black flex items-center justify-center"
+                    className="relative h-10 w-10 rounded-xl bg-[#FFDA03] text-black flex items-center justify-center hover:bg-[#ffe552] active:scale-95 transition-all duration-200 shadow-sm"
                     aria-label="Preview (1+ year of service)"
                     title="Preview (1+ year of service)"
                   >
                     <Users className="w-5 h-5" />
                     {previewCount > 0 ? (
                       <span
-                        className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-red-600 text-white text-[10px] font-bold leading-[18px] text-center shadow"
+                        className="absolute -top-1.5 -right-1.5 min-w-[20px] h-[20px] px-1 rounded-full bg-red-600 text-white text-[10px] font-black leading-[20px] text-center shadow-md animate-pulse border-2 border-white"
                         aria-label={`Preview employees count ${previewCount}`}
                       >
                         {badgeTextWide(previewCount)}
@@ -2205,13 +2380,13 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
                   </button>
 
                   {previewOpen ? (
-                    <div className="absolute right-0 mt-2 w-[520px] max-w-[92vw] rounded-2xl border bg-white shadow-lg overflow-hidden z-50">
-                      <div className="px-4 py-3 border-b flex items-center justify-between">
-                        <div className="text-sm font-semibold text-black">Preview (1+ year of service)</div>
-                        <div className="text-xs text-gray-500">Hire date-based</div>
+                    <div className="absolute right-0 mt-3 w-[520px] max-w-[92vw] rounded-2xl border-2 border-slate-200 bg-white shadow-2xl overflow-hidden z-50 animate-slide-up">
+                      <div className="px-5 py-3.5 border-b bg-gradient-to-r from-amber-50 to-orange-50/40 flex items-center justify-between">
+                        <div className="text-sm font-black text-slate-900 tracking-wide">Preview (1+ year of service)</div>
+                        <div className="text-xs font-bold text-slate-500">Hire date-based</div>
                       </div>
 
-                      <div className="max-h-[360px] overflow-auto">
+                      <div className="max-h-[340px] overflow-y-auto divide-y divide-slate-100 custom-scrollbar">
                         {previewRows.length ? (
                           previewRows.map((e) => (
                             <div
@@ -2236,25 +2411,25 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
                                 );
                                 setPreviewOpen(false);
                               }}
-                              className="px-4 py-3 border-b last:border-b-0 cursor-pointer hover:bg-white"
+                              className="px-5 py-3.5 hover:bg-[#fffbf0] hover:scale-[1.005] transition-all duration-200 flex flex-col gap-1 cursor-pointer"
                               title="Open employee details"
                             >
                               <div className="flex items-center justify-between gap-3">
-                                <div className="text-sm font-medium text-black truncate">
+                                <div className="text-sm font-extrabold text-slate-900 truncate">
                                   {fullName(e.first_name, e.last_name)}
                                 </div>
-                                <div className="text-xs text-gray-600 whitespace-nowrap">
+                                <div className="text-xs font-bold text-slate-500 whitespace-nowrap">
                                   {e.date_hired_fsai ? new Date(e.date_hired_fsai).toLocaleDateString() : "—"}
                                 </div>
                               </div>
-                              <div className="text-xs text-gray-600 truncate">
+                              <div className="text-xs font-semibold text-slate-600 truncate">
                                 {(e.client_position ?? "—")} • {(e.detachment ?? "—")}
                               </div>
-                              <div className="mt-1 text-[11px] text-gray-500">Service: {formatServiceLengthShort(e.date_hired_fsai)}</div>
+                              <div className="mt-1 text-[11px] font-extrabold text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200/60 w-fit">Service: {formatServiceLengthShort(e.date_hired_fsai)}</div>
                             </div>
                           ))
                         ) : (
-                          <div className="px-4 py-6 text-sm text-gray-500">No employees match the 1+ year of service criteria.</div>
+                          <div className="px-5 py-8 text-center text-slate-400 font-semibold">No employees match the 1+ year of service criteria.</div>
                         )}
                       </div>
                     </div>

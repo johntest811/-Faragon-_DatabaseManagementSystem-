@@ -137,9 +137,9 @@ export default function ResignedPage() {
 
   const [viewMode, setViewMode] = useState<"grid" | "table">(() => {
     if (typeof window !== "undefined") {
-      return (localStorage.getItem("resigned:viewMode") as "grid" | "table") || "grid";
+      return (localStorage.getItem("resigned:viewMode:v2") as "grid" | "table") || "table";
     }
-    return "grid";
+    return "table";
   });
 
   const [loading, setLoading] = useState(true);
@@ -191,7 +191,7 @@ export default function ResignedPage() {
 
   useEffect(() => {
     try {
-      const saved = window.localStorage.getItem("resigned:viewMode");
+      const saved = window.localStorage.getItem("resigned:viewMode:v2");
       if (saved === "grid" || saved === "table") setViewMode(saved);
     } catch {
       // ignore
@@ -211,7 +211,7 @@ export default function ResignedPage() {
 
   useEffect(() => {
     try {
-      window.localStorage.setItem("resigned:viewMode", viewMode);
+      window.localStorage.setItem("resigned:viewMode:v2", viewMode);
     } catch {
       // ignore
     }

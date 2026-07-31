@@ -123,9 +123,9 @@ export default function ApplicantsPage() {
 	const [search, setSearch] = useState("");
 	const [viewMode, setViewMode] = useState<"grid" | "table">(() => {
 		if (typeof window !== "undefined") {
-			return (window.localStorage.getItem("applicants:viewMode") as "grid" | "table") || "grid";
+			return (window.localStorage.getItem("applicants:viewMode:v2") as "grid" | "table") || "table";
 		}
-		return "grid";
+		return "table";
 	});
 	const [statusFilter, setStatusFilter] = useState<StatusFilter>("APPLICANT");
 	const [editorOpen, setEditorOpen] = useState(false);
@@ -177,7 +177,7 @@ export default function ApplicantsPage() {
 
 	useEffect(() => {
 		try {
-			window.localStorage.setItem("applicants:viewMode", viewMode);
+			window.localStorage.setItem("applicants:viewMode:v2", viewMode);
 		} catch {
 			// ignore
 		}

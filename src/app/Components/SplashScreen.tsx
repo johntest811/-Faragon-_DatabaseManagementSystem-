@@ -21,8 +21,8 @@ export default function SplashScreen({
 
   useEffect(() => {
     const started = Date.now();
-    const totalMs = 2300;
-    const bgTimer = setTimeout(() => setBgBlack(true), 1200);
+    const totalMs = 4200;
+    const bgTimer = setTimeout(() => setBgBlack(true), 1500);
 
     const interval = setInterval(() => {
       const elapsed = Date.now() - started;
@@ -64,7 +64,7 @@ export default function SplashScreen({
       </div>
 
       <h1
-        className="font-brand-serif px-4 text-center text-base font-black uppercase tracking-[0.22em] drop-shadow-[0_3px_10px_rgba(0,0,0,0.35)] md:text-lg"
+        className="font-brand-serif px-4 text-center text-lg font-black uppercase tracking-[0.2em] drop-shadow-[0_3px_10px_rgba(0,0,0,0.35)] md:text-2xl"
         style={{
           backgroundImage: bgBlack
             ? `linear-gradient(to right, #ffffff ${progress}%, rgba(255,255,255,0.25) ${progress}%)`

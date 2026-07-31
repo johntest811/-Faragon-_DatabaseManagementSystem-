@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useMemo, useState, useEffect, useRef } from "react";
-import { Download, FileDown, FileText, Search, Upload } from "lucide-react";
+import { Boxes, Download, FileDown, FileText, Pencil, Search, Upload, X } from "lucide-react";
 import { supabase } from "@/app/Client/SupabaseClients";
 import { useAuthRole, useMyColumnAccess } from "@/app/Client/useRbac";
 import LoadingCircle from "@/app/Components/LoadingCircle";
@@ -13,10 +13,21 @@ import ImportSummaryModal, { ImportSummaryData } from "../Components/ImportSumma
 import SpreadsheetImportModal from "@/app/Components/SpreadsheetImportModal";
 import { readSpreadsheetRows } from "@/app/Components/spreadsheetImportUtils";
 import { addBrandedPdfHeader, buildBrandedAoa, buildBrandedWorkbookBuffer } from "../Components/exportBranding";
+import SearchDropdownInput from "@/app/Components/SearchDropdownInput";
+import {
+  EQUIPMENT_CATALOG,
+  EQUIPMENT_GROUPS,
+  EQUIPMENT_NAMES,
+  EquipmentGroup,
+  equipmentGroupForName,
+  equipmentNamesForGroup,
+  normalizeEquipmentCatalogName,
+} from "../Components/equipmentCatalog";
 
 type CategoryConfig = {
   key: "firearms" | "communications" | "furniture" | "office" | "sec" | "vehicle";
   label: string;
+  group: EquipmentGroup;
   nameField: keyof InventoryForm;
   qtyField: keyof InventoryForm;
   priceField: keyof InventoryForm;
@@ -110,6 +121,27 @@ type InventoryForm = {
   user_attachment: string;
 };
 
+type InventoryEquipmentOption = {
+  name: string;
+  group: EquipmentGroup;
+  unitPrice: number;
+};
+
+type DetachmentItemSummary = {
+  key: string;
+  item: string;
+  group: EquipmentGroup;
+  quantity: number;
+  unitValue: number;
+  totalValue: number;
+};
+
+type ParaphernaliaBalanceRow = {
+  specific_area: string | null;
+  item: string | null;
+  stock_balance: number | null;
+};
+
 const EMPTY_FORM: InventoryForm = {
   equipment: "",
   control_number: "",
@@ -150,7 +182,8 @@ const EMPTY_FORM: InventoryForm = {
 const CATEGORY_CONFIGS: CategoryConfig[] = [
   {
     key: "firearms",
-    label: "Firearms & Ammunitions",
+    label: "Communication",
+    group: "Communication",
     nameField: "firearms_name",
     qtyField: "firearms_qty",
     priceField: "firearms_price",
@@ -160,7 +193,8 @@ const CATEGORY_CONFIGS: CategoryConfig[] = [
   },
   {
     key: "communications",
-    label: "Communications Equipment",
+    label: "Security / Safety",
+    group: "Security / Safety",
     nameField: "communications_name",
     qtyField: "communications_qty",
     priceField: "communications_price",
@@ -170,7 +204,8 @@ const CATEGORY_CONFIGS: CategoryConfig[] = [
   },
   {
     key: "furniture",
-    label: "Furniture & Fixtures",
+    label: "Tactical",
+    group: "Tactical",
     nameField: "furniture_name",
     qtyField: "furniture_qty",
     priceField: "furniture_price",
@@ -180,7 +215,8 @@ const CATEGORY_CONFIGS: CategoryConfig[] = [
   },
   {
     key: "office",
-    label: "Office Equip.",
+    label: "Transportation / Mobility",
+    group: "Transportation / Mobility",
     nameField: "office_name",
     qtyField: "office_qty",
     priceField: "office_price",
@@ -190,7 +226,8 @@ const CATEGORY_CONFIGS: CategoryConfig[] = [
   },
   {
     key: "sec",
-    label: "Sec Equip.",
+    label: "Emergency / Medical",
+    group: "Emergency / Medical",
     nameField: "sec_name",
     qtyField: "sec_qty",
     priceField: "sec_price",
@@ -200,7 +237,8 @@ const CATEGORY_CONFIGS: CategoryConfig[] = [
   },
   {
     key: "vehicle",
-    label: "Vehicle & Motorcycle",
+    label: "Office Equipment",
+    group: "Office Equipment",
     nameField: "vehicle_name",
     qtyField: "vehicle_qty",
     priceField: "vehicle_price",
@@ -285,6 +323,7 @@ const INVENTORY_CONTROL_PREFIXES: Record<string, string> = {
   PROJECTOR: "PJT",
   "STEEL CABINET": "SC",
   "STEEL LOCKER": "SL",
+  "SYSTEM UNIT": "SU",
   "SYTEM UNIT": "SU",
   LAPTOP: "LT",
   "CIGNUS CHARGER": "CCH",
@@ -331,7 +370,7 @@ function parseControlSequence(value: unknown) {
 }
 
 function formatDateCell(value: string | null) {
-  return value && value.trim() ? value : "â€”";
+  return value && value.trim() ? value : "—";
 }
 
 function toMoney(value: number) {
@@ -378,6 +417,38 @@ function totalFromRowPrices(row: InventoryRow) {
   );
 
   return categoryTotal || lineTotal(totalQuantityFromRow(row), row.unit_cost) || numberValue(row.total_amount ?? row.amount);
+}
+
+function inventoryItemLinesFromRow(row: InventoryRow): DetachmentItemSummary[] {
+  const categoryLines = CATEGORY_CONFIGS.flatMap((cfg) => {
+    const item = normalizeEquipmentName(row[cfg.nameRowField]);
+    const quantity = numberValue(row[cfg.qtyRowField]);
+    const unitValue = numberValue(row[cfg.priceRowField]);
+    if (!item && quantity <= 0) return [];
+    const resolvedItem = item || normalizeEquipmentName(row.equipment || row.particular) || cfg.label.toUpperCase();
+    return [{
+      key: `${cfg.group}:${resolvedItem}:${unitValue}`,
+      item: resolvedItem,
+      group: cfg.group,
+      quantity,
+      unitValue,
+      totalValue: lineTotal(quantity, unitValue),
+    }];
+  });
+
+  if (categoryLines.length) return categoryLines;
+
+  const item = normalizeEquipmentName(row.equipment || row.particular) || "UNSPECIFIED EQUIPMENT";
+  const quantity = totalQuantityFromRow(row);
+  const unitValue = numberValue(row.unit_cost);
+  return [{
+    key: `${equipmentGroupForName(item)}:${item}:${unitValue}`,
+    item,
+    group: equipmentGroupForName(item),
+    quantity,
+    unitValue,
+    totalValue: totalFromRowPrices(row),
+  }];
 }
 
 function formatTimestamp(value: string | null) {
@@ -475,19 +546,32 @@ export default function LogisticsInventoryPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [rows, setRows] = useState<InventoryRow[]>([]);
+  const [paraphernaliaBalances, setParaphernaliaBalances] = useState<ParaphernaliaBalanceRow[]>([]);
   const [saving, setSaving] = useState(false);
   const [success, setSuccess] = useState("");
   const [showAddModal, setShowAddModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [editingRowId, setEditingRowId] = useState<string | null>(null);
   const [selectedDetailRowId, setSelectedDetailRowId] = useState<string | null>(null);
+  const [selectedDetachmentView, setSelectedDetachmentView] = useState<string | null>(null);
+  const [inventoryViewMode, setInventoryViewMode] = useState<"grid" | "matrix">("grid");
   const [importing, setImporting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [importSummary, setImportSummary] = useState<ImportSummaryData | null>(null);
   const [importSummaryOpen, setImportSummaryOpen] = useState(false);
- const [showTemplatePopup, setShowTemplatePopup] = useState(false);
+  const [showTemplatePopup, setShowTemplatePopup] = useState(false);
   const [showExportPopup, setShowExportPopup] = useState(false);
   const [importModalOpen, setImportModalOpen] = useState(false);
+
+  const [itemManagerOpen, setItemManagerOpen] = useState(false);
+  const [itemBusy, setItemBusy] = useState(false);
+  const [newItemName, setNewItemName] = useState("");
+  const [newItemGroup, setNewItemGroup] = useState<EquipmentGroup>("Security / Safety");
+  const [newItemPrice, setNewItemPrice] = useState("");
+  const [itemPriceDrafts, setItemPriceDrafts] = useState<Record<string, string>>({});
+  const [itemManagerSearch, setItemManagerSearch] = useState("");
+  const [itemManagerError, setItemManagerError] = useState("");
+  const [itemManagerMessage, setItemManagerMessage] = useState("");
 
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
@@ -496,6 +580,36 @@ export default function LogisticsInventoryPage() {
   const [formData, setFormData] = useState<InventoryForm>(EMPTY_FORM);
   const [userAttachmentFile, setUserAttachmentFile] = useState<File | null>(null);
   const [clientNameOptions, setClientNameOptions] = useState<string[]>([]);
+  const [inventoryEquipmentOptions, setInventoryEquipmentOptions] = useState<InventoryEquipmentOption[]>(
+    EQUIPMENT_CATALOG.map((item) => ({ name: item.name, group: item.group, unitPrice: 0 }))
+  );
+
+  const managedItemOptions = useMemo(() => {
+    const query = itemManagerSearch.trim().toLowerCase();
+    return inventoryEquipmentOptions.filter((item) => {
+      if (!query) return true;
+      return (
+        item.name.toLowerCase().includes(query) ||
+        item.group.toLowerCase().includes(query) ||
+        String(item.unitPrice).includes(query)
+      );
+    });
+  }, [inventoryEquipmentOptions, itemManagerSearch]);
+
+  const equipmentDropdownNames = useMemo(() => {
+    const names = new Map<string, string>();
+    for (const name of EQUIPMENT_NAMES) names.set(normalizeEquipmentCatalogName(name), name);
+    for (const option of inventoryEquipmentOptions) names.set(normalizeEquipmentCatalogName(option.name), option.name);
+    return Array.from(names.values());
+  }, [inventoryEquipmentOptions]);
+
+  const equipmentPriceByName = useMemo(() => {
+    const prices = new Map<string, number>();
+    for (const option of inventoryEquipmentOptions) {
+      prices.set(normalizeEquipmentCatalogName(option.name), option.unitPrice);
+    }
+    return prices;
+  }, [inventoryEquipmentOptions]);
 
   const detachmentOptions = useMemo(() => {
     const currentValue = formData.detachment.trim();
@@ -505,7 +619,7 @@ export default function LogisticsInventoryPage() {
     return [currentValue, ...clientNameOptions];
   }, [clientNameOptions, formData.detachment]);
 
-  function nextInventoryControlNumber(equipment: string, offset = 0) {
+  const nextInventoryControlNumber = useCallback((equipment: string, offset = 0) => {
     const year = new Date().getFullYear();
     const prefix = controlPrefixForEquipment(equipment);
     const prefixKey = `${prefix}-${year}-`;
@@ -514,29 +628,168 @@ export default function LogisticsInventoryPage() {
       .filter((value) => value.startsWith(prefixKey))
       .reduce((max, value) => Math.max(max, parseControlSequence(value)), 0);
     return formatInventoryControlNumber(equipment, maxSequence + offset + 1, year);
-  }
+  }, [rows]);
 
   const loadClientNameOptions = useCallback(async () => {
-    const res = await supabase
-      .from("contracts")
-      .select("client_name")
-      .order("client_name", { ascending: true })
-      .limit(5000);
+    const [contractsRes, detachmentTablesRes, paraphernaliaSummaryRes, inventoryFixedRes] = await Promise.all([
+      supabase.from("contracts").select("client_name, specific_area").limit(5000),
+      supabase.from("paraphernalia_detachment_tables").select("detachment").eq("is_active", true).limit(5000),
+      supabase.from("vw_paraphernalia_inventory_summary").select("specific_area").limit(5000),
+      supabase.from("inventory_fixed_asset").select("detachment").limit(5000),
+    ]);
 
+    const names = new Set<string>();
+
+    if (!contractsRes.error) {
+      for (const row of (contractsRes.data ?? []) as Array<{ client_name: string | null; specific_area: string | null }>) {
+        if (row.specific_area?.trim()) names.add(row.specific_area.trim());
+        if (row.client_name?.trim()) names.add(row.client_name.trim());
+      }
+    }
+    if (!detachmentTablesRes.error) {
+      for (const row of (detachmentTablesRes.data ?? []) as Array<{ detachment: string | null }>) {
+        if (row.detachment?.trim()) names.add(row.detachment.trim());
+      }
+    }
+    if (!paraphernaliaSummaryRes.error) {
+      for (const row of (paraphernaliaSummaryRes.data ?? []) as Array<{ specific_area: string | null }>) {
+        if (row.specific_area?.trim()) names.add(row.specific_area.trim());
+      }
+    }
+    if (!inventoryFixedRes.error) {
+      for (const row of (inventoryFixedRes.data ?? []) as Array<{ detachment: string | null }>) {
+        if (row.detachment?.trim()) names.add(row.detachment.trim());
+      }
+    }
+
+    const nextOptions = Array.from(names).sort((a, b) => a.localeCompare(b));
+    setClientNameOptions(nextOptions);
+  }, []);
+
+  const loadInventoryEquipmentOptions = useCallback(async () => {
+    const wide = await supabase
+      .from("paraphernalia_items")
+      .select("item_name, item_group, unit_price, is_active")
+      .eq("is_active", true)
+      .order("display_order", { ascending: true })
+      .order("item_name", { ascending: true });
+
+    let sourceRows: Array<Record<string, unknown>> = [];
+    if (!wide.error) {
+      sourceRows = (wide.data ?? []) as Array<Record<string, unknown>>;
+    } else {
+      const fallback = await supabase
+        .from("paraphernalia_items")
+        .select("item_name, unit_price, is_active")
+        .eq("is_active", true)
+        .order("display_order", { ascending: true })
+        .order("item_name", { ascending: true });
+      if (!fallback.error) sourceRows = (fallback.data ?? []) as Array<Record<string, unknown>>;
+    }
+
+    const merged = new Map<string, InventoryEquipmentOption>();
+    for (const item of EQUIPMENT_CATALOG) {
+      merged.set(item.name, { name: item.name, group: item.group, unitPrice: 0 });
+    }
+    for (const row of sourceRows) {
+      const name = normalizeEquipmentCatalogName(row.item_name);
+      if (!name) continue;
+      const rawGroup = String(row.item_group ?? "").trim() as EquipmentGroup;
+      const group = EQUIPMENT_GROUPS.includes(rawGroup) ? rawGroup : equipmentGroupForName(name);
+      merged.set(name, { name, group, unitPrice: numberValue(row.unit_price) });
+    }
+    setInventoryEquipmentOptions(Array.from(merged.values()));
+  }, []);
+
+  async function addItemOption() {
+    const name = newItemName.trim().toUpperCase();
+    if (!name) {
+      setItemManagerError("Item name is required.");
+      return;
+    }
+    setItemBusy(true);
+    setItemManagerError("");
+    setItemManagerMessage("");
+
+    const price = Number(newItemPrice) || 0;
+    const category = newItemGroup === "Office Equipment" ? "OFFICE" : "SEC";
+
+    const res = await supabase.from("paraphernalia_items").insert({
+      item_name: name,
+      item_group: newItemGroup,
+      item_category: category,
+      unit_price: price,
+      is_active: true,
+    });
+
+    setItemBusy(false);
     if (res.error) {
-      setClientNameOptions([]);
+      setItemManagerError(res.error.message || "Failed to add item option.");
       return;
     }
 
-    const nextOptions = Array.from(
-      new Set(
-        ((res.data as Array<{ client_name: string | null }> | null) ?? [])
-          .map((row) => String(row.client_name ?? "").trim())
-          .filter(Boolean)
-      )
-    ).sort((a, b) => a.localeCompare(b));
+    setItemManagerMessage(`Item "${name}" added successfully.`);
+    setNewItemName("");
+    setNewItemPrice("");
+    await loadInventoryEquipmentOptions();
+  }
 
-    setClientNameOptions(nextOptions);
+  async function saveItemPrice(item: InventoryEquipmentOption) {
+    const draft = itemPriceDrafts[item.name];
+    const price = Number(draft ?? item.unitPrice) || 0;
+
+    setItemBusy(true);
+    setItemManagerError("");
+    setItemManagerMessage("");
+
+    const res = await supabase
+      .from("paraphernalia_items")
+      .update({ unit_price: price })
+      .eq("item_name", item.name);
+
+    setItemBusy(false);
+    if (res.error) {
+      setItemManagerError(res.error.message || "Failed to update unit price.");
+      return;
+    }
+
+    setItemManagerMessage(`Unit price for "${item.name}" updated to PHP ${toMoney(price)}.`);
+    await loadInventoryEquipmentOptions();
+  }
+
+  async function removeItemOption(item: InventoryEquipmentOption) {
+    const ok = globalThis.confirm ? globalThis.confirm(`Remove ${item.name}? It will be hidden from future selections.`) : true;
+    if (!ok) return;
+
+    setItemBusy(true);
+    setItemManagerError("");
+    setItemManagerMessage("");
+
+    const res = await supabase
+      .from("paraphernalia_items")
+      .update({ is_active: false })
+      .eq("item_name", item.name);
+
+    setItemBusy(false);
+    if (res.error) {
+      setItemManagerError(res.error.message || "Failed to remove item.");
+      return;
+    }
+
+    setItemManagerMessage(`Item "${item.name}" removed.`);
+    await loadInventoryEquipmentOptions();
+  }
+
+  const loadParaphernaliaBalances = useCallback(async () => {
+    const result = await supabase
+      .from("vw_paraphernalia_inventory_summary")
+      .select("specific_area, item, stock_balance")
+      .limit(10000);
+    if (result.error) {
+      setParaphernaliaBalances([]);
+      return;
+    }
+    setParaphernaliaBalances((result.data as ParaphernaliaBalanceRow[] | null) ?? []);
   }, []);
 
   const loadData = useCallback(async () => {
@@ -595,24 +848,24 @@ export default function LogisticsInventoryPage() {
       last_maintenance: "2026-05-01",
       user_text: "Assigned user or notes",
       user_attachment: "Optional URL",
-      firearms_name: "Sample Firearm",
-      firearms_qty: 1,
-      firearms_price: 1000,
-      communications_name: "Sample Radio",
-      communications_qty: 1,
-      communications_price: 800,
-      furniture_name: "Sample Chair",
-      furniture_qty: 1,
-      furniture_price: 500,
-      office_name: "Sample Printer",
-      office_qty: 1,
-      office_price: 400,
-      sec_name: "Sample Vest",
-      sec_qty: 1,
-      sec_price: 300,
-      vehicle_name: "Sample Motorcycle",
-      vehicle_qty: 1,
-      vehicle_price: 2000,
+      communication_name: "CIGNUS",
+      communication_qty: 1,
+      communication_price: 1000,
+      security_safety_name: "BODYCAMERA",
+      security_safety_qty: 1,
+      security_safety_price: 800,
+      tactical_name: "PISTOL",
+      tactical_qty: 1,
+      tactical_price: 500,
+      transportation_mobility_name: "MOTORCYCLE",
+      transportation_mobility_qty: 1,
+      transportation_mobility_price: 400,
+      emergency_medical_name: "FIRST AID KIT",
+      emergency_medical_qty: 1,
+      emergency_medical_price: 300,
+      office_equipment_name: "PRINTER",
+      office_equipment_qty: 1,
+      office_equipment_price: 2000,
       remarks: "Optional remarks",
     };
 
@@ -668,18 +921,18 @@ function downloadInventoryTemplateXlsx() {
   const parseInventoryImportRow = useCallback((row: Record<string, unknown>) => {
     const totalQuantityValue = toNumber(pickByAliases(row, ["quanitity", "quantity", "total quantity"]));
     const unitCostValue = toNumber(pickByAliases(row, ["unit cost", "unit_cost", "cost"]));
-    const firearmsQty = toNumber(pickByAliases(row, ["firearms_qty", "firearms quantity"]));
-    const firearmsPrice = toNumber(pickByAliases(row, ["firearms_price", "firearms price", "firearms amount"]));
-    const communicationsQty = toNumber(pickByAliases(row, ["communications_qty", "communications quantity"]));
-    const communicationsPrice = toNumber(pickByAliases(row, ["communications_price", "communications price", "communications amount"]));
-    const furnitureQty = toNumber(pickByAliases(row, ["furniture_qty", "furniture quantity"]));
-    const furniturePrice = toNumber(pickByAliases(row, ["furniture_price", "furniture price", "furniture amount"]));
-    const officeQty = toNumber(pickByAliases(row, ["office_qty", "office quantity"]));
-    const officePrice = toNumber(pickByAliases(row, ["office_price", "office price", "office amount"]));
-    const secQty = toNumber(pickByAliases(row, ["sec_qty", "security quantity"]));
-    const secPrice = toNumber(pickByAliases(row, ["sec_price", "sec price", "security price"]));
-    const vehicleQty = toNumber(pickByAliases(row, ["vehicle_qty", "vehicle quantity"]));
-    const vehiclePrice = toNumber(pickByAliases(row, ["vehicle_price", "vehicle price", "vehicle amount"]));
+    const firearmsQty = toNumber(pickByAliases(row, ["communication_qty", "communication quantity", "firearms_qty", "firearms quantity"]));
+    const firearmsPrice = toNumber(pickByAliases(row, ["communication_price", "communication price", "firearms_price", "firearms price", "firearms amount"]));
+    const communicationsQty = toNumber(pickByAliases(row, ["security_safety_qty", "security safety quantity", "communications_qty", "communications quantity"]));
+    const communicationsPrice = toNumber(pickByAliases(row, ["security_safety_price", "security safety price", "communications_price", "communications price", "communications amount"]));
+    const furnitureQty = toNumber(pickByAliases(row, ["tactical_qty", "tactical quantity", "furniture_qty", "furniture quantity"]));
+    const furniturePrice = toNumber(pickByAliases(row, ["tactical_price", "tactical price", "furniture_price", "furniture price", "furniture amount"]));
+    const officeQty = toNumber(pickByAliases(row, ["transportation_mobility_qty", "transportation mobility quantity", "office_qty", "office quantity"]));
+    const officePrice = toNumber(pickByAliases(row, ["transportation_mobility_price", "transportation mobility price", "office_price", "office price", "office amount"]));
+    const secQty = toNumber(pickByAliases(row, ["emergency_medical_qty", "emergency medical quantity", "sec_qty", "security quantity"]));
+    const secPrice = toNumber(pickByAliases(row, ["emergency_medical_price", "emergency medical price", "sec_price", "sec price", "security price"]));
+    const vehicleQty = toNumber(pickByAliases(row, ["office_equipment_qty", "office equipment quantity", "vehicle_qty", "vehicle quantity"]));
+    const vehiclePrice = toNumber(pickByAliases(row, ["office_equipment_price", "office equipment price", "vehicle_price", "vehicle price", "vehicle amount"]));
     const categoryQuantityValue = firearmsQty + communicationsQty + furnitureQty + officeQty + secQty + vehicleQty;
     const effectiveTotalQuantity = totalQuantityValue || categoryQuantityValue;
     const categoryComputedAmount =
@@ -712,22 +965,22 @@ function downloadInventoryTemplateXlsx() {
       last_maintenance: pickByAliases(row, ["last maintenance", "last_maintenance", "maintenance"]).trim() || null,
       user_text: pickByAliases(row, ["user", "user text", "assigned user", "user_text"]).trim() || null,
       user_attachment: pickByAliases(row, ["user attachment", "attachment", "file", "user_attachment"]).trim() || null,
-      firearms_name: pickByAliases(row, ["firearms_name", "firearms", "firearms ammunitions"]).trim() || null,
+      firearms_name: pickByAliases(row, ["communication_name", "communication", "firearms_name", "firearms", "firearms ammunitions"]).trim() || null,
       firearms_qty: firearmsQty,
       firearms_price: firearmsPrice,
-      communications_name: pickByAliases(row, ["communications_name", "communications", "communications equipment"]).trim() || null,
+      communications_name: pickByAliases(row, ["security_safety_name", "security safety", "communications_name", "communications", "communications equipment"]).trim() || null,
       communications_qty: communicationsQty,
       communications_price: communicationsPrice,
-      furniture_name: pickByAliases(row, ["furniture_name", "furniture", "furniture fixtures"]).trim() || null,
+      furniture_name: pickByAliases(row, ["tactical_name", "tactical", "furniture_name", "furniture", "furniture fixtures"]).trim() || null,
       furniture_qty: furnitureQty,
       furniture_price: furniturePrice,
-      office_name: pickByAliases(row, ["office_name", "office", "office equipment"]).trim() || null,
+      office_name: pickByAliases(row, ["transportation_mobility_name", "transportation mobility", "office_name", "office"]).trim() || null,
       office_qty: officeQty,
       office_price: officePrice,
-      sec_name: pickByAliases(row, ["sec_name", "security_name", "sec equipment"]).trim() || null,
+      sec_name: pickByAliases(row, ["emergency_medical_name", "emergency medical", "sec_name", "security_name", "sec equipment"]).trim() || null,
       sec_qty: secQty,
       sec_price: secPrice,
-      vehicle_name: pickByAliases(row, ["vehicle_name", "vehicle", "motorcycle"]).trim() || null,
+      vehicle_name: pickByAliases(row, ["office_equipment_name", "office equipment", "vehicle_name", "vehicle", "motorcycle"]).trim() || null,
       vehicle_qty: vehicleQty,
       vehicle_price: vehiclePrice,
       firearms_ammunitions: pickByAliases(row, ["firearms_ammunitions", "firearms_name"]).trim() || null,
@@ -748,7 +1001,7 @@ function downloadInventoryTemplateXlsx() {
     }
 
     return { payload, displayName };
-  }, [rows]);
+  }, [nextInventoryControlNumber]);
 
   const handleInventoryImport = useCallback(async (rawRows: Record<string, unknown>[]) => {
     if (!canImportInventory) {
@@ -863,18 +1116,27 @@ function downloadInventoryTemplateXlsx() {
   }, [canImportInventory, parseInventoryImportRow, loadData]);
 
   useEffect(() => {
-    void loadClientNameOptions();
+    void Promise.all([loadClientNameOptions(), loadInventoryEquipmentOptions(), loadParaphernaliaBalances()]);
     const channel = supabase
-      .channel("realtime:inventory-client-name-options")
+      .channel("realtime:inventory-reference-options")
       .on("postgres_changes", { event: "*", schema: "public", table: "contracts" }, () => {
         void loadClientNameOptions();
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "paraphernalia_items" }, () => {
+        void Promise.all([loadInventoryEquipmentOptions(), loadParaphernaliaBalances()]);
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "restock" }, () => {
+        void loadParaphernaliaBalances();
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "paraphernalia" }, () => {
+        void loadParaphernaliaBalances();
       })
       .subscribe();
 
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [loadClientNameOptions]);
+  }, [loadClientNameOptions, loadInventoryEquipmentOptions, loadParaphernaliaBalances]);
 
   useEffect(() => {
     if (loadingInventoryColumns) return;
@@ -911,10 +1173,23 @@ function downloadInventoryTemplateXlsx() {
   const totalsByCategory = useMemo(
     () =>
       CATEGORY_CONFIGS.map((cfg) => {
-        const quantity = rows.reduce((sum, row) => sum + (Number(row[cfg.qtyRowField] ?? 0) || 0), 0);
+        const quantity = rows.reduce((sum, row) => {
+          const categoryQuantity = numberValue(row[cfg.qtyRowField]);
+          if (categoryQuantity > 0) return sum + categoryQuantity;
+          const usesSimpleEquipmentRow = categoryQuantityFromRow(row) <= 0;
+          return usesSimpleEquipmentRow && equipmentGroupForName(row.equipment || row.particular) === cfg.group
+            ? sum + totalQuantityFromRow(row)
+            : sum;
+        }, 0);
         const value = rows.reduce(
-          (sum, row) =>
-            sum + lineTotal(row[cfg.qtyRowField], row[cfg.priceRowField]),
+          (sum, row) => {
+            const categoryQuantity = numberValue(row[cfg.qtyRowField]);
+            if (categoryQuantity > 0) return sum + lineTotal(categoryQuantity, row[cfg.priceRowField]);
+            const usesSimpleEquipmentRow = categoryQuantityFromRow(row) <= 0;
+            return usesSimpleEquipmentRow && equipmentGroupForName(row.equipment || row.particular) === cfg.group
+              ? sum + totalFromRowPrices(row)
+              : sum;
+          },
           0
         );
         return { key: cfg.key, label: cfg.label, quantity, value };
@@ -929,6 +1204,193 @@ function downloadInventoryTemplateXlsx() {
     () => rows.find((row) => row.id === selectedDetailRowId) ?? null,
     [rows, selectedDetailRowId]
   );
+  const detachmentSummaries = useMemo(() => {
+    const groups = new Map<string, {
+      detachment: string;
+      records: number;
+      quantity: number;
+      value: number;
+      paraphernaliaQuantity: number;
+      paraphernaliaValue: number;
+    }>();
+    const ensureGroup = (detachment: string) => {
+      const key = normalizeImportKey(detachment);
+      const current = groups.get(key) ?? {
+        detachment,
+        records: 0,
+        quantity: 0,
+        value: 0,
+        paraphernaliaQuantity: 0,
+        paraphernaliaValue: 0,
+      };
+      groups.set(key, current);
+      return current;
+    };
+    for (const name of clientNameOptions) {
+      if (name?.trim()) ensureGroup(name.trim());
+    }
+    for (const row of rows) {
+      const detachment = String(row.detachment ?? "").trim() || "Unassigned Detachment";
+      const current = ensureGroup(detachment);
+      current.records += 1;
+      current.quantity += totalQuantityFromRow(row);
+      current.value += totalFromRowPrices(row);
+    }
+    for (const balance of paraphernaliaBalances) {
+      const detachment = String(balance.specific_area ?? "").trim() || "Unassigned Detachment";
+      const current = ensureGroup(detachment);
+      const quantity = numberValue(balance.stock_balance);
+      const unitPrice = equipmentPriceByName.get(normalizeEquipmentCatalogName(balance.item)) ?? 0;
+      current.paraphernaliaQuantity += quantity;
+      current.paraphernaliaValue += lineTotal(quantity, unitPrice);
+    }
+    return Array.from(groups.values()).sort((a, b) => a.detachment.localeCompare(b.detachment));
+  }, [clientNameOptions, equipmentPriceByName, paraphernaliaBalances, rows]);
+
+  const matrixData = useMemo(() => {
+    const detachmentList = detachmentSummaries.map((s) => s.detachment);
+    const equipmentMap = new Map<string, Map<string, number>>();
+
+    // Seed equipmentMap with all catalog items from EQUIPMENT_NAMES & inventoryEquipmentOptions
+    const allKnownItems = new Set<string>();
+    for (const name of EQUIPMENT_NAMES) allKnownItems.add(name);
+    for (const opt of inventoryEquipmentOptions) if (opt.name) allKnownItems.add(opt.name);
+
+    for (const name of allKnownItems) {
+      const norm = normalizeEquipmentName(name);
+      if (norm && !equipmentMap.has(norm)) {
+        equipmentMap.set(norm, new Map<string, number>());
+      }
+    }
+
+    const addQty = (equipName: string, detachment: string, qty: number) => {
+      const normEquip = normalizeEquipmentName(equipName);
+      if (!normEquip) return;
+      const normDet = String(detachment || "Unassigned Detachment").trim();
+      let detMap = equipmentMap.get(normEquip);
+      if (!detMap) {
+        detMap = new Map<string, number>();
+        equipmentMap.set(normEquip, detMap);
+      }
+      const prev = detMap.get(normDet) ?? 0;
+      detMap.set(normDet, prev + qty);
+    };
+
+    for (const row of rows) {
+      const equip = row.equipment || row.particular || "UNSPECIFIED FIXED ASSET";
+      const det = row.detachment || "Unassigned Detachment";
+      const qty = totalQuantityFromRow(row);
+      if (qty > 0) {
+        addQty(equip, det, qty);
+      }
+    }
+
+    for (const bal of paraphernaliaBalances) {
+      const equip = bal.item || "UNSPECIFIED PARAPHERNALIA";
+      const det = bal.specific_area || "Unassigned Detachment";
+      const qty = numberValue(bal.stock_balance);
+      if (qty > 0) {
+        addQty(equip, det, qty);
+      }
+    }
+
+    const equipmentRows = Array.from(equipmentMap.entries()).map(([equipment, detMap]) => {
+      let totalQty = 0;
+      const qtysPerDetachment: Record<string, number> = {};
+      for (const det of detachmentList) {
+        const q = detMap.get(det) ?? 0;
+        qtysPerDetachment[det] = q;
+        totalQty += q;
+      }
+      const group = equipmentGroupForName(equipment);
+      return {
+        equipment,
+        group,
+        totalQty,
+        qtysPerDetachment,
+      };
+    });
+
+    const groupedByCategory = EQUIPMENT_GROUPS.map((group) => {
+      const rowsInGroup = equipmentRows
+        .filter((r) => r.group === group)
+        .sort((a, b) => a.equipment.localeCompare(b.equipment));
+      return {
+        group,
+        rows: rowsInGroup,
+      };
+    });
+
+    return {
+      detachments: detachmentList,
+      equipmentRows,
+      groupedByCategory,
+    };
+  }, [detachmentSummaries, inventoryEquipmentOptions, paraphernaliaBalances, rows]);
+  const selectedDetachmentRows = useMemo(() => {
+    if (!selectedDetachmentView) return [];
+    if (selectedDetachmentView === "__ALL__") return rows;
+    const key = normalizeImportKey(selectedDetachmentView);
+    return rows.filter((row) => normalizeImportKey(row.detachment || "Unassigned Detachment") === key);
+  }, [rows, selectedDetachmentView]);
+  const selectedDetachmentItems = useMemo(() => {
+    const items = new Map<string, DetachmentItemSummary>();
+    for (const row of selectedDetachmentRows) {
+      for (const line of inventoryItemLinesFromRow(row)) {
+        const key = `${line.group}:${normalizeEquipmentCatalogName(line.item)}`;
+        const current = items.get(key) ?? { ...line, key, quantity: 0, unitValue: 0, totalValue: 0 };
+        current.quantity += line.quantity;
+        current.totalValue += line.totalValue;
+        current.unitValue = current.quantity > 0 ? current.totalValue / current.quantity : line.unitValue;
+        items.set(key, current);
+      }
+    }
+    return Array.from(items.values()).sort((a, b) => a.group.localeCompare(b.group) || a.item.localeCompare(b.item));
+  }, [selectedDetachmentRows]);
+  const selectedDetachmentTotals = useMemo(() => ({
+    records: selectedDetachmentRows.length,
+    quantity: selectedDetachmentRows.reduce((sum, row) => sum + totalQuantityFromRow(row), 0),
+    value: selectedDetachmentRows.reduce((sum, row) => sum + totalFromRowPrices(row), 0),
+  }), [selectedDetachmentRows]);
+  const selectedDetachmentParaphernalia = useMemo(() => {
+    if (!selectedDetachmentView) return [];
+    const selectedKey = normalizeImportKey(selectedDetachmentView);
+    const grouped = new Map<string, {
+      key: string;
+      detachment: string;
+      item: string;
+      group: EquipmentGroup;
+      quantity: number;
+      unitValue: number;
+      totalValue: number;
+    }>();
+    for (const row of paraphernaliaBalances) {
+      if (selectedDetachmentView !== "__ALL__" && normalizeImportKey(row.specific_area || "Unassigned Detachment") !== selectedKey) continue;
+        const item = normalizeEquipmentCatalogName(row.item) || "UNSPECIFIED ITEM";
+        const quantity = numberValue(row.stock_balance);
+        const unitValue = equipmentPriceByName.get(item) ?? 0;
+        const detachment = String(row.specific_area ?? "").trim() || "Unassigned Detachment";
+        const key = `${normalizeImportKey(detachment)}:${item}`;
+        const current = grouped.get(key) ?? {
+          key,
+          detachment,
+          item,
+          group: equipmentGroupForName(item),
+          quantity: 0,
+          unitValue,
+          totalValue: 0,
+        };
+        current.quantity += quantity;
+        current.totalValue += lineTotal(quantity, unitValue);
+        grouped.set(key, current);
+    }
+    return Array.from(grouped.values())
+      .sort((a, b) => a.detachment.localeCompare(b.detachment) || a.group.localeCompare(b.group) || a.item.localeCompare(b.item));
+  }, [equipmentPriceByName, paraphernaliaBalances, selectedDetachmentView]);
+  const selectedParaphernaliaTotals = useMemo(() => ({
+    quantity: selectedDetachmentParaphernalia.reduce((sum, row) => sum + row.quantity, 0),
+    value: selectedDetachmentParaphernalia.reduce((sum, row) => sum + row.totalValue, 0),
+  }), [selectedDetachmentParaphernalia]);
 
   function inventoryExportRows() {
     return filtered.map((row) => {
@@ -1233,6 +1695,7 @@ function downloadInventoryTemplateXlsx() {
     if (!ok) return;
 
     setSaving(true);
+
     setError("");
     setSuccess("");
 
@@ -1249,6 +1712,7 @@ function downloadInventoryTemplateXlsx() {
     await loadData();
   }
 
+
   async function deleteEditingRow() {
     if (!editingRowId) return;
     const row = rows.find((item) => item.id === editingRowId);
@@ -1259,6 +1723,9 @@ function downloadInventoryTemplateXlsx() {
     }
     await deleteRow(row);
   }
+
+  const mainInventoryHeaderCell = (align = "text-left", rounded = "") =>
+    `sticky top-0 z-20 bg-[#FFDA03] px-4 py-3 ${align} font-semibold text-black whitespace-nowrap shadow-[0_2px_0_rgba(0,0,0,0.16)] ${rounded}`;
 
   return (
     <>
@@ -1271,13 +1738,27 @@ function downloadInventoryTemplateXlsx() {
 
           <div className="flex flex-wrap items-center justify-end gap-2">
             {canMutateInventory ? (
-              <button
-                type="button"
-                onClick={() => setShowAddModal(true)}
-                className="animated-btn px-4 py-2 rounded-xl bg-[#FFDA03] text-black font-semibold"
-              >
-                Insert Information
-              </button>
+              <>
+                <button
+                  type="button"
+                  onClick={() => setShowAddModal(true)}
+                  className="animated-btn px-4 py-2 rounded-xl bg-[#FFDA03] text-black font-semibold"
+                >
+                  Insert Information
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setItemManagerError("");
+                    setItemManagerMessage("");
+                    setItemManagerOpen(true);
+                  }}
+                  className="animated-btn flex items-center gap-2 px-4 py-2 rounded-xl border bg-white text-sm font-semibold text-black hover:bg-gray-50"
+                >
+                  <Pencil className="w-4 h-4" />
+                  Manage Items
+                </button>
+              </>
             ) : null}
 
             {canImportInventory ? (
@@ -1292,8 +1773,6 @@ function downloadInventoryTemplateXlsx() {
               </button>
             ) : null}
 
-            
-
             {canDownloadInventoryTemplate ? (
               <>
                 <button
@@ -1304,11 +1783,6 @@ function downloadInventoryTemplateXlsx() {
     <Download className="w-4 h-4" />
     Download Templates
   </button>
-
-
-
-
-
               </>
             ) : null}
 
@@ -1322,10 +1796,6 @@ function downloadInventoryTemplateXlsx() {
     <FileText className="w-4 h-4" />
     Export
   </button>
-
-
-
-  
               </>
 
               
@@ -1366,16 +1836,152 @@ function downloadInventoryTemplateXlsx() {
             </div>
           ) : null}
         </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-          {totalsByCategory.filter((item) => visibleCategoryConfigs.some((cfg) => cfg.key === item.key)).map((item) => (
-            <div key={item.key} className="glass-panel animate-slide-up rounded-2xl p-4">
-              <div className="text-sm font-medium text-gray-700">{item.label}</div>
-              <div className="mt-2 text-xs text-gray-500">Qty: {item.quantity.toLocaleString()}</div>
-              <div className="text-base font-semibold text-black">₱ {toMoney(item.value)}</div>
+        {showDetachmentColumn ? (
+          <div className="rounded-3xl border border-[#e5dcc7] bg-white p-5 shadow-sm space-y-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <div className="flex items-center gap-2 text-lg font-bold text-black">
+                  <Boxes className="h-5 w-5 text-[#8B1C1C]" />
+                  Inventory by Detachment / Specific Area
+                </div>
+                <p className="mt-1 text-sm text-gray-600">
+                  Equipment & Paraphernalia breakdown across all client detachments.
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="inline-flex rounded-xl bg-gray-100 p-1 border">
+                  <button
+                    type="button"
+                    onClick={() => setInventoryViewMode("grid")}
+                    className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition ${
+                      inventoryViewMode === "grid" ? "bg-[#8B1C1C] text-white shadow-sm" : "text-gray-600 hover:text-black"
+                    }`}
+                  >
+                    Detachment Cards Grid
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setInventoryViewMode("matrix")}
+                    className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition ${
+                      inventoryViewMode === "matrix" ? "bg-[#8B1C1C] text-white shadow-sm" : "text-gray-600 hover:text-black"
+                    }`}
+                  >
+                    FSAI Equipment Matrix (Spreadsheet)
+                  </button>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSelectedDetachmentView("__ALL__")}
+                  className="rounded-xl bg-[#8B1C1C] px-3.5 py-2 text-xs font-semibold text-white hover:brightness-110"
+                >
+                  View All Inventory
+                </button>
+              </div>
             </div>
-          ))}
-        </div>
+
+            {inventoryViewMode === "grid" ? (
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3.5">
+                {detachmentSummaries.length ? detachmentSummaries.map((summary) => (
+                  <button
+                    key={summary.detachment}
+                    type="button"
+                    onClick={() => setSelectedDetachmentView(summary.detachment)}
+                    className="group relative rounded-2xl border-2 border-amber-300 bg-white p-4 text-left transition-all duration-200 hover:border-[#8B1C1C] hover:bg-[#fffdf5] hover:shadow-lg flex flex-col justify-between"
+                  >
+                    <div>
+                      <div className="flex items-center gap-1.5 mb-1.5">
+                        <span className="inline-block w-2.5 h-2.5 rounded-full bg-[#8B1C1C] shrink-0" />
+                        <span className="text-[10px] font-black uppercase tracking-wider text-[#8B1C1C]">DETACHMENT</span>
+                      </div>
+                      <div className="font-extrabold text-sm text-slate-900 leading-snug break-words group-hover:text-[#8B1C1C] transition-colors" title={summary.detachment}>
+                        {summary.detachment}
+                      </div>
+                      <div className="mt-2.5 flex flex-wrap items-center gap-1.5 text-[11px] font-semibold text-slate-600">
+                        <span className="rounded-md bg-amber-100/90 px-2 py-0.5 text-amber-950 font-bold">{summary.quantity} fixed</span>
+                        <span className="rounded-md bg-emerald-100/90 px-2 py-0.5 text-emerald-950 font-bold">{summary.paraphernaliaQuantity} para</span>
+                      </div>
+                    </div>
+                    <div className="mt-3 pt-2.5 border-t border-amber-100 flex items-center justify-between">
+                      <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wide">Total Value</span>
+                      <span className="text-sm font-black text-[#8B1C1C]">
+                        PHP {toMoney(summary.value + summary.paraphernaliaValue)}
+                      </span>
+                    </div>
+                  </button>
+                )) : (
+                  <div className="col-span-full rounded-2xl border border-dashed px-4 py-6 text-sm text-gray-500 text-center">
+                    No detachment inventory records available.
+                  </div>
+                )}
+              </div>
+            ) : (
+              <TableZoomWrapper storageKey="fsai-inventory-matrix" defaultZoom={0.85}>
+                <div className="relative overflow-x-auto rounded-2xl border bg-white max-h-[500px]">
+                  <table className="w-full text-xs border-collapse">
+                    <thead className="sticky top-0 z-10 bg-[#FFDA03] text-black font-bold">
+                      <tr>
+                        <th className="px-3 py-2.5 text-left border-2 border-amber-400 text-slate-950 font-black">EQUIPMENT</th>
+                        <th className="px-3 py-2.5 text-center border-2 border-amber-400 text-[#8B1C1C] font-black">TOTAL QTY</th>
+                        {matrixData.detachments.map((det) => (
+                          <th key={det} className="px-3 py-2.5 text-center border-2 border-amber-400 bg-[#FFDA03] min-w-[130px] max-w-[170px] whitespace-normal font-black text-xs text-slate-950 leading-tight" title={det}>
+                            <div className="line-clamp-2 uppercase tracking-wide">{det}</div>
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {matrixData.groupedByCategory.some((c) => c.rows.length > 0) ? (
+                        matrixData.groupedByCategory.map((catGroup) => (
+                          <tr key={`matrix-group-${catGroup.group}`} className="contents">
+                            {catGroup.rows.length > 0 ? (
+                              <tr className="sticky z-5 left-0">
+                                <td
+                                  colSpan={matrixData.detachments.length + 2}
+                                  className="px-4 py-2.5 bg-[#8B1C1C] text-white font-black text-xs uppercase tracking-widest border-y-2 border-amber-400"
+                                >
+                                  ❖ CATEGORY: {catGroup.group} ({catGroup.rows.length} Items)
+                                </td>
+                              </tr>
+                            ) : null}
+                            {catGroup.rows.map((row, idx) => (
+                              <tr key={`${row.equipment}-${idx}`} className="border-b hover:bg-amber-50/50">
+                                <td className="px-3 py-2 font-semibold text-gray-900 border truncate max-w-[200px]" title={row.equipment}>
+                                  {row.equipment}
+                                </td>
+                                <td className="px-3 py-2 text-center font-bold text-[#8B1C1C] border bg-amber-50">
+                                  {row.totalQty}
+                                </td>
+                                {matrixData.detachments.map((det) => {
+                                  const q = row.qtysPerDetachment[det] ?? 0;
+                                  return (
+                                    <td
+                                      key={det}
+                                      className={`px-2 py-2 text-center border font-medium ${
+                                        q > 0 ? "bg-emerald-100 text-emerald-900 font-bold text-sm" : "text-gray-300 bg-white"
+                                      }`}
+                                    >
+                                      {q > 0 ? q : ""}
+                                    </td>
+                                  );
+                                })}
+                              </tr>
+                            ))}
+                          </tr>
+                        ))
+                      ) : (
+                        <tr>
+                          <td colSpan={matrixData.detachments.length + 2} className="px-4 py-8 text-center text-gray-500">
+                            No equipment matrix records available.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </TableZoomWrapper>
+            )}
+          </div>
+        ) : null}
 
         <div className="flex items-center gap-3 glass-panel rounded-2xl px-4 py-3 max-w-xl">
           <div className="h-10 w-10 rounded-xl bg-[#FFDA03] flex items-center justify-center">
@@ -1397,37 +2003,28 @@ function downloadInventoryTemplateXlsx() {
 
         <TableZoomWrapper storageKey="inventory" defaultZoom={0.8}>
         <div className="relative overflow-x-auto rounded-2xl glass-panel animate-slide-up">
-          <table className="w-full text-sm text-black min-w-[1500px] border-separate border-spacing-y-2">
-            <thead className="sticky top-0 z-10">
+          <table className="w-full text-sm text-black min-w-[1200px] border-separate border-spacing-y-2">
+            <thead>
               <tr className="bg-[#FFDA03]">
-                {showEquipmentColumn ? <th className="px-4 py-3 text-left font-semibold text-black whitespace-nowrap rounded-l-xl">EQUIPMENT</th> : null}
-                {showControlNumberColumn ? <th className="px-4 py-3 text-left font-semibold text-black whitespace-nowrap">CONTROLNUMBER</th> : null}
-                {showSerialPlateColumn ? <th className="px-4 py-3 text-left font-semibold text-black whitespace-nowrap">SERIAL # / PLATE #</th> : null}
-                {showMakerColumn ? <th className="px-4 py-3 text-left font-semibold text-black whitespace-nowrap">MAKER</th> : null}
-                {showModelColumn ? <th className="px-4 py-3 text-left font-semibold text-black whitespace-nowrap">MODEL #</th> : null}
-                {showDetachmentColumn ? <th className="px-4 py-3 text-left font-semibold text-black whitespace-nowrap">DETACHMENT</th> : null}
-                {showRemarksColumn ? <th className="px-4 py-3 text-left font-semibold text-black whitespace-nowrap">REMARKS</th> : null}
-                {showUnitCostColumn ? <th className="px-4 py-3 text-right font-semibold text-black whitespace-nowrap">UNIT COST</th> : null}
-                {showDatePurchasedColumn ? <th className="px-4 py-3 text-left font-semibold text-black whitespace-nowrap">DATE OF PURCHASED</th> : null}
-                {showExpirationColumn ? <th className="px-4 py-3 text-left font-semibold text-black whitespace-nowrap">EXPIRATION</th> : null}
-                {showLastMaintenanceColumn ? <th className="px-4 py-3 text-left font-semibold text-black whitespace-nowrap">LAST MAINTENANCE</th> : null}
-                {showUserColumn ? <th className="px-4 py-3 text-left font-semibold text-black whitespace-nowrap">USER</th> : null}
-                {showDateColumn ? <th className="px-4 py-3 text-left font-semibold text-black whitespace-nowrap rounded-l-xl">Date</th> : null}
-                {showParticularColumn ? <th className="px-4 py-3 text-left font-semibold text-black whitespace-nowrap">Particular</th> : null}
-                {visibleCategoryConfigs.map((cfg) => (
-                  <th key={cfg.key} className="px-4 py-3 text-left font-semibold text-black min-w-[190px] whitespace-nowrap">
-                    {cfg.label}
-                  </th>
-                ))}
-                {showRowTotalColumn ? <th className="px-4 py-3 text-right font-semibold text-black whitespace-nowrap">Row Total</th> : null}
-                <th className="px-4 py-3 text-left font-semibold text-black whitespace-nowrap">Last Updated</th>
-                {false ? (
-                  <th className={`px-4 py-3 text-left font-semibold text-black whitespace-nowrap ${canMutateInventory ? "" : "rounded-r-xl"}`}>Remarks</th>
-                ) : null}
-                {canMutateInventory ? <th className="px-4 py-3 text-center font-semibold text-black whitespace-nowrap rounded-r-xl">Action</th> : null}
+                {showEquipmentColumn ? <th className={mainInventoryHeaderCell("text-left", "rounded-l-xl")}>EQUIPMENT</th> : null}
+                {showControlNumberColumn ? <th className={mainInventoryHeaderCell()}>CONTROLNUMBER</th> : null}
+                {showSerialPlateColumn ? <th className={mainInventoryHeaderCell()}>SERIAL # / PLATE #</th> : null}
+                {showMakerColumn ? <th className={mainInventoryHeaderCell()}>MAKER</th> : null}
+                {showModelColumn ? <th className={mainInventoryHeaderCell()}>MODEL #</th> : null}
+                {showDetachmentColumn ? <th className={mainInventoryHeaderCell()}>DETACHMENT</th> : null}
+                {showRemarksColumn ? <th className={mainInventoryHeaderCell()}>REMARKS</th> : null}
+                {showUnitCostColumn ? <th className={mainInventoryHeaderCell("text-right")}>UNIT COST</th> : null}
+                {showDatePurchasedColumn ? <th className={mainInventoryHeaderCell()}>DATE OF PURCHASED</th> : null}
+                {showExpirationColumn ? <th className={mainInventoryHeaderCell()}>EXPIRATION</th> : null}
+                {showLastMaintenanceColumn ? <th className={mainInventoryHeaderCell()}>LAST MAINTENANCE</th> : null}
+                {showUserColumn ? <th className={mainInventoryHeaderCell()}>USER</th> : null}
+                {showDateColumn ? <th className={mainInventoryHeaderCell()}>Date</th> : null}
+                {showParticularColumn ? <th className={mainInventoryHeaderCell()}>Particular</th> : null}
+                {showRowTotalColumn ? <th className={mainInventoryHeaderCell("text-right")}>Row Total</th> : null}
+                <th className={mainInventoryHeaderCell()}>Last Updated</th>
+                {canMutateInventory ? <th className={mainInventoryHeaderCell("text-center", "rounded-r-xl")}>Action</th> : null}
               </tr>
             </thead>
-
             <tbody>
               {loading ? (
                 <tr>
@@ -1457,7 +2054,20 @@ function downloadInventoryTemplateXlsx() {
                     {showSerialPlateColumn ? <td className="px-4 py-3 whitespace-nowrap">{row.serial_plate_number || "-"}</td> : null}
                     {showMakerColumn ? <td className="px-4 py-3 whitespace-nowrap">{row.maker || "-"}</td> : null}
                     {showModelColumn ? <td className="px-4 py-3 whitespace-nowrap">{row.model_number || "-"}</td> : null}
-                    {showDetachmentColumn ? <td className="px-4 py-3 whitespace-nowrap">{row.detachment || "-"}</td> : null}
+                    {showDetachmentColumn ? (
+                      <td className="px-4 py-3 whitespace-nowrap">
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setSelectedDetachmentView(row.detachment?.trim() || "Unassigned Detachment");
+                          }}
+                          className="rounded-full border border-amber-300 bg-[#fff9e6] px-3 py-1.5 text-xs font-bold text-black hover:bg-[#FFDA03]"
+                        >
+                          {row.detachment || "Unassigned Detachment"}
+                        </button>
+                      </td>
+                    ) : null}
                     {showRemarksColumn ? <td className="px-4 py-3 min-w-[180px]">{row.remarks || "-"}</td> : null}
                     {showUnitCostColumn ? <td className="px-4 py-3 text-right whitespace-nowrap">PHP {toMoney(Number(row.unit_cost ?? 0) || 0)}</td> : null}
                     {showDatePurchasedColumn ? <td className="px-4 py-3 whitespace-nowrap">{formatDateCell(row.date_purchased)}</td> : null}
@@ -1473,28 +2083,10 @@ function downloadInventoryTemplateXlsx() {
                         ) : null}
                       </td>
                     ) : null}
-                    {showDateColumn ? <td className="px-4 py-3 whitespace-nowrap rounded-l-xl">{row.date || "—"}</td> : null}
+                    {showDateColumn ? <td className="px-4 py-3 whitespace-nowrap">{row.date || "—"}</td> : null}
                     {showParticularColumn ? <td className="px-4 py-3">{row.particular || "—"}</td> : null}
-                    {visibleCategoryConfigs.map((cfg) => {
-                      const name = (row[cfg.nameRowField] as string | null) ?? "";
-                      const qty = Number(row[cfg.qtyRowField] ?? 0) || 0;
-                      const price = Number(row[cfg.priceRowField] ?? 0) || 0;
-                      return (
-                        <td key={`${row.id}-${cfg.key}-cell`} className="px-4 py-3 align-top">
-                          <div className="text-xs text-gray-500">Name</div>
-                          <div className="font-medium text-black truncate" title={name || "—"}>{name || "—"}</div>
-                          <div className="mt-1 text-xs text-gray-600">
-                            Qty: <span className="font-semibold text-black">{qty.toLocaleString()}</span>
-                          </div>
-                          <div className="text-xs text-gray-600">
-                            Price: <span className="font-semibold text-black">₱ {toMoney(price)}</span>
-                          </div>
-                        </td>
-                      );
-                    })}
                     {showRowTotalColumn ? <td className="px-4 py-3 text-right font-semibold whitespace-nowrap">₱ {toMoney(totalFromRowPrices(row))}</td> : null}
                     <td className="px-4 py-3 text-xs text-gray-600 whitespace-nowrap">{formatTimestamp(row.last_updated_at)}</td>
-                    {false ? <td className={`px-4 py-3 ${canMutateInventory ? "" : "rounded-r-xl"}`}>{row.remarks || "—"}</td> : null}
                     {canMutateInventory ? (
                       <td className="px-4 py-3 text-center rounded-r-xl">
                         <div className="inline-flex items-center gap-2">
@@ -1674,8 +2266,335 @@ function downloadInventoryTemplateXlsx() {
           </div>
 
         </div>
+)}
+
+      {itemManagerOpen && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 p-4">
+          <div className="bg-[#fffefb] w-full max-w-4xl rounded-2xl shadow-2xl overflow-hidden max-h-[92vh] flex flex-col border-2 border-amber-200">
+            {/* HEADER */}
+            <div className="flex items-start justify-between px-6 py-4 border-b bg-[#fff9e6]">
+              <div>
+                <h2 className="text-2xl font-extrabold text-black">Manage Inventory Items</h2>
+                <p className="text-xs font-semibold text-gray-600 mt-1">
+                  These items appear in the typed ITEMS dropdown. Removing an item hides it from future selections but does not remove old stock records.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => { if (!itemBusy) setItemManagerOpen(false); }}
+                className="border-2 border-slate-300 bg-white px-4 py-2 rounded-xl hover:bg-gray-100 font-bold text-sm text-black"
+              >
+                Close
+              </button>
+            </div>
+
+            {/* BODY */}
+            <div className="p-6 overflow-y-auto space-y-5 flex-1">
+              {itemManagerError ? (
+                <div className="rounded-2xl border-2 border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 font-semibold">{itemManagerError}</div>
+              ) : null}
+              {itemManagerMessage ? (
+                <div className="rounded-2xl border-2 border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700 font-semibold">{itemManagerMessage}</div>
+              ) : null}
+
+              {/* INPUT CARD */}
+              <div className="grid grid-cols-1 gap-3 rounded-2xl border-2 border-slate-200 bg-slate-50/80 p-4 md:grid-cols-[1fr_220px_160px_auto]">
+                <label className="block">
+                  <span className="block text-xs font-extrabold uppercase tracking-wide text-gray-600 mb-1">NEW ITEM NAME</span>
+                  <input
+                    value={newItemName}
+                    onChange={(e) => setNewItemName(e.target.value)}
+                    className="w-full rounded-xl border-2 border-slate-200 bg-white px-3.5 py-2 text-sm text-black font-semibold outline-none focus:ring-2 focus:ring-[#FFDA03]"
+                    placeholder="Type item name"
+                  />
+                </label>
+                <label className="block">
+                  <span className="block text-xs font-extrabold uppercase tracking-wide text-gray-600 mb-1">EQUIPMENT CATEGORY</span>
+                  <select
+                    value={newItemGroup}
+                    onChange={(e) => setNewItemGroup(e.target.value as EquipmentGroup)}
+                    className="w-full rounded-xl border-2 border-slate-200 bg-white px-3.5 py-2 text-sm text-black font-semibold outline-none focus:ring-2 focus:ring-[#FFDA03]"
+                  >
+                    {EQUIPMENT_GROUPS.map((group) => (
+                      <option key={group} value={group}>{group}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="block">
+                  <span className="block text-xs font-extrabold uppercase tracking-wide text-gray-600 mb-1">UNIT PRICE</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={newItemPrice}
+                    onChange={(e) => setNewItemPrice(e.target.value)}
+                    className="w-full rounded-xl border-2 border-slate-200 bg-white px-3.5 py-2 text-sm text-black font-semibold outline-none focus:ring-2 focus:ring-[#FFDA03]"
+                    placeholder="0.00"
+                  />
+                </label>
+                <div className="flex items-end">
+                  <button
+                    type="button"
+                    onClick={() => void addItemOption()}
+                    disabled={itemBusy}
+                    className="w-full rounded-xl bg-[#FFDA03] px-5 py-2 text-sm font-black text-black hover:brightness-95 disabled:opacity-60"
+                  >
+                    {itemBusy ? "Saving..." : "Add Item"}
+                  </button>
+                </div>
+              </div>
+
+              {/* SEARCH BAR */}
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+                <input
+                  value={itemManagerSearch}
+                  onChange={(e) => setItemManagerSearch(e.target.value)}
+                  className="w-full rounded-2xl border-2 border-slate-200 pl-10 pr-4 py-2.5 text-sm text-black font-medium outline-none focus:ring-2 focus:ring-[#FFDA03]"
+                  placeholder="Search item name, category, inventory type, or price..."
+                />
+              </div>
+
+              {/* ITEMS TABLE */}
+              <TableZoomWrapper storageKey="inventory-manage-items" defaultZoom={0.85}>
+                <div className="max-h-[45vh] overflow-auto rounded-2xl border-2 border-slate-200 bg-white">
+                  <table className="w-full text-left text-sm border-collapse">
+                    <thead className="sticky top-0 z-10 bg-[#FFDA03] text-black font-black">
+                      <tr>
+                        <th className="px-4 py-3">ITEMS</th>
+                        <th className="px-4 py-3">Equipment Category</th>
+                        <th className="px-4 py-3">Unit Price</th>
+                        <th className="px-4 py-3 text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200">
+                      {managedItemOptions.length ? (
+                        managedItemOptions.map((item) => (
+                          <tr key={`${item.name}-manager`} className="hover:bg-amber-50/50">
+                            <td className="px-4 py-3 font-extrabold text-slate-900">{item.name}</td>
+                            <td className="px-4 py-3 text-slate-700 font-semibold">{item.group}</td>
+                            <td className="px-4 py-3">
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                value={itemPriceDrafts[item.name] ?? String(item.unitPrice)}
+                                onChange={(e) => setItemPriceDrafts((prev) => ({ ...prev, [item.name]: e.target.value }))}
+                                className="w-32 rounded-xl border-2 border-slate-200 px-3 py-1.5 text-right text-sm text-black font-bold"
+                              />
+                            </td>
+                            <td className="px-4 py-3 text-right">
+                              <div className="inline-flex gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => void saveItemPrice(item)}
+                                  disabled={itemBusy}
+                                  className="rounded-xl border-2 border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-black hover:bg-slate-50 disabled:opacity-60"
+                                >
+                                  Save Price
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => void removeItemOption(item)}
+                                  disabled={itemBusy}
+                                  className="rounded-xl border-2 border-red-200 bg-white px-3 py-1.5 text-xs font-bold text-red-600 hover:bg-red-50 disabled:opacity-60"
+                                >
+                                  Remove
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr>
+                          <td colSpan={4} className="px-4 py-8 text-center text-gray-500 font-semibold">
+                            No matching items found.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </TableZoomWrapper>
+            </div>
+          </div>
+        </div>
       )}
-      
+
+      {selectedDetachmentView ? (
+        <div
+          className="fixed inset-0 z-[90] flex items-center justify-center bg-black/55 p-4"
+          onClick={() => setSelectedDetachmentView(null)}
+        >
+          <div
+            className="flex max-h-[92vh] w-full max-w-7xl flex-col overflow-hidden rounded-[28px] border border-white/70 bg-[#fffdf5] shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="shrink-0 bg-gradient-to-r from-slate-950 via-slate-800 to-[#8B1C1C] px-6 py-5 text-white">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-[0.2em] text-[#FFDA03]">Detachment Inventory</div>
+                  <h2 className="mt-2 text-2xl font-bold">
+                    {selectedDetachmentView === "__ALL__" ? "All Detachments" : selectedDetachmentView}
+                  </h2>
+                  <p className="mt-1 text-sm text-white/75">Complete item quantities, individual values, asset values, and record details.</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSelectedDetachmentView(null)}
+                  className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/20 bg-white/10 hover:bg-white/20"
+                  aria-label="Close detachment inventory"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+            </div>
+
+            <div className="flex-1 space-y-6 overflow-y-auto p-5 md:p-6">
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                <div className="rounded-2xl border bg-white p-4">
+                  <div className="text-xs font-semibold uppercase tracking-wide text-gray-500">Inventory Records</div>
+                  <div className="mt-2 text-2xl font-bold text-black">{selectedDetachmentTotals.records.toLocaleString()}</div>
+                </div>
+                <div className="rounded-2xl border bg-white p-4">
+                  <div className="text-xs font-semibold uppercase tracking-wide text-gray-500">Total Quantity</div>
+                  <div className="mt-2 text-2xl font-bold text-black">{selectedDetachmentTotals.quantity.toLocaleString()}</div>
+                </div>
+                <div className="rounded-2xl border border-amber-200 bg-[#fff3b0] p-4">
+                  <div className="text-xs font-semibold uppercase tracking-wide text-[#6d4b00]">Fixed Asset Value</div>
+                  <div className="mt-2 text-2xl font-bold text-[#8B1C1C]">PHP {toMoney(selectedDetachmentTotals.value)}</div>
+                </div>
+                <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
+                  <div className="text-xs font-semibold uppercase tracking-wide text-emerald-700">Paraphernalia Balance</div>
+                  <div className="mt-2 text-2xl font-bold text-emerald-800">{selectedParaphernaliaTotals.quantity.toLocaleString()}</div>
+                  <div className="mt-1 text-xs font-semibold text-emerald-700">PHP {toMoney(selectedParaphernaliaTotals.value)}</div>
+                </div>
+              </div>
+
+              <section className="space-y-3">
+                <div>
+                  <h3 className="text-lg font-bold text-black">Items and Individual Values</h3>
+                  <p className="text-sm text-gray-600">Repeated items are combined to show their total quantity and average individual value.</p>
+                </div>
+                <div className="overflow-x-auto rounded-2xl border bg-white">
+                  <table className="min-w-[760px] w-full text-left text-sm text-black">
+                    <thead className="bg-[#FFDA03]">
+                      <tr>
+                        <th className="px-4 py-3">Category</th>
+                        <th className="px-4 py-3">Item</th>
+                        <th className="px-4 py-3 text-right">Quantity</th>
+                        <th className="px-4 py-3 text-right">Individual Value</th>
+                        <th className="px-4 py-3 text-right">Total Value</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y">
+                      {selectedDetachmentItems.length ? selectedDetachmentItems.map((item) => (
+                        <tr key={item.key}>
+                          <td className="px-4 py-3 text-gray-600">{item.group}</td>
+                          <td className="px-4 py-3 font-semibold">{item.item}</td>
+                          <td className="px-4 py-3 text-right">{item.quantity.toLocaleString()}</td>
+                          <td className="px-4 py-3 text-right">PHP {toMoney(item.unitValue)}</td>
+                          <td className="px-4 py-3 text-right font-bold">PHP {toMoney(item.totalValue)}</td>
+                        </tr>
+                      )) : (
+                        <tr><td colSpan={5} className="px-4 py-8 text-center text-gray-500">No item values are available for this detachment.</td></tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+
+              <section className="space-y-3">
+                <div>
+                  <h3 className="text-lg font-bold text-black">Connected Paraphernalia Balance</h3>
+                  <p className="text-sm text-gray-600">Live Stock In minus Stock Out balances from the Paraphernalia page, valued using the shared item catalog.</p>
+                </div>
+                <div className="overflow-x-auto rounded-2xl border bg-white">
+                  <table className="min-w-[820px] w-full text-left text-sm text-black">
+                    <thead className="bg-emerald-100">
+                      <tr>
+                        {selectedDetachmentView === "__ALL__" ? <th className="px-4 py-3">Detachment</th> : null}
+                        <th className="px-4 py-3">Category</th>
+                        <th className="px-4 py-3">Item</th>
+                        <th className="px-4 py-3 text-right">Stock Balance</th>
+                        <th className="px-4 py-3 text-right">Catalog Unit Price</th>
+                        <th className="px-4 py-3 text-right">Balance Value</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y">
+                      {selectedDetachmentParaphernalia.length ? selectedDetachmentParaphernalia.map((item) => (
+                        <tr key={item.key}>
+                          {selectedDetachmentView === "__ALL__" ? <td className="px-4 py-3">{item.detachment}</td> : null}
+                          <td className="px-4 py-3 text-gray-600">{item.group}</td>
+                          <td className="px-4 py-3 font-semibold">{item.item}</td>
+                          <td className="px-4 py-3 text-right">{item.quantity.toLocaleString()}</td>
+                          <td className="px-4 py-3 text-right">PHP {toMoney(item.unitValue)}</td>
+                          <td className="px-4 py-3 text-right font-bold">PHP {toMoney(item.totalValue)}</td>
+                        </tr>
+                      )) : (
+                        <tr><td colSpan={selectedDetachmentView === "__ALL__" ? 6 : 5} className="px-4 py-8 text-center text-gray-500">No connected Paraphernalia balance is available for this detachment.</td></tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+
+              <section className="space-y-3">
+                <div>
+                  <h3 className="text-lg font-bold text-black">Complete Asset Records</h3>
+                  <p className="text-sm text-gray-600">Select View to open the full editable inventory record.</p>
+                </div>
+                <div className="overflow-x-auto rounded-2xl border bg-white">
+                  <table className="min-w-[1180px] w-full text-left text-sm text-black">
+                    <thead className="bg-slate-100">
+                      <tr>
+                        <th className="px-4 py-3">Equipment</th>
+                        <th className="px-4 py-3">Control Number</th>
+                        <th className="px-4 py-3">Serial / Plate</th>
+                        <th className="px-4 py-3">Maker / Model</th>
+                        <th className="px-4 py-3 text-right">Quantity</th>
+                        <th className="px-4 py-3 text-right">Unit Cost</th>
+                        <th className="px-4 py-3 text-right">Total</th>
+                        <th className="px-4 py-3">Purchased</th>
+                        <th className="px-4 py-3">Remarks</th>
+                        <th className="px-4 py-3 text-center">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y">
+                      {selectedDetachmentRows.map((row) => (
+                        <tr key={`${row.id}-detachment-view`}>
+                          <td className="px-4 py-3 font-semibold">{row.equipment || row.particular || "-"}</td>
+                          <td className="px-4 py-3">{row.control_number || "-"}</td>
+                          <td className="px-4 py-3">{row.serial_plate_number || "-"}</td>
+                          <td className="px-4 py-3">{[row.maker, row.model_number].filter(Boolean).join(" / ") || "-"}</td>
+                          <td className="px-4 py-3 text-right">{totalQuantityFromRow(row).toLocaleString()}</td>
+                          <td className="px-4 py-3 text-right">PHP {toMoney(numberValue(row.unit_cost))}</td>
+                          <td className="px-4 py-3 text-right font-semibold">PHP {toMoney(totalFromRowPrices(row))}</td>
+                          <td className="px-4 py-3">{formatDateCell(row.date_purchased)}</td>
+                          <td className="max-w-[260px] px-4 py-3">{row.remarks || "-"}</td>
+                          <td className="px-4 py-3 text-center">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedDetachmentView(null);
+                                openDetailsModal(row);
+                              }}
+                              className="rounded-xl border bg-white px-3 py-1.5 text-xs font-semibold hover:bg-[#fff3b0]"
+                            >
+                              View
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {selectedDetailRow ? (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center overflow-hidden bg-black/40 p-4"
@@ -1892,16 +2811,21 @@ function downloadInventoryTemplateXlsx() {
               {showEquipmentColumn ? (
                 <label className="text-sm text-gray-700">
                   <span className="mb-1 block text-xs uppercase tracking-wide">EQUIPMENT</span>
-                  <input
+                  <SearchDropdownInput
                     className="border rounded-xl px-3 py-2 w-full"
                     value={formData.equipment}
-                    onChange={(e) =>
+                    options={equipmentDropdownNames}
+                    placeholder="Type or select equipment"
+                    onChange={(value) => {
+                      const equipment = value.toUpperCase();
+                      const unitPrice = equipmentPriceByName.get(normalizeEquipmentCatalogName(equipment)) ?? 0;
                       setFormData((prev) => ({
                         ...prev,
-                        equipment: e.target.value,
-                        control_number: prev.control_number || (e.target.value.trim() ? nextInventoryControlNumber(e.target.value) : ""),
-                      }))
-                    }
+                        equipment,
+                        control_number: prev.control_number || (equipment.trim() ? nextInventoryControlNumber(equipment) : ""),
+                        unit_cost: prev.unit_cost || (unitPrice > 0 ? String(unitPrice) : ""),
+                      }));
+                    }}
                   />
                 </label>
               ) : null}
@@ -1996,48 +2920,6 @@ function downloadInventoryTemplateXlsx() {
               ) : null}
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-              {visibleCategoryConfigs.map((cfg) => {
-                return (
-                  <div key={cfg.key} className="rounded-2xl border bg-white p-4 space-y-3">
-                    <div className="font-medium text-gray-900">{cfg.label}</div>
-                    <div>
-                      <label className="block text-xs text-gray-600 mb-1">Kind / Name</label>
-                      <input
-                        type="text"
-                        className="w-full border rounded-xl px-3 py-2"
-                        value={formData[cfg.nameField]}
-                        onChange={(e) => setFormData((prev) => ({ ...prev, [cfg.nameField]: e.target.value }))}
-                      />
-                    </div>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <label className="block text-xs text-gray-600 mb-1">Quantity</label>
-                        <input
-                          type="number"
-                          min="0"
-                          className="w-full border rounded-xl px-3 py-2"
-                          value={formData[cfg.qtyField]}
-                          onChange={(e) => setFormData((prev) => ({ ...prev, [cfg.qtyField]: e.target.value }))}
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs text-gray-600 mb-1">Price</label>
-                        <input
-                          type="number"
-                          min="0"
-                          step="0.01"
-                          className="w-full border rounded-xl px-3 py-2"
-                          value={formData[cfg.priceField]}
-                          onChange={(e) => setFormData((prev) => ({ ...prev, [cfg.priceField]: e.target.value }))}
-                        />
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-              </div>
-
               {showRemarksColumn ? (
                 <label className="block text-sm text-gray-700">
                   <span className="mb-1 block text-xs uppercase tracking-wide">REMARKS</span>
@@ -2128,24 +3010,24 @@ function downloadInventoryTemplateXlsx() {
           last_maintenance: "2026-05-01",
           user_text: "Assigned user or notes",
           user_attachment: "Optional URL",
-          firearms_name: "Sample Firearm",
-          firearms_qty: 1,
-          firearms_price: 1000,
-          communications_name: "Sample Radio",
-          communications_qty: 1,
-          communications_price: 800,
-          furniture_name: "Sample Chair",
-          furniture_qty: 1,
-          furniture_price: 500,
-          office_name: "Sample Printer",
-          office_qty: 1,
-          office_price: 400,
-          sec_name: "Sample Vest",
-          sec_qty: 1,
-          sec_price: 300,
-          vehicle_name: "Sample Motorcycle",
-          vehicle_qty: 1,
-          vehicle_price: 2000,
+          communication_name: "CIGNUS",
+          communication_qty: 1,
+          communication_price: 1000,
+          security_safety_name: "BODYCAMERA",
+          security_safety_qty: 1,
+          security_safety_price: 800,
+          tactical_name: "PISTOL",
+          tactical_qty: 1,
+          tactical_price: 500,
+          transportation_mobility_name: "MOTORCYCLE",
+          transportation_mobility_qty: 1,
+          transportation_mobility_price: 400,
+          emergency_medical_name: "FIRST AID KIT",
+          emergency_medical_qty: 1,
+          emergency_medical_price: 300,
+          office_equipment_name: "PRINTER",
+          office_equipment_qty: 1,
+          office_equipment_price: 2000,
           remarks: "Optional remarks",
         }}
         previewColumns={["CONTROLNUMBER / Equipment"]}

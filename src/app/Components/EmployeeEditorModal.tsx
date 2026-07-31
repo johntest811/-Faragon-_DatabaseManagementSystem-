@@ -294,6 +294,21 @@ function normalizeDateInput(value: string | null | undefined) {
   return String(value);
 }
 
+function calculateAgeFromBirthDate(value: string | null | undefined) {
+  if (!value) return "";
+  const birthDate = new Date(value);
+  if (Number.isNaN(birthDate.getTime())) return "";
+
+  const today = new Date();
+  let age = today.getFullYear() - birthDate.getFullYear();
+  const monthDelta = today.getMonth() - birthDate.getMonth();
+  const birthdayNotReached =
+    monthDelta < 0 || (monthDelta === 0 && today.getDate() < birthDate.getDate());
+
+  if (birthdayNotReached) age -= 1;
+  return age >= 0 && age < 130 ? String(age) : "";
+}
+
 function normalizeStatus(value: string | null | undefined) {
   const v = String(value ?? "").trim().toUpperCase();
   if (v === "APPLICANT") return "APPLICANT";
@@ -348,6 +363,34 @@ function publicUrl(bucket: string, path: string | null) {
 function toNullableText(value: string) {
   const v = value.trim();
   return v.length ? v : null;
+}
+
+function toNullableUpperText(value: string) {
+  const v = value.trim().replace(/\s+/g, " ").toUpperCase();
+  return v.length ? v : null;
+}
+
+function formatPhilippineMobileNumber(value: string) {
+  const digits = String(value ?? "").replace(/\D/g, "");
+  if (!digits) return "";
+
+  let localDigits = digits;
+  if (localDigits.startsWith("639")) {
+    localDigits = `0${localDigits.slice(2)}`;
+  } else if (localDigits.startsWith("9")) {
+    localDigits = `0${localDigits}`;
+  }
+
+  localDigits = localDigits.slice(0, 11);
+  if (localDigits.length <= 1) {
+    return `+${localDigits}`;
+  }
+
+  if (!localDigits.startsWith("09")) {
+    localDigits = `09${localDigits.replace(/^0+/, "").slice(0, 9)}`;
+  }
+
+  return `+${localDigits.slice(0, 11)}`;
 }
 
 type EducationWhenWhereKey = "highschool_when_where" | "college_when_where" | "vocational_when_where";
@@ -751,6 +794,11 @@ export default function EmployeeEditorModal({
 
   const effectiveId = mode === "edit" ? applicantId ?? null : draftApplicantId;
 
+  useEffect(() => {
+    const computedAge = calculateAgeFromBirthDate(app.birth_date);
+    setApp((draft) => (draft.age === computedAge ? draft : { ...draft, age: computedAge }));
+  }, [app.birth_date]);
+
   const currentStepIndex = useMemo(() => STEPS.indexOf(tab as Step), [STEPS, tab]);
   const isLastStep = currentStepIndex === STEPS.length - 1;
 
@@ -1012,13 +1060,13 @@ function normalizeJobTitle(value: string) {
           last_name: a?.last_name ?? "",
           gender: a?.gender ?? "",
           birth_date: normalizeDateInput(a?.birth_date ?? null),
-          age: a?.age != null ? String(a.age) : "",
-          client_contact_num: a?.client_contact_num ?? "",
+          age: calculateAgeFromBirthDate(a?.birth_date) || (a?.age != null ? String(a.age) : ""),
+          client_contact_num: formatPhilippineMobileNumber(a?.client_contact_num ?? ""),
           client_email: a?.client_email ?? "",
           present_address: a?.present_address ?? "",
           province_address: a?.province_address ?? "",
           emergency_contact_person: a?.emergency_contact_person ?? "",
-          emergency_contact_num: a?.emergency_contact_num ?? "",
+          emergency_contact_num: formatPhilippineMobileNumber(a?.emergency_contact_num ?? ""),
           education_attainment: a?.education_attainment ?? "",
           date_hired_fsai: normalizeDateInput(a?.date_hired_fsai ?? null),
           client_position: a?.client_position ?? "",
@@ -1275,6 +1323,9 @@ function normalizeJobTitle(value: string) {
       const retiredAt = isRetired ? new Date().toISOString() : null;
       const retiredDate = isRetired ? new Date().toISOString().slice(0, 10) : null;
       const retiredReason = isRetired ? "N/A" : null;
+      const computedAge = calculateAgeFromBirthDate(app.birth_date);
+      const formattedClientContact = formatPhilippineMobileNumber(app.client_contact_num);
+      const formattedEmergencyContact = formatPhilippineMobileNumber(app.emergency_contact_num);
 
       if (mode === "create") {
         if (!app.first_name.trim() || !app.last_name.trim()) {
@@ -1288,38 +1339,38 @@ function normalizeJobTitle(value: string) {
 
         const aPayload: Record<string, string | number | null> = {
           applicant_id: createId,
-          custom_id: toNullableText(app.custom_id),
-          first_name: toNullableText(app.first_name),
-          middle_name: toNullableText(app.middle_name),
-          last_name: toNullableText(app.last_name),
-          gender: toNullableText(app.gender),
+          custom_id: toNullableUpperText(app.custom_id),
+          first_name: toNullableUpperText(app.first_name),
+          middle_name: toNullableUpperText(app.middle_name),
+          last_name: toNullableUpperText(app.last_name),
+          gender: toNullableUpperText(app.gender),
           birth_date: toNullableText(app.birth_date),
-          age: toNullableInt(app.age),
-          client_contact_num: toNullableText(app.client_contact_num),
+          age: toNullableInt(computedAge),
+          client_contact_num: toNullableText(formattedClientContact),
           client_email: toNullableText(app.client_email),
-          present_address: toNullableText(app.present_address),
-          province_address: toNullableText(app.province_address),
-          emergency_contact_person: toNullableText(app.emergency_contact_person),
-          emergency_contact_num: toNullableText(app.emergency_contact_num),
-          education_attainment: toNullableText(app.education_attainment),
+          present_address: toNullableUpperText(app.present_address),
+          province_address: toNullableUpperText(app.province_address),
+          emergency_contact_person: toNullableUpperText(app.emergency_contact_person),
+          emergency_contact_num: toNullableText(formattedEmergencyContact),
+          education_attainment: toNullableUpperText(app.education_attainment),
           date_hired_fsai: toNullableText(app.date_hired_fsai),
-          client_position: toNullableText(app.client_position),
-          detachment: toNullableText(app.detachment),
+          client_position: toNullableUpperText(app.client_position),
+          detachment: toNullableUpperText(app.detachment),
           status: nextStatus,
 
           date_resigned: shouldPersistResignedFields ? toNullableText(app.date_resigned) : null,
-          last_duty: shouldPersistResignedFields ? toNullableText(app.last_duty) : null,
+          last_duty: shouldPersistResignedFields ? toNullableUpperText(app.last_duty) : null,
 
           retired_date: retiredDate,
           retired_reason: retiredReason,
           retired_at: retiredAt,
           retired_by: isRetired ? legacyAdminId : null,
 
-          security_licensed_num: toNullableText(app.security_licensed_num),
-          sss_number: toNullableText(app.sss_number),
-          pagibig_number: toNullableText(app.pagibig_number),
-          philhealth_number: toNullableText(app.philhealth_number),
-          tin_number: toNullableText(app.tin_number),
+          security_licensed_num: toNullableUpperText(app.security_licensed_num),
+          sss_number: toNullableUpperText(app.sss_number),
+          pagibig_number: toNullableUpperText(app.pagibig_number),
+          philhealth_number: toNullableUpperText(app.philhealth_number),
+          tin_number: toNullableUpperText(app.tin_number),
 
           profile_image_path: toNullableText(app.profile_image_path),
           sss_certain_path: toNullableText(app.sss_certain_path),
@@ -1342,26 +1393,26 @@ function normalizeJobTitle(value: string) {
         // Related tables (best-effort)
         await supabase.from("certificates").upsert({
           applicant_id: newId,
-          course_title_degree: toNullableText(certs.course_title_degree),
+          course_title_degree: toNullableUpperText(certs.course_title_degree),
           training_path: toNullableText(certs.training_path),
           seminar_path: toNullableText(certs.seminar_path),
           gun_safety_certificate_path: toNullableText(certs.gun_safety_certificate_path),
           highschool_diploma_path: toNullableText(certs.highschool_diploma_path),
           college_diploma_path: toNullableText(certs.college_diploma_path),
           vocational_path: toNullableText(certs.vocational_path),
-          training_when_where: toNullableText(certs.training_when_where),
-          seminar_when_where: toNullableText(certs.seminar_when_where),
-          highschool_when_where: toNullableText(certs.highschool_when_where),
-          college_when_where: toNullableText(certs.college_when_where),
-          vocational_when_where: toNullableText(certs.vocational_when_where),
-          course_when_where: toNullableText(certs.course_when_where),
+          training_when_where: toNullableUpperText(certs.training_when_where),
+          seminar_when_where: toNullableUpperText(certs.seminar_when_where),
+          highschool_when_where: toNullableUpperText(certs.highschool_when_where),
+          college_when_where: toNullableUpperText(certs.college_when_where),
+          vocational_when_where: toNullableUpperText(certs.vocational_when_where),
+          course_when_where: toNullableUpperText(certs.course_when_where),
         });
 
         await supabase.from("licensure").upsert({
           applicant_id: newId,
-          driver_license_number: toNullableText(lic.driver_license_number),
+          driver_license_number: toNullableUpperText(lic.driver_license_number),
           driver_expiration: toNullableText(lic.driver_expiration),
-          security_license_number: toNullableText(lic.security_license_number),
+          security_license_number: toNullableUpperText(lic.security_license_number),
           security_expiration: toNullableText(lic.security_expiration),
         });
 
@@ -1373,11 +1424,11 @@ function normalizeJobTitle(value: string) {
         const cleanJobs = jobs
           .map((j) => ({
             applicant_id: newId,
-            company_name: toNullableText(j.company_name),
-            position: toNullableText(j.position),
+            company_name: toNullableUpperText(j.company_name),
+            position: toNullableUpperText(j.position),
             telephone: toNullableText(j.telephone),
-            inclusive_dates: toNullableText(j.inclusive_dates),
-            leave_reason: toNullableText(j.leave_reason),
+            inclusive_dates: toNullableUpperText(j.inclusive_dates),
+            leave_reason: toNullableUpperText(j.leave_reason),
           }))
           .filter((j) => j.company_name || j.position || j.leave_reason || j.telephone || j.inclusive_dates);
 
@@ -1388,7 +1439,7 @@ function normalizeJobTitle(value: string) {
         const cleanOtherDocs = otherDocs
           .map((doc, index) => ({
             applicant_id: newId,
-            label: resolveOtherDocumentLabel(doc.label, doc.path, index),
+            label: toNullableUpperText(resolveOtherDocumentLabel(doc.label, doc.path, index)) ?? "DOCUMENT",
             bucket: normalizeDocumentBucket(doc.bucket),
             file_path: toNullableText(doc.path),
           }))
@@ -1421,38 +1472,38 @@ function normalizeJobTitle(value: string) {
       const up = await supabase
         .from("applicants")
         .update({
-          custom_id: toNullableText(app.custom_id),
-          first_name: toNullableText(app.first_name),
-          middle_name: toNullableText(app.middle_name),
-          last_name: toNullableText(app.last_name),
-          gender: toNullableText(app.gender),
+          custom_id: toNullableUpperText(app.custom_id),
+          first_name: toNullableUpperText(app.first_name),
+          middle_name: toNullableUpperText(app.middle_name),
+          last_name: toNullableUpperText(app.last_name),
+          gender: toNullableUpperText(app.gender),
           birth_date: toNullableText(app.birth_date),
-          age: toNullableInt(app.age),
-          client_contact_num: toNullableText(app.client_contact_num),
+          age: toNullableInt(computedAge),
+          client_contact_num: toNullableText(formattedClientContact),
           client_email: toNullableText(app.client_email),
-          present_address: toNullableText(app.present_address),
-          province_address: toNullableText(app.province_address),
-          emergency_contact_person: toNullableText(app.emergency_contact_person),
-          emergency_contact_num: toNullableText(app.emergency_contact_num),
-          education_attainment: toNullableText(app.education_attainment),
+          present_address: toNullableUpperText(app.present_address),
+          province_address: toNullableUpperText(app.province_address),
+          emergency_contact_person: toNullableUpperText(app.emergency_contact_person),
+          emergency_contact_num: toNullableText(formattedEmergencyContact),
+          education_attainment: toNullableUpperText(app.education_attainment),
           date_hired_fsai: toNullableText(app.date_hired_fsai),
-          client_position: toNullableText(app.client_position),
-          detachment: toNullableText(app.detachment),
+          client_position: toNullableUpperText(app.client_position),
+          detachment: toNullableUpperText(app.detachment),
           status: nextStatus,
 
           date_resigned: shouldPersistResignedFields ? toNullableText(app.date_resigned) : null,
-          last_duty: shouldPersistResignedFields ? toNullableText(app.last_duty) : null,
+          last_duty: shouldPersistResignedFields ? toNullableUpperText(app.last_duty) : null,
 
           retired_date: retiredDate,
           retired_reason: retiredReason,
           retired_at: retiredAt,
           retired_by: isRetired ? legacyAdminId : null,
 
-          security_licensed_num: toNullableText(app.security_licensed_num),
-          sss_number: toNullableText(app.sss_number),
-          pagibig_number: toNullableText(app.pagibig_number),
-          philhealth_number: toNullableText(app.philhealth_number),
-          tin_number: toNullableText(app.tin_number),
+          security_licensed_num: toNullableUpperText(app.security_licensed_num),
+          sss_number: toNullableUpperText(app.sss_number),
+          pagibig_number: toNullableUpperText(app.pagibig_number),
+          philhealth_number: toNullableUpperText(app.philhealth_number),
+          tin_number: toNullableUpperText(app.tin_number),
 
           profile_image_path: toNullableText(app.profile_image_path),
           sss_certain_path: toNullableText(app.sss_certain_path),
@@ -1467,27 +1518,27 @@ function normalizeJobTitle(value: string) {
 
       const cUp = await supabase.from("certificates").upsert({
         applicant_id: effectiveId,
-        course_title_degree: toNullableText(certs.course_title_degree),
+        course_title_degree: toNullableUpperText(certs.course_title_degree),
         training_path: toNullableText(certs.training_path),
         seminar_path: toNullableText(certs.seminar_path),
         gun_safety_certificate_path: toNullableText(certs.gun_safety_certificate_path),
         highschool_diploma_path: toNullableText(certs.highschool_diploma_path),
         college_diploma_path: toNullableText(certs.college_diploma_path),
         vocational_path: toNullableText(certs.vocational_path),
-        training_when_where: toNullableText(certs.training_when_where),
-        seminar_when_where: toNullableText(certs.seminar_when_where),
-        highschool_when_where: toNullableText(certs.highschool_when_where),
-        college_when_where: toNullableText(certs.college_when_where),
-        vocational_when_where: toNullableText(certs.vocational_when_where),
-        course_when_where: toNullableText(certs.course_when_where),
+        training_when_where: toNullableUpperText(certs.training_when_where),
+        seminar_when_where: toNullableUpperText(certs.seminar_when_where),
+        highschool_when_where: toNullableUpperText(certs.highschool_when_where),
+        college_when_where: toNullableUpperText(certs.college_when_where),
+        vocational_when_where: toNullableUpperText(certs.vocational_when_where),
+        course_when_where: toNullableUpperText(certs.course_when_where),
       });
       if (cUp.error) throw cUp.error;
 
       const lUp = await supabase.from("licensure").upsert({
         applicant_id: effectiveId,
-        driver_license_number: toNullableText(lic.driver_license_number),
+        driver_license_number: toNullableUpperText(lic.driver_license_number),
         driver_expiration: toNullableText(lic.driver_expiration),
-        security_license_number: toNullableText(lic.security_license_number),
+        security_license_number: toNullableUpperText(lic.security_license_number),
         security_expiration: toNullableText(lic.security_expiration),
       });
       if (lUp.error) throw lUp.error;
@@ -1506,11 +1557,11 @@ function normalizeJobTitle(value: string) {
         const cleanJobs = jobs
           .map((j) => ({
             applicant_id: effectiveId,
-            company_name: toNullableText(j.company_name),
-            position: toNullableText(j.position),
+            company_name: toNullableUpperText(j.company_name),
+            position: toNullableUpperText(j.position),
             telephone: toNullableText(j.telephone),
-            inclusive_dates: toNullableText(j.inclusive_dates),
-            leave_reason: toNullableText(j.leave_reason),
+            inclusive_dates: toNullableUpperText(j.inclusive_dates),
+            leave_reason: toNullableUpperText(j.leave_reason),
           }))
           .filter((j) => j.company_name || j.position || j.leave_reason || j.telephone || j.inclusive_dates);
 
@@ -1528,7 +1579,7 @@ function normalizeJobTitle(value: string) {
       const cleanOtherDocs = otherDocs
         .map((doc, index) => ({
           applicant_id: effectiveId,
-          label: resolveOtherDocumentLabel(doc.label, doc.path, index),
+          label: toNullableUpperText(resolveOtherDocumentLabel(doc.label, doc.path, index)) ?? "DOCUMENT",
           bucket: normalizeDocumentBucket(doc.bucket),
           file_path: toNullableText(doc.path),
         }))
@@ -1649,7 +1700,7 @@ function normalizeJobTitle(value: string) {
 
         {error ? <div className="px-6 pt-4 text-sm text-red-600">{error}</div> : null}
 
-        <div className="p-6 max-h-[70vh] overflow-auto">
+        <div className="employee-editor-uppercase p-6 max-h-[70vh] overflow-auto">
           {loading ? (
             <div className="text-sm text-gray-500">Loading…</div>
           ) : tab === "personal" ? (
@@ -1779,18 +1830,24 @@ function normalizeJobTitle(value: string) {
                 <label className="text-sm text-black">
                   <div className="text-gray-600 mb-1">Birth Date</div>
                   <input type="date" value={app.birth_date}
-                    onChange={(e) => setApp((d) => ({ ...d, birth_date: e.target.value }))}
+                    onChange={(e) => {
+                      const birthDate = e.target.value;
+                      setApp((d) => ({ ...d, birth_date: birthDate, age: calculateAgeFromBirthDate(birthDate) }));
+                    }}
                     className="w-full border rounded-xl px-3 py-2" />
                 </label>
                 <label className="text-sm text-black">
                   <div className="text-gray-600 mb-1">Age</div>
-                  <input value={app.age} onChange={(e) => setApp((d) => ({ ...d, age: e.target.value }))}
-                    className="w-full border rounded-xl px-3 py-2" />
+                  <input value={app.age} readOnly
+                    className="w-full border rounded-xl px-3 py-2 bg-gray-50 text-gray-700" />
                 </label>
                 <label className="text-sm text-black">
                   <div className="text-gray-600 mb-1">Phone Number</div>
                   <input value={app.client_contact_num}
-                    onChange={(e) => setApp((d) => ({ ...d, client_contact_num: e.target.value }))}
+                    inputMode="tel"
+                    maxLength={12}
+                    placeholder="+09XXXXXXXXX"
+                    onChange={(e) => setApp((d) => ({ ...d, client_contact_num: formatPhilippineMobileNumber(e.target.value) }))}
                     className="w-full border rounded-xl px-3 py-2" />
                 </label>
               </div>
@@ -1798,8 +1855,8 @@ function normalizeJobTitle(value: string) {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <label className="text-sm text-black md:col-span-2">
                   <div className="text-gray-600 mb-1">Email Address</div>
-                  <input value={app.client_email} onChange={(e) => setApp((d) => ({ ...d, client_email: e.target.value }))}
-                    className="w-full border rounded-xl px-3 py-2" />
+                  <input type="email" value={app.client_email} onChange={(e) => setApp((d) => ({ ...d, client_email: e.target.value }))}
+                    className="preserve-case w-full border rounded-xl px-3 py-2" />
                 </label>
               </div>
 
@@ -1813,7 +1870,10 @@ function normalizeJobTitle(value: string) {
                 <label className="text-sm text-black">
                   <div className="text-gray-600 mb-1">Emergency Number</div>
                   <input value={app.emergency_contact_num}
-                    onChange={(e) => setApp((d) => ({ ...d, emergency_contact_num: e.target.value }))}
+                    inputMode="tel"
+                    maxLength={12}
+                    placeholder="+09XXXXXXXXX"
+                    onChange={(e) => setApp((d) => ({ ...d, emergency_contact_num: formatPhilippineMobileNumber(e.target.value) }))}
                     className="w-full border rounded-xl px-3 py-2" />
                 </label>
               </div>
@@ -2607,6 +2667,15 @@ function normalizeJobTitle(value: string) {
           </div>
         </div>
       </div>
+      <style jsx global>{`
+        .employee-editor-uppercase input:not([type="email"]):not([type="date"]):not([type="file"]):not([type="number"]),
+        .employee-editor-uppercase textarea {
+          text-transform: uppercase;
+        }
+        .employee-editor-uppercase .preserve-case {
+          text-transform: none;
+        }
+      `}</style>
     </div>
   );
 }

@@ -59,34 +59,13 @@ export default function Login() {
       // ignore
     }
 
-    try {
-      sessionStorage.removeItem('showLoginSplash');
-    } catch {
-      // ignore
-    }
-
     const focusTimer = window.setTimeout(() => {
-      try {
-        window.focus();
-      } catch {
-        // ignore
-      }
-
-      // Electron can occasionally start unfocused after route changes/logout.
-      // Explicitly focus the first input so typing works immediately.
       usernameRef.current?.focus();
       usernameRef.current?.select();
     }, 60);
 
-    const refocusOnWindowFocus = () => {
-      usernameRef.current?.focus();
-    };
-
-    window.addEventListener('focus', refocusOnWindowFocus);
-
     return () => {
       window.clearTimeout(focusTimer);
-      window.removeEventListener('focus', refocusOnWindowFocus);
     };
   }, [pathname]);
 
@@ -199,7 +178,7 @@ export default function Login() {
       </div>
 
       <div className="relative mx-auto flex min-h-[calc(100vh-3rem)] w-full max-w-6xl items-center">
-        <div className="grid w-full overflow-hidden rounded-[32px] border border-white/70 bg-white/75 shadow-[0_30px_90px_rgba(15,23,42,0.14)] backdrop-blur-2xl lg:grid-cols-[1.05fr_0.95fr]">
+        <div className="grid w-full overflow-hidden rounded-[32px] border border-white/70 bg-white/95 shadow-[0_30px_90px_rgba(15,23,42,0.14)] lg:grid-cols-[1.05fr_0.95fr]">
           <aside className="relative overflow-hidden bg-gradient-to-br from-[#111827] via-[#8B1C1C] to-[#5c1212] p-8 text-white sm:p-10">
             <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,_rgba(255,218,3,0.18),_transparent_36%)]" />
             <div className="relative">
@@ -208,8 +187,8 @@ export default function Login() {
                 Secure Admin Access
               </div>
 
-              <div className="mt-8 flex flex-col gap-5 sm:flex-row sm:items-center">
-                <div className="animate-float flex h-24 w-24 items-center justify-center rounded-[28px] bg-white/90 p-3 shadow-2xl shadow-black/20">
+              <div className="mt-8 flex flex-col gap-5 sm:flex-row sm:items-start">
+                <div className="flex h-24 w-24 items-center justify-center p-1 drop-shadow-2xl sm:-mt-2">
                   <Image src="/Logo.png" alt="Faragon Security Agency logo" width={96} height={96} className="h-full w-full object-contain" priority />
                 </div>
                 <div className="max-w-md">
@@ -224,7 +203,7 @@ export default function Login() {
               </div>
 
               <div className="mt-10 grid gap-3 sm:grid-cols-2">
-                <div className="rounded-2xl border border-white/10 bg-white/10 p-4 backdrop-blur-sm transition-transform duration-300 hover:-translate-y-1">
+                <div className="rounded-2xl border border-white/10 bg-white/10 p-4 transition-transform duration-300 hover:-translate-y-1">
                   <div className="flex items-center gap-3">
                     <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/15 text-[#FFDA03]">
                       <ShieldCheck className="h-5 w-5" />
@@ -235,7 +214,7 @@ export default function Login() {
                     </div>
                   </div>
                 </div>
-                <div className="rounded-2xl border border-white/10 bg-white/10 p-4 backdrop-blur-sm transition-transform duration-300 hover:-translate-y-1">
+                <div className="rounded-2xl border border-white/10 bg-white/10 p-4 transition-transform duration-300 hover:-translate-y-1">
                   <div className="flex items-center gap-3">
                     <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/15 text-[#FFDA03]">
                       <Activity className="h-5 w-5" />
@@ -246,7 +225,7 @@ export default function Login() {
                     </div>
                   </div>
                 </div>
-                <div className="rounded-2xl border border-white/10 bg-white/10 p-4 backdrop-blur-sm transition-transform duration-300 hover:-translate-y-1 sm:col-span-2">
+                <div className="rounded-2xl border border-white/10 bg-white/10 p-4 transition-transform duration-300 hover:-translate-y-1 sm:col-span-2">
                   <div className="flex items-center gap-3">
                     <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/15 text-[#FFDA03]">
                       <BadgeCheck className="h-5 w-5" />

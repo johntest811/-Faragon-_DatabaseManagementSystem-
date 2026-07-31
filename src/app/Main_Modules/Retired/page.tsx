@@ -121,9 +121,9 @@ export default function RetiredPage() {
 
   const [viewMode, setViewMode] = useState<"grid" | "table">(() => {
     if (typeof window !== "undefined") {
-      return (localStorage.getItem("retired:viewMode") as "grid" | "table") || "grid";
+      return (localStorage.getItem("retired:viewMode:v2") as "grid" | "table") || "table";
     }
-    return "grid";
+    return "table";
   });
 
   const [loading, setLoading] = useState(true);
@@ -175,7 +175,7 @@ export default function RetiredPage() {
 
   useEffect(() => {
     try {
-      const saved = window.localStorage.getItem("retired:viewMode");
+      const saved = window.localStorage.getItem("retired:viewMode:v2");
       if (saved === "grid" || saved === "table") setViewMode(saved);
     } catch {
       // ignore
@@ -195,7 +195,7 @@ export default function RetiredPage() {
 
   useEffect(() => {
     try {
-      window.localStorage.setItem("retired:viewMode", viewMode);
+      window.localStorage.setItem("retired:viewMode:v2", viewMode);
     } catch {
       // ignore
     }

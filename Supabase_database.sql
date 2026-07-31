@@ -1,116 +1,6 @@
 -- WARNING: This schema is for context only and is not meant to be run.
 -- Table order and constraints may not be valid for execution.
 
-CREATE TABLE public.access_requests (
-  id uuid NOT NULL DEFAULT gen_random_uuid(),
-  created_at timestamp with time zone NOT NULL DEFAULT now(),
-  status text NOT NULL DEFAULT 'PENDING'::text CHECK (status = ANY (ARRAY['PENDING'::text, 'APPROVED'::text, 'REJECTED'::text, 'CANCELLED'::text])),
-  requested_module_key text NOT NULL,
-  requested_path text,
-  reason text,
-  requester_user_id uuid,
-  requester_email text,
-  requester_admin_id uuid,
-  requester_username text,
-  requester_role text,
-  resolved_at timestamp with time zone,
-  resolved_by uuid,
-  resolution_note text,
-  requested_column_key text,
-  request_scope_row boolean DEFAULT false,
-  request_scope_column boolean DEFAULT false,
-  requested_column_keys ARRAY,
-  requested_applicant_ids ARRAY,
-  requested_row_identifier_key text,
-  requested_row_identifier_values ARRAY,
-  approver_admin_id uuid,
-  approver_username text,
-  approver_full_name text,
-  requested_applicant_id uuid,
-  requested_row_identifier_value text,
-  requested_can_write boolean NOT NULL DEFAULT false,
-  requested_can_edit boolean NOT NULL DEFAULT false,
-  CONSTRAINT access_requests_pkey PRIMARY KEY (id),
-  CONSTRAINT access_requests_module_fkey FOREIGN KEY (requested_module_key) REFERENCES public.modules(module_key),
-  CONSTRAINT access_requests_requester_admin_fkey FOREIGN KEY (requester_admin_id) REFERENCES public.admins(id),
-  CONSTRAINT access_requests_approver_admin_fkey FOREIGN KEY (approver_admin_id) REFERENCES public.admins(id),
-  CONSTRAINT access_requests_requested_applicant_fkey FOREIGN KEY (requested_applicant_id) REFERENCES public.applicants(applicant_id)
-);
-CREATE TABLE public.admin_applicant_access_overrides (
-  admin_id uuid NOT NULL,
-  module_key text NOT NULL,
-  applicant_id uuid NOT NULL,
-  can_read boolean NOT NULL DEFAULT true,
-  created_at timestamp with time zone NOT NULL DEFAULT now(),
-  updated_at timestamp with time zone NOT NULL DEFAULT now(),
-  created_by uuid,
-  CONSTRAINT admin_applicant_access_overrides_pkey PRIMARY KEY (admin_id, module_key, applicant_id)
-);
-CREATE TABLE public.admin_applicant_column_access_overrides (
-  admin_id uuid NOT NULL,
-  module_key text NOT NULL,
-  applicant_id uuid NOT NULL,
-  column_key text NOT NULL,
-  can_read boolean NOT NULL DEFAULT true,
-  created_at timestamp with time zone NOT NULL DEFAULT now(),
-  updated_at timestamp with time zone NOT NULL DEFAULT now(),
-  created_by uuid,
-  CONSTRAINT admin_applicant_column_access_overrides_pkey PRIMARY KEY (admin_id, module_key, applicant_id, column_key)
-);
-CREATE TABLE public.admin_column_access_overrides (
-  admin_id uuid NOT NULL,
-  module_key text NOT NULL,
-  column_key text NOT NULL,
-  can_read boolean NOT NULL DEFAULT true,
-  created_at timestamp with time zone NOT NULL DEFAULT now(),
-  updated_at timestamp with time zone NOT NULL DEFAULT now(),
-  created_by uuid,
-  CONSTRAINT admin_column_access_overrides_pkey PRIMARY KEY (admin_id, module_key, column_key),
-  CONSTRAINT admin_column_access_overrides_admin_fkey FOREIGN KEY (admin_id) REFERENCES public.admins(id),
-  CONSTRAINT admin_column_access_overrides_module_fkey FOREIGN KEY (module_key) REFERENCES public.modules(module_key)
-);
-CREATE TABLE public.admin_login_history (
-  id uuid NOT NULL DEFAULT gen_random_uuid(),
-  admin_id uuid,
-  username text,
-  full_name text,
-  role text,
-  logged_in_at timestamp with time zone NOT NULL DEFAULT now(),
-  created_at timestamp with time zone NOT NULL DEFAULT now(),
-  CONSTRAINT admin_login_history_pkey PRIMARY KEY (id),
-  CONSTRAINT admin_login_history_admin_id_fkey FOREIGN KEY (admin_id) REFERENCES public.admins(id)
-);
-CREATE TABLE public.admin_module_access_overrides (
-  admin_id uuid NOT NULL,
-  module_key text NOT NULL,
-  can_read boolean NOT NULL DEFAULT true,
-  created_at timestamp with time zone NOT NULL DEFAULT now(),
-  updated_at timestamp with time zone NOT NULL DEFAULT now(),
-  created_by uuid,
-  can_write boolean NOT NULL DEFAULT false,
-  can_edit boolean NOT NULL DEFAULT false,
-  CONSTRAINT admin_module_access_overrides_pkey PRIMARY KEY (admin_id, module_key),
-  CONSTRAINT admin_module_access_overrides_admin_fkey FOREIGN KEY (admin_id) REFERENCES public.admins(id),
-  CONSTRAINT admin_module_access_overrides_module_fkey FOREIGN KEY (module_key) REFERENCES public.modules(module_key)
-);
-CREATE TABLE public.admin_role_memberships (
-  user_id uuid NOT NULL,
-  role_id uuid NOT NULL,
-  CONSTRAINT admin_role_memberships_pkey PRIMARY KEY (user_id, role_id),
-  CONSTRAINT admin_role_memberships_role_id_fkey FOREIGN KEY (role_id) REFERENCES public.app_roles(role_id)
-);
-CREATE TABLE public.admin_row_identifier_column_access_overrides (
-  admin_id uuid NOT NULL,
-  module_key text NOT NULL,
-  row_identifier_key text NOT NULL,
-  row_identifier_value text NOT NULL,
-  column_key text NOT NULL,
-  can_read boolean NOT NULL DEFAULT true,
-  created_at timestamp with time zone NOT NULL DEFAULT now(),
-  updated_at timestamp with time zone NOT NULL DEFAULT now(),
-  created_by uuid,
-  CONSTRAINT admin_row_identifier_column_access_overrides_pkey PRIMARY KEY (admin_id, module_key, row_identifier_key, row_identifier_value, column_key)
-);
 CREATE TABLE public.admins (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
   username text NOT NULL UNIQUE,
@@ -121,35 +11,12 @@ CREATE TABLE public.admins (
   employee_number character varying,
   full_name text,
   is_active boolean DEFAULT true,
-  password text NOT NULL DEFAULT 'admin123'::text,
+  password text NOT NULL,
   profile_image_path text,
-  CONSTRAINT admins_pkey PRIMARY KEY (id)
-);
-CREATE TABLE public.app_roles (
-  role_id uuid NOT NULL DEFAULT gen_random_uuid(),
-  role_name text NOT NULL UNIQUE,
-  CONSTRAINT app_roles_pkey PRIMARY KEY (role_id)
-);
-CREATE TABLE public.applicant_detachment_history (
-  detachment_history_id uuid NOT NULL DEFAULT gen_random_uuid(),
-  applicant_id uuid NOT NULL,
-  previous_detachment text,
-  new_detachment text,
-  change_type text NOT NULL DEFAULT 'UPDATED'::text CHECK (change_type = ANY (ARRAY['INITIAL'::text, 'UPDATED'::text, 'CLEARED'::text])),
-  changed_at timestamp with time zone NOT NULL DEFAULT now(),
-  CONSTRAINT applicant_detachment_history_pkey PRIMARY KEY (detachment_history_id),
-  CONSTRAINT applicant_detachment_history_applicant_id_fkey FOREIGN KEY (applicant_id) REFERENCES public.applicants(applicant_id)
-);
-CREATE TABLE public.applicant_other_documents (
-  document_id uuid NOT NULL DEFAULT gen_random_uuid(),
-  applicant_id uuid NOT NULL,
-  label text NOT NULL DEFAULT ''::text,
-  bucket text NOT NULL DEFAULT 'applicants'::text CHECK (bucket = ANY (ARRAY['applicants'::text, 'certificates'::text, 'licensure'::text])),
-  file_path text NOT NULL DEFAULT ''::text,
-  created_at timestamp with time zone NOT NULL DEFAULT now(),
-  updated_at timestamp with time zone NOT NULL DEFAULT now(),
-  CONSTRAINT applicant_other_documents_pkey PRIMARY KEY (document_id),
-  CONSTRAINT applicant_other_documents_applicant_id_fkey FOREIGN KEY (applicant_id) REFERENCES public.applicants(applicant_id)
+  assigned_detachment text,
+  applicant_id uuid,
+  CONSTRAINT admins_pkey PRIMARY KEY (id),
+  CONSTRAINT admins_applicant_id_fkey FOREIGN KEY (applicant_id) REFERENCES public.applicants(applicant_id)
 );
 CREATE TABLE public.applicants (
   applicant_id uuid NOT NULL DEFAULT gen_random_uuid(),
@@ -202,41 +69,6 @@ CREATE TABLE public.applicants (
   CONSTRAINT applicants_trashed_by_fkey FOREIGN KEY (trashed_by) REFERENCES public.admins(id),
   CONSTRAINT applicants_retired_by_fkey FOREIGN KEY (retired_by) REFERENCES public.admins(id)
 );
-CREATE TABLE public.audit_log (
-  id uuid NOT NULL DEFAULT gen_random_uuid(),
-  created_at timestamp with time zone NOT NULL DEFAULT now(),
-  actor_user_id uuid,
-  actor_email text,
-  action text NOT NULL,
-  page text,
-  entity text,
-  details jsonb,
-  actor_name text,
-  CONSTRAINT audit_log_pkey PRIMARY KEY (id)
-);
-CREATE TABLE public.audit_log_retention_settings (
-  id text NOT NULL DEFAULT 'default'::text,
-  created_at timestamp with time zone NOT NULL DEFAULT now(),
-  updated_at timestamp with time zone NOT NULL DEFAULT now(),
-  retention_days integer NOT NULL DEFAULT 30 CHECK (retention_days = ANY (ARRAY[7, 30, 365])),
-  CONSTRAINT audit_log_retention_settings_pkey PRIMARY KEY (id)
-);
-CREATE TABLE public.biodata (
-  applicant_id uuid NOT NULL,
-  applicant_form bytea,
-  applicant_form_path text,
-  CONSTRAINT biodata_pkey PRIMARY KEY (applicant_id),
-  CONSTRAINT biodata_applicant_id_fkey FOREIGN KEY (applicant_id) REFERENCES public.applicants(applicant_id)
-);
-CREATE TABLE public.car_insurance_notification_recipients (
-  id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
-  email text NOT NULL UNIQUE,
-  is_active boolean NOT NULL DEFAULT true,
-  notes text,
-  created_at timestamp with time zone NOT NULL DEFAULT now(),
-  updated_at timestamp with time zone NOT NULL DEFAULT now(),
-  CONSTRAINT car_insurance_notification_recipients_pkey PRIMARY KEY (id)
-);
 CREATE TABLE public.certificates (
   applicant_id uuid NOT NULL,
   course_title_degree character varying,
@@ -255,59 +87,58 @@ CREATE TABLE public.certificates (
   CONSTRAINT certificates_pkey PRIMARY KEY (applicant_id),
   CONSTRAINT certificates_applicant_id_fkey FOREIGN KEY (applicant_id) REFERENCES public.applicants(applicant_id)
 );
-CREATE TABLE public.contract_employees (
-  contract_id uuid NOT NULL,
+CREATE TABLE public.biodata (
   applicant_id uuid NOT NULL,
-  created_at timestamp with time zone NOT NULL DEFAULT now(),
-  CONSTRAINT contract_employees_pkey PRIMARY KEY (contract_id, applicant_id),
-  CONSTRAINT contract_employees_contract_id_fkey FOREIGN KEY (contract_id) REFERENCES public.contracts(contract_id),
-  CONSTRAINT contract_employees_applicant_id_fkey FOREIGN KEY (applicant_id) REFERENCES public.applicants(applicant_id)
+  applicant_form bytea,
+  applicant_form_path text,
+  CONSTRAINT biodata_pkey PRIMARY KEY (applicant_id),
+  CONSTRAINT biodata_applicant_id_fkey FOREIGN KEY (applicant_id) REFERENCES public.applicants(applicant_id)
 );
-CREATE TABLE public.contracts (
-  contract_id uuid NOT NULL DEFAULT gen_random_uuid(),
-  applicant_id uuid,
-  contract_no text,
-  start_date date,
-  end_date date,
-  status text DEFAULT 'ACTIVE'::text,
-  created_at timestamp with time zone NOT NULL DEFAULT now(),
-  contract_no_date date,
-  cluster text,
-  client_name text,
-  specific_area text,
-  project_name text,
-  contract_start date,
-  contract_end date,
-  contracted_manpower integer,
-  deployed_guards integer,
-  remarks text,
-  CONSTRAINT contracts_pkey PRIMARY KEY (contract_id),
-  CONSTRAINT contracts_applicant_id_fkey FOREIGN KEY (applicant_id) REFERENCES public.applicants(applicant_id)
-);
-CREATE TABLE public.deployment_history (
-  history_id uuid NOT NULL DEFAULT gen_random_uuid(),
-  deployment_id uuid NOT NULL,
+CREATE TABLE public.licensure (
   applicant_id uuid NOT NULL,
-  detachment character varying,
-  dp_status character varying,
-  change_date date NOT NULL DEFAULT CURRENT_DATE,
-  remarks text,
-  CONSTRAINT deployment_history_pkey PRIMARY KEY (history_id),
-  CONSTRAINT deployment_history_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployment_status(deployment_id),
-  CONSTRAINT deployment_history_applicant_id_fkey FOREIGN KEY (applicant_id) REFERENCES public.applicants(applicant_id)
+  driver_license_number character varying,
+  driver_expiration date,
+  security_license_number character varying,
+  security_expiration date,
+  insurance character varying,
+  insurance_expiration date,
+  CONSTRAINT licensure_pkey PRIMARY KEY (applicant_id),
+  CONSTRAINT licenseure_applicant_id_fkey FOREIGN KEY (applicant_id) REFERENCES public.applicants(applicant_id)
 );
-CREATE TABLE public.deployment_status (
-  deployment_id uuid NOT NULL DEFAULT gen_random_uuid(),
+CREATE TABLE public.employment_record (
   applicant_id uuid NOT NULL,
-  detachment character varying,
-  client_position character varying,
-  shift character varying,
-  start_date date,
-  expected_end_date date,
-  deployment_status character varying NOT NULL DEFAULT 'ACTIVE'::character varying,
-  created_at timestamp with time zone NOT NULL DEFAULT now(),
-  CONSTRAINT deployment_status_pkey PRIMARY KEY (deployment_id),
-  CONSTRAINT deployment_status_applicant_id_fkey FOREIGN KEY (applicant_id) REFERENCES public.applicants(applicant_id)
+  company_name character varying,
+  position character varying,
+  leave_reason character varying,
+  CONSTRAINT employment_record_pkey PRIMARY KEY (applicant_id),
+  CONSTRAINT employment_record_applicant_id_fkey FOREIGN KEY (applicant_id) REFERENCES public.applicants(applicant_id)
+);
+CREATE TABLE public.modules (
+  module_key text NOT NULL,
+  display_name text NOT NULL,
+  path text NOT NULL,
+  CONSTRAINT modules_pkey PRIMARY KEY (module_key)
+);
+CREATE TABLE public.app_roles (
+  role_id uuid NOT NULL DEFAULT gen_random_uuid(),
+  role_name text NOT NULL UNIQUE,
+  CONSTRAINT app_roles_pkey PRIMARY KEY (role_id)
+);
+CREATE TABLE public.admin_role_memberships (
+  user_id uuid NOT NULL,
+  role_id uuid NOT NULL,
+  CONSTRAINT admin_role_memberships_pkey PRIMARY KEY (user_id, role_id),
+  CONSTRAINT admin_role_memberships_role_id_fkey FOREIGN KEY (role_id) REFERENCES public.app_roles(role_id)
+);
+CREATE TABLE public.role_module_access (
+  role_id uuid NOT NULL,
+  module_key text NOT NULL,
+  can_read boolean NOT NULL DEFAULT true,
+  can_write boolean NOT NULL DEFAULT false,
+  can_edit boolean NOT NULL DEFAULT false,
+  CONSTRAINT role_module_access_pkey PRIMARY KEY (role_id, module_key),
+  CONSTRAINT role_module_access_module_key_fkey FOREIGN KEY (module_key) REFERENCES public.modules(module_key),
+  CONSTRAINT role_module_access_role_id_fkey FOREIGN KEY (role_id) REFERENCES public.app_roles(role_id)
 );
 CREATE TABLE public.employment_history (
   employment_id uuid NOT NULL DEFAULT gen_random_uuid(),
@@ -321,13 +152,59 @@ CREATE TABLE public.employment_history (
   CONSTRAINT employment_history_pkey PRIMARY KEY (employment_id),
   CONSTRAINT employment_history_applicant_id_fkey FOREIGN KEY (applicant_id) REFERENCES public.applicants(applicant_id)
 );
-CREATE TABLE public.employment_record (
+CREATE TABLE public.notification_email_settings (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  provider text NOT NULL DEFAULT 'gmail'::text CHECK (provider = 'gmail'::text),
+  gmail_user text NOT NULL,
+  from_email text NOT NULL,
+  gmail_app_password text,
+  is_active boolean NOT NULL DEFAULT true,
+  notes text,
+  CONSTRAINT notification_email_settings_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.notification_preferences (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  is_enabled boolean NOT NULL DEFAULT true,
+  days_before_expiry integer NOT NULL DEFAULT 30 CHECK (days_before_expiry >= 1 AND days_before_expiry <= 365),
+  include_driver_license boolean NOT NULL DEFAULT false,
+  include_security_license boolean NOT NULL DEFAULT true,
+  include_insurance boolean NOT NULL DEFAULT false,
+  send_time_local time without time zone NOT NULL DEFAULT '08:00:00'::time without time zone,
+  timezone text NOT NULL DEFAULT 'Asia/Manila'::text,
+  use_scheduled_send boolean NOT NULL DEFAULT true,
+  send_to_employees boolean NOT NULL DEFAULT true,
+  use_supabase_email_sender boolean NOT NULL DEFAULT false,
+  include_expired boolean NOT NULL DEFAULT false,
+  expired_within_days integer NOT NULL DEFAULT 7 CHECK (expired_within_days >= 1 AND expired_within_days <= 365),
+  CONSTRAINT notification_preferences_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.licensure_notification_log (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
   applicant_id uuid NOT NULL,
-  company_name character varying,
-  position character varying,
-  leave_reason character varying,
-  CONSTRAINT employment_record_pkey PRIMARY KEY (applicant_id),
-  CONSTRAINT employment_record_applicant_id_fkey FOREIGN KEY (applicant_id) REFERENCES public.applicants(applicant_id)
+  license_type text NOT NULL CHECK (license_type = ANY (ARRAY['DRIVER_LICENSE'::text, 'SECURITY_LICENSE'::text, 'INSURANCE'::text])),
+  expires_on date NOT NULL,
+  recipient_email text,
+  status text NOT NULL DEFAULT 'QUEUED'::text CHECK (status = ANY (ARRAY['QUEUED'::text, 'SENT'::text, 'FAILED'::text, 'SKIPPED'::text])),
+  error_message text,
+  CONSTRAINT licensure_notification_log_pkey PRIMARY KEY (id),
+  CONSTRAINT licensure_notification_log_applicant_id_fkey FOREIGN KEY (applicant_id) REFERENCES public.applicants(applicant_id)
+);
+CREATE TABLE public.audit_log (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  actor_user_id uuid,
+  actor_email text,
+  action text NOT NULL,
+  page text,
+  entity text,
+  details jsonb,
+  actor_name text,
+  CONSTRAINT audit_log_pkey PRIMARY KEY (id)
 );
 CREATE TABLE public.inventory_fixed_asset (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
@@ -363,79 +240,100 @@ CREATE TABLE public.inventory_fixed_asset (
   sec_name text,
   vehicle_name text,
   last_updated_at timestamp with time zone,
+  equipment text,
+  control_number text,
+  serial_plate_number text,
+  maker text,
+  model_number text,
+  detachment text,
+  unit_cost numeric,
+  date_purchased date,
+  expiration date,
+  last_maintenance date,
+  user_text text,
+  user_attachment text,
   CONSTRAINT inventory_fixed_asset_pkey PRIMARY KEY (id)
 );
-CREATE TABLE public.job_titles (
-  title_id uuid NOT NULL DEFAULT gen_random_uuid(),
-  title text NOT NULL UNIQUE,
-  created_at timestamp with time zone NOT NULL DEFAULT now(),
-  CONSTRAINT job_titles_pkey PRIMARY KEY (title_id)
+CREATE TABLE public.restock (
+  id_restock uuid NOT NULL,
+  date character varying,
+  status text,
+  item text,
+  quanitity character varying,
+  timestamptz timestamp without time zone NOT NULL DEFAULT now(),
+  id_paraphernalia uuid,
+  id_paraphernalia_inventory uuid,
+  contract_id uuid,
+  attachment text,
+  detachment text,
+  client_name text,
+  quantity numeric,
+  CONSTRAINT restock_pkey PRIMARY KEY (id_restock),
+  CONSTRAINT restock_paraphernalia_fkey FOREIGN KEY (id_paraphernalia) REFERENCES public.paraphernalia(id_paraphernalia),
+  CONSTRAINT restock_contract_fkey FOREIGN KEY (contract_id) REFERENCES public.contracts(contract_id),
+  CONSTRAINT restock_inventory_fkey FOREIGN KEY (id_paraphernalia_inventory) REFERENCES public.paraphernalia_inventory(id_paraphernalia_inventory)
 );
-CREATE TABLE public.licensure (
+CREATE TABLE public.paraphernalia (
+  id_paraphernalia uuid NOT NULL,
+  names text,
+  items character varying,
+  quantity integer,
+  price numeric,
+  date character varying,
+  timestamp timestamp without time zone NOT NULL DEFAULT now(),
+  created_at timestamp with time zone DEFAULT now(),
+  status text DEFAULT 'FREE'::text,
+  date_posted date,
+  contract_id uuid,
+  client_name text,
+  specific_area text,
+  CONSTRAINT paraphernalia_pkey PRIMARY KEY (id_paraphernalia),
+  CONSTRAINT paraphernalia_contract_id_fkey FOREIGN KEY (contract_id) REFERENCES public.contracts(contract_id)
+);
+CREATE TABLE public.paraphernalia_inventory (
+  id_paraphernalia_inventory uuid NOT NULL,
+  items text,
+  stock_balance numeric,
+  stock_in numeric,
+  stock_out numeric,
+  id_paraphernalia uuid,
+  contract_id uuid,
+  client_name text,
+  specific_area text,
+  category text,
+  CONSTRAINT paraphernalia_inventory_pkey PRIMARY KEY (id_paraphernalia_inventory),
+  CONSTRAINT paraphernalia_inventory_id_paraphernalia_fkey FOREIGN KEY (id_paraphernalia) REFERENCES public.paraphernalia(id_paraphernalia),
+  CONSTRAINT paraphernalia_inventory_contract_id_fkey FOREIGN KEY (contract_id) REFERENCES public.contracts(contract_id)
+);
+CREATE TABLE public.contracts (
+  contract_id uuid NOT NULL DEFAULT gen_random_uuid(),
+  applicant_id uuid,
+  contract_no text,
+  start_date date,
+  end_date date,
+  status text DEFAULT 'ACTIVE'::text,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  contract_no_date date,
+  cluster text,
+  client_name text,
+  specific_area text,
+  project_name text,
+  contract_start date,
+  contract_end date,
+  contracted_manpower integer,
+  deployed_guards integer,
+  remarks text,
+  notification_recipient_email text CHECK (notification_recipient_email IS NULL OR notification_recipient_email ~* '^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$'::text),
+  CONSTRAINT contracts_pkey PRIMARY KEY (contract_id),
+  CONSTRAINT contracts_applicant_id_fkey FOREIGN KEY (applicant_id) REFERENCES public.applicants(applicant_id)
+);
+CREATE TABLE public.contract_employees (
+  contract_id uuid NOT NULL,
   applicant_id uuid NOT NULL,
-  driver_license_number character varying,
-  driver_expiration date,
-  security_license_number character varying,
-  security_expiration date,
-  insurance character varying,
-  insurance_expiration date,
-  CONSTRAINT licensure_pkey PRIMARY KEY (applicant_id),
-  CONSTRAINT licenseure_applicant_id_fkey FOREIGN KEY (applicant_id) REFERENCES public.applicants(applicant_id)
-);
-CREATE TABLE public.licensure_notification_log (
-  id uuid NOT NULL DEFAULT gen_random_uuid(),
   created_at timestamp with time zone NOT NULL DEFAULT now(),
-  applicant_id uuid NOT NULL,
-  license_type text NOT NULL CHECK (license_type = ANY (ARRAY['DRIVER_LICENSE'::text, 'SECURITY_LICENSE'::text, 'INSURANCE'::text])),
-  expires_on date NOT NULL,
-  recipient_email text,
-  status text NOT NULL DEFAULT 'QUEUED'::text CHECK (status = ANY (ARRAY['QUEUED'::text, 'SENT'::text, 'FAILED'::text, 'SKIPPED'::text])),
-  error_message text,
-  CONSTRAINT licensure_notification_log_pkey PRIMARY KEY (id),
-  CONSTRAINT licensure_notification_log_applicant_id_fkey FOREIGN KEY (applicant_id) REFERENCES public.applicants(applicant_id)
-);
-CREATE TABLE public.modules (
-  module_key text NOT NULL,
-  display_name text NOT NULL,
-  path text NOT NULL,
-  CONSTRAINT modules_pkey PRIMARY KEY (module_key)
-);
-CREATE TABLE public.notification_email_settings (
-  id uuid NOT NULL DEFAULT gen_random_uuid(),
-  created_at timestamp with time zone NOT NULL DEFAULT now(),
-  updated_at timestamp with time zone NOT NULL DEFAULT now(),
-  provider text NOT NULL DEFAULT 'gmail'::text CHECK (provider = 'gmail'::text),
-  gmail_user text NOT NULL,
-  from_email text NOT NULL,
-  gmail_app_password text,
-  is_active boolean NOT NULL DEFAULT true,
-  notes text,
-  CONSTRAINT notification_email_settings_pkey PRIMARY KEY (id)
-);
-CREATE TABLE public.notification_log_retention_settings (
-  id text NOT NULL DEFAULT 'default'::text,
-  created_at timestamp with time zone NOT NULL DEFAULT now(),
-  updated_at timestamp with time zone NOT NULL DEFAULT now(),
-  retention_days integer NOT NULL DEFAULT 30 CHECK (retention_days = ANY (ARRAY[7, 30, 365])),
-  CONSTRAINT notification_log_retention_settings_pkey PRIMARY KEY (id)
-);
-CREATE TABLE public.notification_preferences (
-  id uuid NOT NULL DEFAULT gen_random_uuid(),
-  created_at timestamp with time zone NOT NULL DEFAULT now(),
-  updated_at timestamp with time zone NOT NULL DEFAULT now(),
-  is_enabled boolean NOT NULL DEFAULT true,
-  days_before_expiry integer NOT NULL DEFAULT 30 CHECK (days_before_expiry >= 1 AND days_before_expiry <= 365),
-  include_driver_license boolean NOT NULL DEFAULT false,
-  include_security_license boolean NOT NULL DEFAULT true,
-  include_insurance boolean NOT NULL DEFAULT false,
-  send_time_local time without time zone NOT NULL DEFAULT '08:00:00'::time without time zone,
-  timezone text NOT NULL DEFAULT 'Asia/Manila'::text,
-  use_scheduled_send boolean NOT NULL DEFAULT true,
-  send_to_employees boolean NOT NULL DEFAULT true,
-  use_supabase_email_sender boolean NOT NULL DEFAULT false,
-  include_expired boolean NOT NULL DEFAULT false,
-  expired_within_days integer NOT NULL DEFAULT 7 CHECK (expired_within_days >= 1 AND expired_within_days <= 365),
-  CONSTRAINT notification_preferences_pkey PRIMARY KEY (id)
+  CONSTRAINT contract_employees_pkey PRIMARY KEY (contract_id, applicant_id),
+  CONSTRAINT contract_employees_contract_id_fkey FOREIGN KEY (contract_id) REFERENCES public.contracts(contract_id),
+  CONSTRAINT contract_employees_applicant_id_fkey FOREIGN KEY (applicant_id) REFERENCES public.applicants(applicant_id)
 );
 CREATE TABLE public.notification_recipients (
   id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
@@ -470,114 +368,65 @@ CREATE TABLE public.other_expiration_items (
   car_registration_to_date date,
   CONSTRAINT other_expiration_items_pkey PRIMARY KEY (id)
 );
-CREATE TABLE public.other_expiration_notification_log (
+CREATE TABLE public.access_requests (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
   created_at timestamp with time zone NOT NULL DEFAULT now(),
-  other_expiration_item_id bigint NOT NULL,
-  item_name text NOT NULL,
-  expiration_type text NOT NULL,
-  expires_on date NOT NULL,
-  recipient_email text,
-  status text NOT NULL DEFAULT 'QUEUED'::text CHECK (status = ANY (ARRAY['QUEUED'::text, 'SENT'::text, 'FAILED'::text, 'SKIPPED'::text])),
-  error_message text,
-  CONSTRAINT other_expiration_notification_log_pkey PRIMARY KEY (id),
-  CONSTRAINT other_expiration_notification_log_other_item_fkey FOREIGN KEY (other_expiration_item_id) REFERENCES public.other_expiration_items(id)
+  status text NOT NULL DEFAULT 'PENDING'::text CHECK (status = ANY (ARRAY['PENDING'::text, 'APPROVED'::text, 'REJECTED'::text, 'CANCELLED'::text])),
+  requested_module_key text NOT NULL,
+  requested_path text,
+  reason text,
+  requester_user_id uuid,
+  requester_email text,
+  requester_admin_id uuid,
+  requester_username text,
+  requester_role text,
+  resolved_at timestamp with time zone,
+  resolved_by uuid,
+  resolution_note text,
+  requested_column_key text,
+  request_scope_row boolean DEFAULT false,
+  request_scope_column boolean DEFAULT false,
+  requested_column_keys ARRAY,
+  requested_applicant_ids ARRAY,
+  requested_row_identifier_key text,
+  requested_row_identifier_values ARRAY,
+  approver_admin_id uuid,
+  approver_username text,
+  approver_full_name text,
+  requested_applicant_id uuid,
+  requested_row_identifier_value text,
+  requested_can_write boolean NOT NULL DEFAULT false,
+  requested_can_edit boolean NOT NULL DEFAULT false,
+  CONSTRAINT access_requests_pkey PRIMARY KEY (id),
+  CONSTRAINT access_requests_module_fkey FOREIGN KEY (requested_module_key) REFERENCES public.modules(module_key),
+  CONSTRAINT access_requests_requester_admin_fkey FOREIGN KEY (requester_admin_id) REFERENCES public.admins(id),
+  CONSTRAINT access_requests_approver_admin_fkey FOREIGN KEY (approver_admin_id) REFERENCES public.admins(id),
+  CONSTRAINT access_requests_requested_applicant_fkey FOREIGN KEY (requested_applicant_id) REFERENCES public.applicants(applicant_id)
 );
-CREATE TABLE public.paraphernalia (
-  id_paraphernalia uuid NOT NULL,
-  names text,
-  items character varying,
-  quantity integer,
-  price numeric,
-  date character varying,
-  timestamp timestamp without time zone NOT NULL DEFAULT now(),
-  created_at timestamp with time zone DEFAULT now(),
-  CONSTRAINT paraphernalia_pkey PRIMARY KEY (id_paraphernalia)
-);
-CREATE TABLE public.paraphernalia_inventory (
-  id_paraphernalia_inventory uuid NOT NULL,
-  items text,
-  stock_balance numeric,
-  stock_in numeric,
-  stock_out numeric,
-  id_paraphernalia uuid,
-  contract_id uuid,
-  CONSTRAINT paraphernalia_inventory_pkey PRIMARY KEY (id_paraphernalia_inventory),
-  CONSTRAINT paraphernalia_inventory_id_paraphernalia_fkey FOREIGN KEY (id_paraphernalia) REFERENCES public.paraphernalia(id_paraphernalia),
-  CONSTRAINT paraphernalia_inventory_contract_id_fkey FOREIGN KEY (contract_id) REFERENCES public.contracts(contract_id)
-);
-CREATE TABLE public.restock (
-  id_restock uuid NOT NULL,
-  date character varying,
-  status text,
-  item text,
-  quanitity character varying,
-  timestamptz timestamp without time zone NOT NULL DEFAULT now(),
-  id_paraphernalia uuid,
-  id_paraphernalia_inventory uuid,
-  contract_id uuid,
-  CONSTRAINT restock_pkey PRIMARY KEY (id_restock),
-  CONSTRAINT restock_paraphernalia_fkey FOREIGN KEY (id_paraphernalia) REFERENCES public.paraphernalia(id_paraphernalia),
-  CONSTRAINT restock_contract_fkey FOREIGN KEY (contract_id) REFERENCES public.contracts(contract_id),
-  CONSTRAINT restock_inventory_fkey FOREIGN KEY (id_paraphernalia_inventory) REFERENCES public.paraphernalia_inventory(id_paraphernalia_inventory)
-);
-CREATE TABLE public.role_column_access (
-  role_id uuid NOT NULL,
+CREATE TABLE public.admin_module_access_overrides (
+  admin_id uuid NOT NULL,
   module_key text NOT NULL,
-  column_key text NOT NULL,
   can_read boolean NOT NULL DEFAULT true,
   created_at timestamp with time zone NOT NULL DEFAULT now(),
   updated_at timestamp with time zone NOT NULL DEFAULT now(),
   created_by uuid,
-  CONSTRAINT role_column_access_pkey PRIMARY KEY (role_id, module_key, column_key),
-  CONSTRAINT role_column_access_module_key_fkey FOREIGN KEY (module_key) REFERENCES public.modules(module_key),
-  CONSTRAINT role_column_access_role_id_fkey FOREIGN KEY (role_id) REFERENCES public.app_roles(role_id),
-  CONSTRAINT role_column_access_role_module_fkey FOREIGN KEY (role_id) REFERENCES public.role_module_access(role_id),
-  CONSTRAINT role_column_access_role_module_fkey FOREIGN KEY (module_key) REFERENCES public.role_module_access(role_id),
-  CONSTRAINT role_column_access_role_module_fkey FOREIGN KEY (role_id) REFERENCES public.role_module_access(module_key),
-  CONSTRAINT role_column_access_role_module_fkey FOREIGN KEY (module_key) REFERENCES public.role_module_access(module_key)
-);
-CREATE TABLE public.role_module_access (
-  role_id uuid NOT NULL,
-  module_key text NOT NULL,
-  can_read boolean NOT NULL DEFAULT true,
   can_write boolean NOT NULL DEFAULT false,
   can_edit boolean NOT NULL DEFAULT false,
-  CONSTRAINT role_module_access_pkey PRIMARY KEY (role_id, module_key),
-  CONSTRAINT role_module_access_module_key_fkey FOREIGN KEY (module_key) REFERENCES public.modules(module_key),
-  CONSTRAINT role_module_access_role_id_fkey FOREIGN KEY (role_id) REFERENCES public.app_roles(role_id)
+  CONSTRAINT admin_module_access_overrides_pkey PRIMARY KEY (admin_id, module_key),
+  CONSTRAINT admin_module_access_overrides_admin_fkey FOREIGN KEY (admin_id) REFERENCES public.admins(id),
+  CONSTRAINT admin_module_access_overrides_module_fkey FOREIGN KEY (module_key) REFERENCES public.modules(module_key)
 );
-CREATE TABLE public.user_applicant_access_overrides (
-  user_id uuid NOT NULL,
-  module_key text NOT NULL,
-  applicant_id uuid NOT NULL,
-  can_read boolean NOT NULL DEFAULT true,
-  created_at timestamp with time zone NOT NULL DEFAULT now(),
-  updated_at timestamp with time zone NOT NULL DEFAULT now(),
-  created_by uuid,
-  CONSTRAINT user_applicant_access_overrides_pkey PRIMARY KEY (user_id, module_key, applicant_id)
-);
-CREATE TABLE public.user_applicant_column_access_overrides (
-  user_id uuid NOT NULL,
-  module_key text NOT NULL,
-  applicant_id uuid NOT NULL,
-  column_key text NOT NULL,
-  can_read boolean NOT NULL DEFAULT true,
-  created_at timestamp with time zone NOT NULL DEFAULT now(),
-  updated_at timestamp with time zone NOT NULL DEFAULT now(),
-  created_by uuid,
-  CONSTRAINT user_applicant_column_access_overrides_pkey PRIMARY KEY (user_id, module_key, applicant_id, column_key)
-);
-CREATE TABLE public.user_column_access_overrides (
-  user_id uuid NOT NULL,
+CREATE TABLE public.admin_column_access_overrides (
+  admin_id uuid NOT NULL,
   module_key text NOT NULL,
   column_key text NOT NULL,
   can_read boolean NOT NULL DEFAULT true,
   created_at timestamp with time zone NOT NULL DEFAULT now(),
   updated_at timestamp with time zone NOT NULL DEFAULT now(),
   created_by uuid,
-  CONSTRAINT user_column_access_overrides_pkey PRIMARY KEY (user_id, module_key, column_key),
-  CONSTRAINT user_column_access_overrides_module_fkey FOREIGN KEY (module_key) REFERENCES public.modules(module_key)
+  CONSTRAINT admin_column_access_overrides_pkey PRIMARY KEY (admin_id, module_key, column_key),
+  CONSTRAINT admin_column_access_overrides_admin_fkey FOREIGN KEY (admin_id) REFERENCES public.admins(id),
+  CONSTRAINT admin_column_access_overrides_module_fkey FOREIGN KEY (module_key) REFERENCES public.modules(module_key)
 );
 CREATE TABLE public.user_module_access_overrides (
   user_id uuid NOT NULL,
@@ -591,6 +440,85 @@ CREATE TABLE public.user_module_access_overrides (
   CONSTRAINT user_module_access_overrides_pkey PRIMARY KEY (user_id, module_key),
   CONSTRAINT user_module_access_overrides_module_fkey FOREIGN KEY (module_key) REFERENCES public.modules(module_key)
 );
+CREATE TABLE public.user_column_access_overrides (
+  user_id uuid NOT NULL,
+  module_key text NOT NULL,
+  column_key text NOT NULL,
+  can_read boolean NOT NULL DEFAULT true,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  created_by uuid,
+  CONSTRAINT user_column_access_overrides_pkey PRIMARY KEY (user_id, module_key, column_key),
+  CONSTRAINT user_column_access_overrides_module_fkey FOREIGN KEY (module_key) REFERENCES public.modules(module_key)
+);
+CREATE TABLE public.role_column_access (
+  role_id uuid NOT NULL,
+  module_key text NOT NULL,
+  column_key text NOT NULL,
+  can_read boolean NOT NULL DEFAULT true,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  created_by uuid,
+  CONSTRAINT role_column_access_pkey PRIMARY KEY (role_id, module_key, column_key),
+  CONSTRAINT role_column_access_module_key_fkey FOREIGN KEY (module_key) REFERENCES public.modules(module_key),
+  CONSTRAINT role_column_access_role_id_fkey FOREIGN KEY (role_id) REFERENCES public.app_roles(role_id),
+  CONSTRAINT role_column_access_role_module_fkey FOREIGN KEY (role_id) REFERENCES public.role_module_access(role_id),
+  CONSTRAINT role_column_access_role_module_fkey FOREIGN KEY (module_key) REFERENCES public.role_module_access(module_key)
+);
+CREATE TABLE public.admin_applicant_access_overrides (
+  admin_id uuid NOT NULL,
+  module_key text NOT NULL,
+  applicant_id uuid NOT NULL,
+  can_read boolean NOT NULL DEFAULT true,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  created_by uuid,
+  CONSTRAINT admin_applicant_access_overrides_pkey PRIMARY KEY (admin_id, module_key, applicant_id)
+);
+CREATE TABLE public.user_applicant_access_overrides (
+  user_id uuid NOT NULL,
+  module_key text NOT NULL,
+  applicant_id uuid NOT NULL,
+  can_read boolean NOT NULL DEFAULT true,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  created_by uuid,
+  CONSTRAINT user_applicant_access_overrides_pkey PRIMARY KEY (user_id, module_key, applicant_id)
+);
+CREATE TABLE public.admin_applicant_column_access_overrides (
+  admin_id uuid NOT NULL,
+  module_key text NOT NULL,
+  applicant_id uuid NOT NULL,
+  column_key text NOT NULL,
+  can_read boolean NOT NULL DEFAULT true,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  created_by uuid,
+  CONSTRAINT admin_applicant_column_access_overrides_pkey PRIMARY KEY (admin_id, module_key, applicant_id, column_key)
+);
+CREATE TABLE public.user_applicant_column_access_overrides (
+  user_id uuid NOT NULL,
+  module_key text NOT NULL,
+  applicant_id uuid NOT NULL,
+  column_key text NOT NULL,
+  can_read boolean NOT NULL DEFAULT true,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  created_by uuid,
+  CONSTRAINT user_applicant_column_access_overrides_pkey PRIMARY KEY (user_id, module_key, applicant_id, column_key)
+);
+CREATE TABLE public.admin_row_identifier_column_access_overrides (
+  admin_id uuid NOT NULL,
+  module_key text NOT NULL,
+  row_identifier_key text NOT NULL,
+  row_identifier_value text NOT NULL,
+  column_key text NOT NULL,
+  can_read boolean NOT NULL DEFAULT true,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  created_by uuid,
+  CONSTRAINT admin_row_identifier_column_access_overrides_pkey PRIMARY KEY (admin_id, module_key, row_identifier_key, row_identifier_value, column_key)
+);
 CREATE TABLE public.user_row_identifier_column_access_overrides (
   user_id uuid NOT NULL,
   module_key text NOT NULL,
@@ -602,4 +530,141 @@ CREATE TABLE public.user_row_identifier_column_access_overrides (
   updated_at timestamp with time zone NOT NULL DEFAULT now(),
   created_by uuid,
   CONSTRAINT user_row_identifier_column_access_overrides_pkey PRIMARY KEY (user_id, module_key, row_identifier_key, row_identifier_value, column_key)
+);
+CREATE TABLE public.other_expiration_notification_log (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  other_expiration_item_id bigint NOT NULL,
+  item_name text NOT NULL,
+  expiration_type text NOT NULL,
+  expires_on date NOT NULL,
+  recipient_email text,
+  status text NOT NULL DEFAULT 'QUEUED'::text CHECK (status = ANY (ARRAY['QUEUED'::text, 'SENT'::text, 'FAILED'::text, 'SKIPPED'::text])),
+  error_message text,
+  CONSTRAINT other_expiration_notification_log_pkey PRIMARY KEY (id),
+  CONSTRAINT other_expiration_notification_log_other_item_fkey FOREIGN KEY (other_expiration_item_id) REFERENCES public.other_expiration_items(id)
+);
+CREATE TABLE public.audit_log_retention_settings (
+  id text NOT NULL DEFAULT 'default'::text,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  retention_days integer NOT NULL DEFAULT 30 CHECK (retention_days = ANY (ARRAY[7, 30, 365])),
+  CONSTRAINT audit_log_retention_settings_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.applicant_other_documents (
+  document_id uuid NOT NULL DEFAULT gen_random_uuid(),
+  applicant_id uuid NOT NULL,
+  label text NOT NULL DEFAULT ''::text,
+  bucket text NOT NULL DEFAULT 'applicants'::text CHECK (bucket = ANY (ARRAY['applicants'::text, 'certificates'::text, 'licensure'::text])),
+  file_path text NOT NULL DEFAULT ''::text,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT applicant_other_documents_pkey PRIMARY KEY (document_id),
+  CONSTRAINT applicant_other_documents_applicant_id_fkey FOREIGN KEY (applicant_id) REFERENCES public.applicants(applicant_id)
+);
+CREATE TABLE public.notification_log_retention_settings (
+  id text NOT NULL DEFAULT 'default'::text,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  retention_days integer NOT NULL DEFAULT 30 CHECK (retention_days = ANY (ARRAY[7, 30, 365])),
+  CONSTRAINT notification_log_retention_settings_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.car_insurance_notification_recipients (
+  id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
+  email text NOT NULL UNIQUE,
+  is_active boolean NOT NULL DEFAULT true,
+  notes text,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT car_insurance_notification_recipients_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.admin_login_history (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  admin_id uuid,
+  username text,
+  full_name text,
+  role text,
+  logged_in_at timestamp with time zone NOT NULL DEFAULT now(),
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT admin_login_history_pkey PRIMARY KEY (id),
+  CONSTRAINT admin_login_history_admin_id_fkey FOREIGN KEY (admin_id) REFERENCES public.admins(id)
+);
+CREATE TABLE public.applicant_detachment_history (
+  detachment_history_id uuid NOT NULL DEFAULT gen_random_uuid(),
+  applicant_id uuid NOT NULL,
+  previous_detachment text,
+  new_detachment text,
+  change_type text NOT NULL DEFAULT 'UPDATED'::text CHECK (change_type = ANY (ARRAY['INITIAL'::text, 'UPDATED'::text, 'CLEARED'::text])),
+  changed_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT applicant_detachment_history_pkey PRIMARY KEY (detachment_history_id),
+  CONSTRAINT applicant_detachment_history_applicant_id_fkey FOREIGN KEY (applicant_id) REFERENCES public.applicants(applicant_id)
+);
+CREATE TABLE public.paraphernalia_items (
+  item_id uuid NOT NULL DEFAULT gen_random_uuid(),
+  item_name text NOT NULL UNIQUE,
+  item_category text NOT NULL DEFAULT 'SEC'::text CHECK (item_category = ANY (ARRAY['SEC'::text, 'OFFICE'::text])),
+  display_order integer,
+  is_active boolean NOT NULL DEFAULT true,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  unit_price numeric NOT NULL DEFAULT 0 CHECK (unit_price >= 0::numeric),
+  item_group text NOT NULL DEFAULT 'Security / Safety'::text CHECK (item_group = ANY (ARRAY['Communication'::text, 'Security / Safety'::text, 'Tactical'::text, 'Transportation / Mobility'::text, 'Emergency / Medical'::text, 'Office Equipment'::text])),
+  CONSTRAINT paraphernalia_items_pkey PRIMARY KEY (item_id)
+);
+CREATE TABLE public.paraphernalia_detachment_tables (
+  detachment_table_id uuid NOT NULL DEFAULT gen_random_uuid(),
+  detachment text NOT NULL UNIQUE,
+  client_name text,
+  is_active boolean NOT NULL DEFAULT true,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT paraphernalia_detachment_tables_pkey PRIMARY KEY (detachment_table_id)
+);
+CREATE TABLE public.contract_expiration_notification_log (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  contract_id uuid,
+  contract_no text,
+  record_name text NOT NULL DEFAULT 'Contract'::text,
+  expires_on date NOT NULL,
+  recipient_email text,
+  status text NOT NULL DEFAULT 'QUEUED'::text CHECK (status = ANY (ARRAY['QUEUED'::text, 'SENT'::text, 'FAILED'::text, 'SKIPPED'::text])),
+  error_message text,
+  CONSTRAINT contract_expiration_notification_log_pkey PRIMARY KEY (id),
+  CONSTRAINT contract_expiration_notification_log_contract_id_fkey FOREIGN KEY (contract_id) REFERENCES public.contracts(contract_id)
+);
+CREATE TABLE public.role_paraphernalia_detachment_access (
+  role_id uuid NOT NULL,
+  detachment text NOT NULL CHECK (NULLIF(btrim(detachment), ''::text) IS NOT NULL),
+  can_stock_out boolean NOT NULL DEFAULT true,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT role_paraphernalia_detachment_access_pkey PRIMARY KEY (role_id, detachment),
+  CONSTRAINT role_paraphernalia_detachment_access_role_id_fkey FOREIGN KEY (role_id) REFERENCES public.app_roles(role_id)
+);
+CREATE TABLE public.admin_paraphernalia_access_settings (
+  admin_id uuid NOT NULL,
+  use_custom_detachments boolean NOT NULL DEFAULT false,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT admin_paraphernalia_access_settings_pkey PRIMARY KEY (admin_id),
+  CONSTRAINT admin_paraphernalia_access_settings_admin_id_fkey FOREIGN KEY (admin_id) REFERENCES public.admins(id)
+);
+CREATE TABLE public.admin_paraphernalia_detachment_access (
+  admin_id uuid NOT NULL,
+  detachment text NOT NULL CHECK (NULLIF(btrim(detachment), ''::text) IS NOT NULL),
+  can_stock_out boolean NOT NULL DEFAULT true,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT admin_paraphernalia_detachment_access_pkey PRIMARY KEY (admin_id, detachment),
+  CONSTRAINT admin_paraphernalia_detachment_access_admin_id_fkey FOREIGN KEY (admin_id) REFERENCES public.admins(id)
+);
+CREATE TABLE public.contract_notification_recipients (
+  id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
+  email text NOT NULL UNIQUE CHECK (email ~* '^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$'::text),
+  is_active boolean NOT NULL DEFAULT true,
+  notes text,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT contract_notification_recipients_pkey PRIMARY KEY (id)
 );

@@ -101,6 +101,7 @@ export default function DashboardPage() {
   const [error, setError] = useState('');
   const [historyPopup, setHistoryPopup] = useState<PopupState | null>(null);
   const closePopupTimerRef = useRef<number | null>(null);
+  const historyPopupHoveredRef = useRef(false);
   const router = useRouter();
   const electronAPI = (globalThis as { electronAPI?: DashboardElectronApi }).electronAPI;
 
@@ -314,12 +315,21 @@ export default function DashboardPage() {
   useEffect(() => {
     if (!historyPopup) return undefined;
 
-    const close = () => setHistoryPopup(null);
-    window.addEventListener('scroll', close, true);
-    window.addEventListener('resize', close);
+    const closeOnOutsideScroll = (event: Event) => {
+      const target = event.target;
+      if (target instanceof Element && target.closest('[data-login-history-popup]')) return;
+      historyPopupHoveredRef.current = false;
+      setHistoryPopup(null);
+    };
+    const closeOnResize = () => {
+      historyPopupHoveredRef.current = false;
+      setHistoryPopup(null);
+    };
+    window.addEventListener('scroll', closeOnOutsideScroll, true);
+    window.addEventListener('resize', closeOnResize);
     return () => {
-      window.removeEventListener('scroll', close, true);
-      window.removeEventListener('resize', close);
+      window.removeEventListener('scroll', closeOnOutsideScroll, true);
+      window.removeEventListener('resize', closeOnResize);
     };
   }, [historyPopup]);
 
@@ -331,6 +341,7 @@ export default function DashboardPage() {
   }
 
   function schedulePopupClose() {
+    if (historyPopupHoveredRef.current) return;
     clearPopupCloseTimer();
     closePopupTimerRef.current = window.setTimeout(() => {
       setHistoryPopup(null);
@@ -342,10 +353,10 @@ export default function DashboardPage() {
     if (typeof window === 'undefined') return;
     clearPopupCloseTimer();
     const rect = trigger.getBoundingClientRect();
-    const popupWidth = 360;
+    const popupWidth = Math.min(420, window.innerWidth - 32);
     const safeMargin = 16;
     const left = Math.max(safeMargin, Math.min(rect.left, window.innerWidth - popupWidth - safeMargin));
-    const top = Math.min(rect.bottom + 10, window.innerHeight - 260);
+    const top = Math.max(safeMargin, Math.min(rect.bottom + 10, window.innerHeight - 380));
     setHistoryPopup({ adminId, top, left });
   }
 
@@ -605,10 +616,18 @@ export default function DashboardPage() {
       {canUsePortal && historyPopup && popupAdmin
         ? createPortal(
             <div
-              className="fixed z-[120] w-[360px] rounded-2xl border border-slate-200 bg-white shadow-2xl"
+              data-login-history-popup
+              className="fixed z-[120] w-[min(420px,calc(100vw-2rem))] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl"
               style={{ top: historyPopup.top, left: historyPopup.left }}
-              onMouseEnter={clearPopupCloseTimer}
-              onMouseLeave={schedulePopupClose}
+              onMouseEnter={() => {
+                historyPopupHoveredRef.current = true;
+                clearPopupCloseTimer();
+              }}
+              onMouseLeave={() => {
+                historyPopupHoveredRef.current = false;
+                schedulePopupClose();
+              }}
+              onPointerDown={clearPopupCloseTimer}
             >
               <div className="border-b border-slate-200 px-4 py-3">
                 <div className="text-sm font-semibold text-slate-900">Login history</div>
@@ -617,7 +636,7 @@ export default function DashboardPage() {
                 </div>
               </div>
 
-              <div className="max-h-[260px] overflow-y-auto px-2 py-2">
+              <div className="max-h-[min(360px,60vh)] overscroll-contain overflow-y-auto px-2 py-2">
                 {popupRows.length ? (
                   popupRows.map((row, index) => (
                     <div key={`${row.id}-${index}`} className="rounded-xl px-3 py-2 text-sm hover:bg-slate-50">

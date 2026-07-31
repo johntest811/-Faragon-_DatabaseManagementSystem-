@@ -39,23 +39,24 @@ export function useRealtimeRefresh(tables: string[], options?: UseRealtimeRefres
       }, debounceMs);
     };
 
-    const channels = stableTables.map((table) =>
-      supabase
-        .channel(`realtime:${table}`)
-        .on(
-          "postgres_changes",
-          { event: "*", schema: "public", table },
-          scheduleRefresh
-        )
-        .subscribe()
-    );
+    const channel = stableTables
+      .reduce(
+        (currentChannel, table) =>
+          currentChannel.on(
+            "postgres_changes",
+            { event: "*", schema: "public", table },
+            scheduleRefresh
+          ),
+        supabase.channel(`realtime:app-refresh:${tablesKey}`)
+      )
+      .subscribe();
 
     return () => {
       if (refreshTimer) {
         clearTimeout(refreshTimer);
         refreshTimer = null;
       }
-      channels.forEach((ch) => supabase.removeChannel(ch));
+      supabase.removeChannel(channel);
     };
-  }, [router, stableTables, debounceMs, disabled]);
+  }, [router, stableTables, tablesKey, debounceMs, disabled]);
 }

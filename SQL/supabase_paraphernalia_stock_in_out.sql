@@ -117,7 +117,7 @@ values
   ('SAFETY VAULT', 'OFFICE', 60, true),
   ('STEEL CABINET', 'OFFICE', 61, true),
   ('STEEL LOCKER', 'OFFICE', 62, true),
-  ('SYTEM UNIT', 'OFFICE', 63, true),
+  ('SYSTEM UNIT', 'OFFICE', 63, true),
   ('LAPTOP', 'OFFICE', 64, true),
   ('CIGNUS CHARGER', 'OFFICE', 65, true),
   ('VERSA CHARGER', 'OFFICE', 66, true),
@@ -248,7 +248,7 @@ as $$
       'SAFETY VAULT',
       'STEEL CABINET',
       'STEEL LOCKER',
-      'SYTEM UNIT',
+      'SYSTEM UNIT',
       'LAPTOP',
       'CIGNUS CHARGER',
       'VERSA CHARGER',
@@ -273,7 +273,8 @@ as $$
   end;
 $$;
 
-create or replace view public.vw_paraphernalia_inventory_summary as
+create or replace view public.vw_paraphernalia_inventory_summary
+with (security_invoker = true) as
 with stock_in as (
   select
     r.contract_id,

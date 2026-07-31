@@ -252,9 +252,9 @@ export default function EmployeesPage() {
 	const [sortBy, setSortBy] = useState<"name" | "last_name" | "letter" | "created_at" | "category" | "expiring" | "service">("name");
 	const [viewMode, setViewMode] = useState<"grid" | "table">(() => {
   if (typeof window !== "undefined") {
-    return (localStorage.getItem("employees:viewMode") as "grid" | "table") || "grid";
+    return (localStorage.getItem("employees:viewMode:v2") as "grid" | "table") || "table";
   }
-  return "grid";
+  return "table";
 });
 
 
@@ -285,6 +285,8 @@ export default function EmployeesPage() {
 
 	const [serviceExportOpen, setServiceExportOpen] = useState(false);
 	const [serviceExportMonth, setServiceExportMonth] = useState("ALL");
+	const [serviceExportFromFilter, setServiceExportFromFilter] = useState("");
+	const [serviceExportToFilter, setServiceExportToFilter] = useState("");
 	const [serviceExportTitle, setServiceExportTitle] = useState("Employees 1+ Year Export");
 	const [serviceExportShowBirthday, setServiceExportShowBirthday] = useState(false);
 
@@ -381,7 +383,7 @@ export default function EmployeesPage() {
 
 	useEffect(() => {
   if (typeof window !== "undefined") {
-    localStorage.setItem("employees:viewMode", viewMode);
+    localStorage.setItem("employees:viewMode:v2", viewMode);
   }
 }, [viewMode]);
 
@@ -629,7 +631,7 @@ if (hiredMonthFilter !== "ALL") {
 	}, [exportSourceEmployees, expiringSummaryByApplicantId, licensureByApplicantId, showNameColumn, showPositionColumn, showDetachmentColumn]);
 
 	const exportServiceRows = useMemo(() => {
-			const now = liveNow;
+		const now = liveNow;
 		const items = exportSourceEmployees
 			.map((e) => {
 				const years = serviceYearsExact(e.date_hired_fsai, now);
@@ -638,12 +640,14 @@ if (hiredMonthFilter !== "ALL") {
 				const birthdayDate = e.birth_date ? new Date(e.birth_date) : null;
 				const hasHiredDate = Boolean(hiredDate && !Number.isNaN(hiredDate.getTime()));
 				const hasBirthdayDate = Boolean(birthdayDate && !Number.isNaN(birthdayDate.getTime()));
+				const hiredYmd = ymd(e.date_hired_fsai) ?? "";
 				return {
 					applicant_id: e.applicant_id,
 					name: showNameColumn ? getFullName(e) : "Employee",
 					job: showPositionColumn ? e.client_position ?? "—" : "—",
 					detachment: showDetachmentColumn ? e.detachment ?? "—" : "—",
 					hired_on: hasHiredDate && hiredDate ? hiredDate.toLocaleDateString() : "—",
+					hired_ymd: hiredYmd,
 					birthday: hasBirthdayDate && birthdayDate ? birthdayDate.toLocaleDateString() : "—",
 					hired_month: hasHiredDate && hiredDate ? String(hiredDate.getMonth() + 1).padStart(2, "0") : null,
 					service: formatServiceLengthShort(e.date_hired_fsai, now),
@@ -657,6 +661,7 @@ if (hiredMonthFilter !== "ALL") {
 					job: string;
 					detachment: string;
 					hired_on: string;
+					hired_ymd: string;
 					birthday: string;
 					hired_month: string | null;
 					service: string;
@@ -669,9 +674,23 @@ if (hiredMonthFilter !== "ALL") {
 	}, [exportSourceEmployees, showNameColumn, showPositionColumn, showDetachmentColumn, liveNow]);
 
 	const exportServiceRowsFiltered = useMemo(() => {
-		if (serviceExportMonth === "ALL") return exportServiceRows;
-		return exportServiceRows.filter((row) => row.hired_month === serviceExportMonth);
-	}, [exportServiceRows, serviceExportMonth]);
+		let rows = exportServiceRows;
+
+		if (serviceExportMonth !== "ALL") {
+			rows = rows.filter((row) => row.hired_month === serviceExportMonth);
+		}
+
+		if (serviceExportFromFilter || serviceExportToFilter) {
+			rows = rows.filter((row) => {
+				if (!row.hired_ymd) return false;
+				if (serviceExportFromFilter && row.hired_ymd < serviceExportFromFilter) return false;
+				if (serviceExportToFilter && row.hired_ymd > serviceExportToFilter) return false;
+				return true;
+			});
+		}
+
+		return rows;
+	}, [exportServiceRows, serviceExportFromFilter, serviceExportMonth, serviceExportToFilter]);
 
 	const filterOptions = useMemo(() => {
 		const det = new Set<string>();
@@ -928,8 +947,16 @@ if (hiredMonthFilter !== "ALL") {
 		setExportOpen(false);
 	}
 
+	function serviceExportDateRangeLabel() {
+		if (!serviceExportFromFilter && !serviceExportToFilter) return "All Hired Dates";
+		return `${serviceExportFromFilter || "Start"} to ${serviceExportToFilter || "Today"}`;
+	}
+
 	function serviceExportFileBase() {
 		const parts = ["employees_service", serviceExportMonth === "ALL" ? "all-months" : `m${serviceExportMonth}`];
+		if (serviceExportFromFilter || serviceExportToFilter) {
+			parts.push(`${serviceExportFromFilter || "start"}-to-${serviceExportToFilter || "today"}`);
+		}
 		if (serviceExportShowBirthday) parts.push("birthday");
 		parts.push(new Date().toISOString().slice(0, 10));
 		return parts.join("_");
@@ -939,14 +966,14 @@ if (hiredMonthFilter !== "ALL") {
 		setError("");
 		const rows = exportServiceRowsFiltered;
 		if (!rows.length) {
-			setError("No employees with one year or more in company for the selected month.");
+			setError("No employees with one year or more in company for the selected filters.");
 			return;
 		}
 
 		const monthLabel =
 			HIRE_MONTH_OPTIONS.find((opt) => opt.value === serviceExportMonth)?.label ?? "All Months";
 		const title = serviceExportTitle.trim() || "Employees 1+ Year Export";
-		const subtitle = `Generated: ${new Date().toLocaleString()} • Month Filter: ${monthLabel}`;
+		const subtitle = `Generated: ${new Date().toLocaleString()} • Month Filter: ${monthLabel} • Hired Date: ${serviceExportDateRangeLabel()}`;
 		const exportRows = rows.map((row) =>
 			serviceExportShowBirthday
 				? {
@@ -984,7 +1011,7 @@ if (hiredMonthFilter !== "ALL") {
 		setError("");
 		const rows = exportServiceRowsFiltered;
 		if (!rows.length) {
-			setError("No employees with one year or more in company for the selected month.");
+			setError("No employees with one year or more in company for the selected filters.");
 			return;
 		}
 
@@ -992,7 +1019,7 @@ if (hiredMonthFilter !== "ALL") {
 			HIRE_MONTH_OPTIONS.find((opt) => opt.value === serviceExportMonth)?.label ?? "All Months";
 		const title = serviceExportTitle.trim() || "Employees 1+ Year Export";
 		const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
-		const subtitle = `Month Filter: ${monthLabel}`;
+		const subtitle = `Month Filter: ${monthLabel} • Hired Date: ${serviceExportDateRangeLabel()}`;
 		const head = serviceExportShowBirthday
 			? [["Name", "Job Title", "Detachment", "Hired Date", "Birthday", "Years w/ Company"]]
 			: [["Name", "Job Title", "Detachment", "Hired Date", "Years w/ Company"]];
@@ -1498,7 +1525,7 @@ if (hiredMonthFilter !== "ALL") {
 
 			{serviceExportOpen && canExportEmployees ? (
 				<div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
-					<div className="glass-panel rounded-3xl shadow-2xl max-w-4xl w-full overflow-hidden animate-scale-in">
+					<div className="glass-panel rounded-3xl shadow-2xl max-w-5xl w-full max-h-[92vh] overflow-hidden animate-scale-in flex flex-col">
 						<div className="px-6 py-4 border-b flex items-center justify-between">
 							<div className="text-lg font-bold text-black">1+ Year In Company Export</div>
 							<button
@@ -1510,8 +1537,8 @@ if (hiredMonthFilter !== "ALL") {
 							</button>
 						</div>
 
-						<div className="p-6 space-y-4">
-							<div className="grid grid-cols-1 md:grid-cols-[1fr_220px_220px_auto] gap-4">
+						<div className="p-6 space-y-4 overflow-y-auto">
+							<div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-[minmax(220px,1fr)_170px_160px_160px_220px_auto] gap-4">
 								<label className="text-sm text-black">
 									<div className="text-gray-600 mb-1">Title</div>
 									<input
@@ -1537,7 +1564,29 @@ if (hiredMonthFilter !== "ALL") {
 									</select>
 								</label>
 
-								<label className="flex items-center gap-3 rounded-xl border bg-white px-3 py-2 text-sm text-black">
+								<label className="text-sm text-black">
+									<div className="text-gray-600 mb-1">Hired From</div>
+									<input
+										type="date"
+										value={serviceExportFromFilter}
+										onChange={(e) => setServiceExportFromFilter(e.target.value)}
+										max={serviceExportToFilter || undefined}
+										className="w-full border rounded-xl px-3 py-2 bg-white"
+									/>
+								</label>
+
+								<label className="text-sm text-black">
+									<div className="text-gray-600 mb-1">Hired To</div>
+									<input
+										type="date"
+										value={serviceExportToFilter}
+										onChange={(e) => setServiceExportToFilter(e.target.value)}
+										min={serviceExportFromFilter || undefined}
+										className="w-full border rounded-xl px-3 py-2 bg-white"
+									/>
+								</label>
+
+								<label className="flex items-center gap-3 rounded-xl border bg-white px-3 py-2 text-sm text-black sm:col-span-2 xl:col-span-1">
 									<input
 										type="checkbox"
 										checked={serviceExportShowBirthday}
@@ -1550,7 +1599,7 @@ if (hiredMonthFilter !== "ALL") {
 									</div>
 								</label>
 
-								<div className="flex items-end justify-end gap-2">
+								<div className="flex items-end justify-start xl:justify-end gap-2">
 									<button
 										type="button"
 										onClick={exportServiceXlsx}
@@ -1604,14 +1653,29 @@ if (hiredMonthFilter !== "ALL") {
 										</table>
 									) : (
 										<div className="px-4 py-6 text-sm text-gray-500">
-											No employees with one year or more in company for the selected month.
+											No employees with one year or more in company for the selected filters.
 										</div>
 									)}
 								</div>
 							</div>
 
-							<div className="rounded-2xl border bg-white px-4 py-3 text-sm text-gray-700">
-								Use Hired Month = All Months to list every employee with at least one year of service.
+							<div className="rounded-2xl border bg-white px-4 py-3 text-sm text-gray-700 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+								<div>
+									Use Hired Month = All Months and clear From/To to list every employee with at least one year of service.
+								</div>
+								{serviceExportMonth !== "ALL" || serviceExportFromFilter || serviceExportToFilter ? (
+									<button
+										type="button"
+										onClick={() => {
+											setServiceExportMonth("ALL");
+											setServiceExportFromFilter("");
+											setServiceExportToFilter("");
+										}}
+										className="w-full rounded-xl border bg-white px-3 py-2 text-xs font-semibold text-black sm:w-auto"
+									>
+										Clear export filters
+									</button>
+								) : null}
 							</div>
 						</div>
 					</div>

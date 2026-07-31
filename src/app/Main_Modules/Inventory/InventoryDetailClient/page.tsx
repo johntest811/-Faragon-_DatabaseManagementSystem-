@@ -127,7 +127,7 @@ export default function InventoryDetailClient({ id }: { id: string }) {
       { key: "communications_name", label: "Communications Equipment", name: row.communications_name || "—", qty: Number(row.communications_qty ?? 0) || 0, price: Number(row.communications_price ?? 0) || 0 },
       { key: "furniture_name", label: "Furniture & Fixtures", name: row.furniture_name || "—", qty: Number(row.furniture_qty ?? 0) || 0, price: Number(row.furniture_price ?? 0) || 0 },
       { key: "office_name", label: "Office Equipment", name: row.office_name || "—", qty: Number(row.office_qty ?? 0) || 0, price: Number(row.office_price ?? 0) || 0 },
-      { key: "sec_name", label: "Sec Equipment", name: row.sec_name || "—", qty: Number(row.sec_qty ?? 0) || 0, price: Number(row.sec_price ?? 0) || 0 },
+      { key: "sec_name", label: "Security Equipment", name: row.sec_name || "—", qty: Number(row.sec_qty ?? 0) || 0, price: Number(row.sec_price ?? 0) || 0 },
       { key: "vehicle_name", label: "Vehicle & Motorcycle", name: row.vehicle_name || "—", qty: Number(row.vehicle_qty ?? 0) || 0, price: Number(row.vehicle_price ?? 0) || 0 },
     ];
 

@@ -147,9 +147,9 @@ export default function ReassignPage() {
 
   const [viewMode, setViewMode] = useState<"grid" | "table">(() => {
     if (typeof window !== "undefined") {
-      return (localStorage.getItem("reassign:viewMode") as "grid" | "table") || "grid";
+      return (localStorage.getItem("reassign:viewMode:v2") as "grid" | "table") || "table";
     }
-    return "grid";
+    return "table";
   });
   
   async function updateEmployeeStatus(employee: Applicant, nextStatus: string) {
@@ -361,7 +361,7 @@ export default function ReassignPage() {
 
   useEffect(() => {
     try {
-      const saved = window.localStorage.getItem("reassign:viewMode");
+      const saved = window.localStorage.getItem("reassign:viewMode:v2");
       if (saved === "grid" || saved === "table") setViewMode(saved);
     } catch {
       // ignore
@@ -381,7 +381,7 @@ export default function ReassignPage() {
 
   useEffect(() => {
     try {
-      window.localStorage.setItem("reassign:viewMode", viewMode);
+      window.localStorage.setItem("reassign:viewMode:v2", viewMode);
     } catch {
       // ignore
     }

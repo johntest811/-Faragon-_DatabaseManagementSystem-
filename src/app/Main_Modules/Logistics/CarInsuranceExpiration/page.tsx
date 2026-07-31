@@ -8,6 +8,7 @@ import autoTable from "jspdf-autotable";
 import { supabase } from "@/app/Client/SupabaseClients";
 import { useMyColumnAccess, useMyModuleAccess, useMyModuleDeleteAccess, useMyModuleEditAccess } from "@/app/Client/useRbac";
 import LoadingCircle from "@/app/Components/LoadingCircle";
+import SearchDropdownInput from "@/app/Components/SearchDropdownInput";
 import TableZoomWrapper from "@/app/Components/TableZoomWrapper";
 import SpreadsheetImportModal from "@/app/Components/SpreadsheetImportModal";
 import { addBrandedPdfHeader, buildBrandedAoa, buildBrandedWorkbookBuffer } from "../../Components/exportBranding";
@@ -479,6 +480,9 @@ export default function CarInsuranceExpirationPage() {
   const [editRecipientEmail, setEditRecipientEmail] = useState("");
   const [editRecipientNotes, setEditRecipientNotes] = useState("");
   const [editRecipientActive, setEditRecipientActive] = useState(true);
+  const [specificAreaOptions, setSpecificAreaOptions] = useState<string[]>([]);
+  const [specificAreasLoading, setSpecificAreasLoading] = useState(false);
+  const [specificAreasError, setSpecificAreasError] = useState("");
 
   const nextRecordNo = useMemo(() => getNextRecordNo(rows), [rows]);
 
@@ -566,6 +570,38 @@ export default function CarInsuranceExpirationPage() {
     }
   }
 
+  async function loadSpecificAreaOptions() {
+    setSpecificAreasLoading(true);
+    setSpecificAreasError("");
+    try {
+      const result = await supabase
+        .from("contracts")
+        .select("specific_area")
+        .not("specific_area", "is", null)
+        .order("specific_area", { ascending: true })
+        .limit(5000);
+
+      if (result.error) throw result.error;
+
+      const uniqueAreas = new Map<string, string>();
+      for (const row of result.data ?? []) {
+        const area = cleanText((row as { specific_area?: unknown }).specific_area);
+        if (!area) continue;
+        const key = area.replace(/\s+/g, " ").toLowerCase();
+        if (!uniqueAreas.has(key)) uniqueAreas.set(key, area);
+      }
+
+      setSpecificAreaOptions(
+        Array.from(uniqueAreas.values()).sort((left, right) => left.localeCompare(right, undefined, { sensitivity: "base" }))
+      );
+    } catch (loadError: unknown) {
+      setSpecificAreaOptions([]);
+      setSpecificAreasError(getErrorMessage(loadError, "Failed to load Client Specific Areas."));
+    } finally {
+      setSpecificAreasLoading(false);
+    }
+  }
+
   useEffect(() => {
     if (accessLoading) return;
     if (!canAccess) {
@@ -574,6 +610,7 @@ export default function CarInsuranceExpirationPage() {
     }
     void loadRows();
     void loadRecipientRows();
+    void loadSpecificAreaOptions();
   }, [accessLoading, canAccess]);
 
   const filteredRows = useMemo(() => {
@@ -615,6 +652,7 @@ export default function CarInsuranceExpirationPage() {
   }, [rows]);
 
   function startCreate() {
+    void loadSpecificAreaOptions();
     setEditingId(null);
     setForm(emptyForm(String(nextRecordNo)));
     setError("");
@@ -623,6 +661,7 @@ export default function CarInsuranceExpirationPage() {
   }
 
   function startEdit(row: CarInsuranceRow) {
+    void loadSpecificAreaOptions();
     setEditingId(row.id);
     setForm({
       recordNo: String(row.record_no ?? ""),
@@ -762,6 +801,9 @@ export default function CarInsuranceExpirationPage() {
     const carRegistrationFromDate = cleanText(form.carRegistrationFromDate);
     const carRegistrationToDate = cleanText(form.carRegistrationToDate);
     const plateNumber = cleanText(form.plateNumber);
+    const selectedSpecificArea = specificAreaOptions.find(
+      (area) => area.replace(/\s+/g, " ").toLowerCase() === cleanText(form.postDistributions).replace(/\s+/g, " ").toLowerCase()
+    );
 
     if (!Number.isFinite(recordNo) || recordNo <= 0) {
       setError("No. is required and must be a positive number.");
@@ -771,8 +813,12 @@ export default function CarInsuranceExpirationPage() {
       setError("Patrol is required.");
       return;
     }
-    if (!cleanText(form.postDistributions)) {
-      setError("Post/s Distributions is required.");
+    if (!selectedSpecificArea) {
+      setError(
+        specificAreasError
+          ? `Client Specific Areas could not be loaded: ${specificAreasError}`
+          : "Select an existing Client Specific Area for Post/s Distributions."
+      );
       return;
     }
     if (!cleanText(form.make)) {
@@ -827,7 +873,7 @@ export default function CarInsuranceExpirationPage() {
         expiration_type: EXPIRATION_TYPE,
         record_no: Math.trunc(recordNo),
         patrol: cleanText(form.patrol),
-        post_distributions: cleanText(form.postDistributions),
+        post_distributions: selectedSpecificArea,
         make: cleanText(form.make),
         model: cleanText(form.model),
         color: cleanText(form.color),
@@ -1525,7 +1571,24 @@ export default function CarInsuranceExpirationPage() {
                   return (
                     <label key={String(field.key)} className={`space-y-1 ${field.spanClassName ?? ""}`}>
                       <span className="block text-sm font-medium text-black">{field.label}</span>
-                      {field.type === "textarea" ? (
+                      {field.key === "postDistributions" ? (
+                        <>
+                          <SearchDropdownInput
+                            value={String(value)}
+                            onChange={(nextValue) => setForm((current) => ({ ...current, postDistributions: nextValue }))}
+                            options={specificAreaOptions}
+                            placeholder="Type or select a Client Specific Area"
+                            emptyLabel={specificAreasLoading ? "Loading Client Specific Areas..." : "No matching Client Specific Area found."}
+                            required
+                            className={commonInputClass}
+                          />
+                          {specificAreasError ? (
+                            <span className="block text-xs text-red-600">{specificAreasError}</span>
+                          ) : (
+                            <span className="block text-xs text-gray-500">Options come from the Client page Specific Area column.</span>
+                          )}
+                        </>
+                      ) : field.type === "textarea" ? (
                         <textarea
                           rows={3}
                           value={String(value)}

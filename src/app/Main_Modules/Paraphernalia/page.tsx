@@ -1,22 +1,35 @@
 "use client";
 
-import { FormEvent, ReactNode, useEffect, useMemo, useState } from "react";
-import { Download, FileText, Pencil, Plus, RefreshCw, Search, Trash2, Upload } from "lucide-react";
+import { FormEvent, ReactNode, useCallback, useEffect, useId, useMemo, useState } from "react";
+import { Download, FileText, Maximize2, Pencil, Plus, RefreshCw, Search, Trash2, Upload } from "lucide-react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { supabase } from "@/app/Client/SupabaseClients";
-import { useAuthRole, useMyColumnAccess } from "@/app/Client/useRbac";
+import { useAuthRole, useMyColumnAccess, useMyParaphernaliaDetachmentAccess } from "@/app/Client/useRbac";
 import LoadingCircle from "@/app/Components/LoadingCircle";
 import ImportSummaryModal, { ImportSummaryData } from "../Components/ImportSummaryModal";
 import SpreadsheetImportModal from "@/app/Components/SpreadsheetImportModal";
 import TableZoomWrapper from "@/app/Components/TableZoomWrapper";
 import { addBrandedPdfHeader, buildBrandedAoa, buildBrandedWorkbookBuffer } from "../Components/exportBranding";
+import {
+  EQUIPMENT_GROUPS,
+  EquipmentGroup,
+  equipmentGroupForName,
+  paraphernaliaKindForGroup,
+} from "../Components/equipmentCatalog";
 import * as XLSX from "xlsx";
 
 type InventoryKind = "SEC" | "OFFICE";
 type EntryKind = "stockIn" | "stockOut";
 type EntryMode = "create" | "edit";
-type ViewAllKind = EntryKind | "secInventory" | "officeInventory";
+type ViewAllKind =
+  | EntryKind
+  | "secInventory"
+  | "officeInventory"
+  | "mainSecurityInventory"
+  | "mainOfficeInventory"
+  | "mainStockIn"
+  | "mainTransfer";
 type ViewAllState = { kind: ViewAllKind; detachment?: string } | null;
 
 type ContractOption = {
@@ -32,7 +45,6 @@ type StockInRow = {
   date: string | null;
   status: string | null;
   item: string | null;
-  control_number: string | null;
   quantity: number | null;
   attachment: string | null;
   detachment: string | null;
@@ -46,7 +58,6 @@ type StockOutRow = {
   date: string | null;
   names: string | null;
   item: string | null;
-  control_number: string | null;
   quantity: number | null;
   price: number | null;
   status: string | null;
@@ -60,7 +71,18 @@ type ItemOption = {
   item_id: string | null;
   item_name: string;
   item_category: InventoryKind;
+  item_group: EquipmentGroup;
   display_order: number | null;
+  unit_price: number;
+};
+
+type EmployeeOption = {
+  applicant_id: string;
+  first_name: string | null;
+  middle_name: string | null;
+  last_name: string | null;
+  extn_name: string | null;
+  detachment: string | null;
 };
 
 type InventorySummaryRow = {
@@ -74,17 +96,27 @@ type InventorySummaryRow = {
   stockBalance: number;
 };
 
+type MainInventoryRow = {
+  id: string;
+  item: string;
+  category: InventoryKind;
+  group: EquipmentGroup;
+  unitPrice: number;
+  stockIn: number;
+  stockOut: number;
+  stockBalance: number;
+  inventoryValue: number;
+};
+
 type StockInLineForm = {
   key: string;
   item: string;
-  controlNumber: string;
   quantity: string;
 };
 
 type StockOutLineForm = {
   key: string;
   item: string;
-  controlNumber: string;
   quantity: string;
   price: string;
 };
@@ -109,7 +141,7 @@ type StockOutForm = {
 };
 
 type EntryModalState =
-  | { kind: "stockIn"; mode: EntryMode; row?: StockInRow }
+  | { kind: "stockIn"; mode: EntryMode; row?: StockInRow; transfer?: boolean }
   | { kind: "stockOut"; mode: EntryMode; row?: StockOutRow }
   | null;
 
@@ -130,15 +162,15 @@ function makeLineKey() {
 }
 
 function newStockInLine(): StockInLineForm {
-  return { key: makeLineKey(), item: "", controlNumber: "", quantity: "" };
+  return { key: makeLineKey(), item: "", quantity: "" };
 }
 
 function newStockOutLine(): StockOutLineForm {
-  return { key: makeLineKey(), item: "", controlNumber: "", quantity: "", price: "" };
+  return { key: makeLineKey(), item: "", quantity: "", price: "" };
 }
 
 const STOCK_IN_STATUSES = ["RE-STOCKED", "PENDING", "CANCELLED"] as const;
-const STOCK_OUT_STATUSES = ["FREE", "POSTED", "PAID"] as const;
+const STOCK_OUT_STATUSES = ["POSTED", "UNPOSTED", "NEW GUARD", "RETURN", "FREE", "VERIFY", "PAID"] as const;
 
 const EMPTY_STOCK_IN_FORM: StockInForm = {
   date: "",
@@ -153,7 +185,7 @@ const EMPTY_STOCK_OUT_FORM: StockOutForm = {
   date: "",
   names: "",
   items: [],
-  status: "FREE",
+  status: "",
   datePosted: "",
   detachment: "",
   clientName: "",
@@ -220,7 +252,7 @@ const ITEM_CATALOG: Array<{ no: number; group: string; item: string; category: I
   { no: 60, group: "Office Equipment", item: "SAFETY VAULT", category: "OFFICE" },
   { no: 61, group: "Office Equipment", item: "STEEL CABINET", category: "OFFICE" },
   { no: 62, group: "Office Equipment", item: "STEEL LOCKER", category: "OFFICE" },
-  { no: 63, group: "Office Equipment", item: "SYTEM UNIT", category: "OFFICE" },
+  { no: 63, group: "Office Equipment", item: "SYSTEM UNIT", category: "OFFICE" },
   { no: 64, group: "Office Equipment", item: "LAPTOP", category: "OFFICE" },
   { no: 65, group: "Office Equipment", item: "CIGNUS CHARGER", category: "OFFICE" },
   { no: 66, group: "Office Equipment", item: "VERSA CHARGER", category: "OFFICE" },
@@ -234,94 +266,26 @@ const inputClass = "w-full rounded-xl border px-3 py-2 text-sm text-black outlin
 const labelClass = "block text-xs font-semibold uppercase tracking-wide text-gray-600 mb-1";
 const DETACHMENT_TABLE_STORAGE_KEY = "paraphernalia:manual-detachment-tables";
 const PARAPHERNALIA_BUCKET = "paraphernalia";
-const CONTROL_NUMBER_PREFIXES: Record<string, string> = {
-  AIRCON: "AC",
-  BIKE: "BK",
-  "BODY SCANNER": "BS",
-  BODYCAMERA: "BC",
-  "BP APPRATUS": "BP",
-  BUNDYCLOCK: "BDC",
-  "C-COLLAR": "CC",
-  CIGNUS: "CIG",
-  "CPR DUMMY": "CPR",
-  DRONE: "DR",
-  ELECTRICFAN: "EF",
-  "FIRST AID KIT": "FK",
-  "HAND TALLY COUNTER": "HTC",
-  KENWOOD: "KEN",
-  "LIFE VEST": "LJ",
-  "LIFE JACKET": "LJ",
-  MEGAPHONE: "MP",
-  "METAL DETECTOR": "MD",
-  MOBILE: "MV",
-  MONITOR: "MON",
-  "OFFICE CHAIR": "OC",
-  "OXYGEN TANK": "OX",
-  PHONE: "CP",
-  PISTOL: "PIS",
-  "PODIUM TABLE": "PT",
-  PRINTER: "PRN",
-  "DISCHARGE TUBE/BOX": "DTB",
-  "SAND BOX": "SBX",
-  SEABOURNE: "SB",
-  SHOTGUN: "SG",
-  SHREDDER: "SHR",
-  SPINEBOARD: "SPB",
-  "STEEL CABINET": "SC",
-  "TASER GUN": "TG",
-  STUNGUN: "SG",
-  "SYTEM UNIT": "SU",
-  VERSA: "VER",
-  "WHEEL CHAIR": "WC",
-  "WIFI DONGLE": "WD",
-  "XEROX MACHINE": "XM",
-  MOTORCYCLE: "MC",
-  "BUILT-IN-MONITOR": "BIM",
-  BIOMETRIC: "BIO",
-  "BULLET PROOF VEST": "BPV",
-  "ALCOHOL TESTER": "AT",
-  "TRAFFIC CONE": "TC",
-  BINOCULAR: "BI",
-  SIGNAGE: "SGN",
-  "SPEED RADAR": "SRG",
-  "LIFE RING": "LR",
-  "INDUSTRIAL MASK": "IM",
-  "UNDER CHASSIS MIRROR": "UCM",
-  "NIGHT STICK": "NS",
-  "SOLAR TRAFFIC CONE": "STC",
-  "STEEL LOCKER": "SL",
-  "OFFICE TABLE": "OT",
-  "FIRST AID CABINET": "FAC",
-  "GUARD TOUR SYSTEM": "GTS",
-  "WALK THROUGH": "WT",
-  "SATELLITE PHONE": "SP",
-  PROJECTOR: "PJT",
-  "INDUSTRIAL FAN": "IF",
-  "QR SCANNER": "QR",
-  "SEARCH LIGHT": "LS",
-  "FLARE GUN": "FG",
-  "SAFETY VAULT": "SV",
-  "FIRE EXTINGUISHER": "FX",
-  "LIFTING BELT": "LB",
-  MOTOROLA: "M",
-  LAPTOP: "LT",
-  "SPARE BATTERY": "BAT",
-  "RADIO CHARGER": "RC",
-  "CIGNUS CHARGER": "CCH",
-  "VERSA CHARGER": "VCH",
-  "EXTRA MAGAZINE 9MM": "EM",
-  STRETCHER: "ST",
-  IQONIC: "IQ",
-  "HARD HAT": "HH",
-  "KEYBOARD & MOUSE": "KBM",
-  DASHCAM: "DC",
-  "WIFI MODEM": "WM",
-  "DOUBLE DECK": "DD",
-};
+const FARAGON_MAIN_LOGISTICS = "FARAGON MAIN LOGISTICS";
 
 function safeText(value: unknown, fallback = "-") {
   const text = String(value ?? "").trim();
   return text.length ? text : fallback;
+}
+
+function getErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof Error && error.message.trim()) return error.message;
+  if (error && typeof error === "object") {
+    const value = error as { code?: unknown; message?: unknown; details?: unknown; hint?: unknown };
+    const message = String(value.message ?? "").trim();
+    const code = String(value.code ?? "").trim();
+    const details = String(value.details ?? "").trim();
+    const hint = String(value.hint ?? "").trim();
+    if (message) {
+      return [code ? `[${code}] ${message}` : message, details, hint].filter(Boolean).join(" ");
+    }
+  }
+  return fallback;
 }
 
 function normalizeKey(value: unknown) {
@@ -329,6 +293,11 @@ function normalizeKey(value: unknown) {
     .trim()
     .replace(/\s+/g, " ")
     .toLowerCase();
+}
+
+function isFaragonDetachment(value: unknown) {
+  const key = normalizeKey(value);
+  return key === "faragon" || key === normalizeKey(FARAGON_MAIN_LOGISTICS);
 }
 
 function normalizeDetachmentName(value: unknown) {
@@ -376,25 +345,13 @@ function normalizeItem(value: unknown) {
     .toUpperCase();
 }
 
-function normalizeControlNumber(value: unknown) {
-  return String(value ?? "").trim().replace(/\s+/g, "").toUpperCase();
-}
-
-function controlPrefixForItem(itemName: unknown) {
-  const normalized = normalizeItem(itemName);
-  if (CONTROL_NUMBER_PREFIXES[normalized]) return CONTROL_NUMBER_PREFIXES[normalized];
-  const words = normalized.match(/[A-Z0-9]+/g) ?? [];
-  const fallback = words.length > 1 ? words.map((word) => word[0]).join("") : normalized.slice(0, 3);
-  return fallback || "ITEM";
-}
-
-function formatControlNumber(itemName: unknown, sequence: number, year = new Date().getFullYear()) {
-  return `${controlPrefixForItem(itemName)}-${year}-${String(Math.max(1, sequence)).padStart(4, "0")}`;
-}
-
-function parseControlSequence(value: unknown) {
-  const match = normalizeControlNumber(value).match(/-(\d+)$/);
-  return match ? Number(match[1]) || 0 : 0;
+function formatEmployeeName(employee: EmployeeOption) {
+  const lastName = safeText(employee.last_name, "");
+  const givenNames = [employee.first_name, employee.middle_name, employee.extn_name]
+    .map((value) => safeText(value, ""))
+    .filter(Boolean)
+    .join(" ");
+  return [lastName, givenNames].filter(Boolean).join(", ").toUpperCase();
 }
 
 function pickByAliases(row: Record<string, unknown>, aliases: string[]) {
@@ -477,6 +434,7 @@ function ModalShell({
   onClose,
   children,
   maxWidth = "max-w-5xl",
+  fullScreen = false,
 }: {
   open: boolean;
   title: string;
@@ -484,25 +442,30 @@ function ModalShell({
   onClose: () => void;
   children: ReactNode;
   maxWidth?: string;
+  fullScreen?: boolean;
 }) {
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/45 p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/55 p-2 md:p-4" onClick={onClose}>
       <div
-        className={`w-full ${maxWidth} max-h-[90vh] overflow-hidden rounded-3xl border border-[#e8dfc8] bg-white shadow-2xl`}
+        className={`flex w-full flex-col overflow-hidden border border-[#e8dfc8] bg-white shadow-2xl ${
+          fullScreen
+            ? "h-[calc(100vh-1rem)] max-w-none rounded-2xl md:h-[calc(100vh-2rem)]"
+            : `${maxWidth} max-h-[90vh] rounded-3xl`
+        }`}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-start justify-between gap-4 border-b bg-[#fff9e6] px-6 py-4">
+        <div className="flex shrink-0 items-start justify-between gap-4 border-b-2 border-[#eadcae] bg-[#fff9e6] px-5 py-4 md:px-7">
           <div>
-            <div className="text-lg font-semibold text-black">{title}</div>
-            {subtitle ? <div className="mt-1 text-sm text-gray-600">{subtitle}</div> : null}
+            <div className="text-xl font-bold text-black md:text-2xl">{title}</div>
+            {subtitle ? <div className="mt-1 text-base leading-6 text-gray-700">{subtitle}</div> : null}
           </div>
-          <button type="button" onClick={onClose} className="rounded-xl border bg-white px-4 py-2 text-sm text-black hover:bg-gray-50">
+          <button type="button" onClick={onClose} className="rounded-xl border-2 border-slate-300 bg-white px-5 py-2.5 text-base font-semibold text-black hover:bg-gray-50">
             Close
           </button>
         </div>
-        <div className="max-h-[78vh] overflow-auto p-6">{children}</div>
+        <div className={`overflow-auto p-4 md:p-6 ${fullScreen ? "min-h-0 flex-1" : "max-h-[78vh]"}`}>{children}</div>
       </div>
     </div>
   );
@@ -531,20 +494,20 @@ function DataTable<T>({
 }) {
   const displayRows = previewLimit && rows.length > previewLimit ? rows.slice(0, previewLimit) : rows;
   return (
-    <TableZoomWrapper storageKey={storageKey}>
-      <div className={`overflow-auto rounded-2xl border bg-white shadow-sm ${previewLimit ? "max-h-[260px]" : ""}`}>
-        <table className="min-w-full text-left text-sm">
-          <thead className="bg-[#FFDA03] text-black">
+    <TableZoomWrapper storageKey={`paraphernalia-80:${storageKey}`} defaultZoom={0.8}>
+      <div className={`overflow-auto rounded-2xl border-2 border-slate-200 bg-white shadow-sm ${previewLimit ? "max-h-[360px]" : ""}`}>
+        <table className="min-w-full text-left text-base">
+          <thead className="sticky top-0 z-10 bg-[#FFDA03] text-black shadow-sm">
             <tr>
               {columns.map((column) => (
-                <th key={column.key} className={`px-4 py-3 font-semibold ${column.className ?? ""}`}>
+                <th key={column.key} className={`whitespace-nowrap px-5 py-4 text-sm font-extrabold uppercase tracking-wide ${column.className ?? ""}`}>
                   {column.header}
                 </th>
               ))}
-              {actions ? <th className="px-4 py-3 text-right font-semibold">Actions</th> : null}
+              {actions ? <th className="whitespace-nowrap px-5 py-4 text-right text-sm font-extrabold uppercase tracking-wide">Actions</th> : null}
             </tr>
           </thead>
-          <tbody className="divide-y">
+          <tbody className="divide-y divide-slate-200">
             {loading ? (
               <tr>
                 <td colSpan={columns.length + (actions ? 1 : 0)} className="px-4 py-8">
@@ -552,14 +515,14 @@ function DataTable<T>({
                 </td>
               </tr>
             ) : displayRows.length ? (
-              displayRows.map((row) => (
-                <tr key={rowKey(row)} className="hover:bg-[#fff8da]">
+              displayRows.map((row, rowIndex) => (
+                <tr key={rowKey(row)} className={`${rowIndex % 2 ? "bg-slate-50/80" : "bg-white"} transition-colors hover:bg-[#fff8da]`}>
                   {columns.map((column) => (
-                    <td key={column.key} className={`px-4 py-3 align-top text-gray-800 ${column.className ?? ""}`}>
+                    <td key={column.key} className={`px-5 py-4 align-top font-medium leading-6 text-slate-800 ${column.className ?? ""}`}>
                       {column.render(row)}
                     </td>
                   ))}
-                  {actions ? <td className="px-4 py-3 text-right align-top">{actions(row)}</td> : null}
+                  {actions ? <td className="px-5 py-4 text-right align-top">{actions(row)}</td> : null}
                 </tr>
               ))
             ) : (
@@ -572,13 +535,14 @@ function DataTable<T>({
           </tbody>
         </table>
       </div>
-      {onViewAll && rows.length > (previewLimit ?? 0) ? (
+      {onViewAll && rows.length > 0 ? (
         <div className="mt-3 flex justify-end">
           <button
             type="button"
             onClick={onViewAll}
-            className="rounded-xl border bg-white px-4 py-2 text-sm font-semibold text-black hover:bg-gray-50"
+            className="inline-flex items-center gap-2 rounded-xl border-2 border-slate-300 bg-white px-5 py-3 text-base font-bold text-black shadow-sm hover:bg-slate-50"
           >
+            <Maximize2 className="h-5 w-5" />
             View full table ({rows.length})
           </button>
         </div>
@@ -587,14 +551,124 @@ function DataTable<T>({
   );
 }
 
+function SearchDropdownInput({
+  value,
+  onChange,
+  options,
+  className,
+  placeholder,
+  required,
+  emptyLabel = "No matching options found.",
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  options: string[];
+  className: string;
+  placeholder?: string;
+  required?: boolean;
+  emptyLabel?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const listboxId = useId();
+  const query = value.trim().toLowerCase();
+  const filteredOptions = options
+    .filter((option) => !query || option.toLowerCase().includes(query))
+    .slice(0, 60);
+
+  return (
+    <div className={`relative ${open ? "z-50" : ""}`}>
+      <input
+        value={value}
+        onChange={(event) => {
+          onChange(event.target.value);
+          setOpen(true);
+        }}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setOpen(false)}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") setOpen(false);
+        }}
+        className={className}
+        placeholder={placeholder}
+        autoComplete="off"
+        required={required}
+        role="combobox"
+        aria-expanded={open}
+        aria-controls={listboxId}
+        aria-autocomplete="list"
+      />
+      {open ? (
+        <div id={listboxId} role="listbox" className="absolute left-0 right-0 top-full z-[120] mt-1 max-h-56 overflow-y-auto rounded-xl border-2 border-slate-200 bg-white p-1 shadow-2xl">
+          {filteredOptions.length ? (
+            filteredOptions.map((option) => (
+              <button
+                key={option}
+                type="button"
+                role="option"
+                aria-selected={option === value}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => {
+                  onChange(option);
+                  setOpen(false);
+                }}
+                className="block w-full rounded-lg px-3 py-2.5 text-left text-sm font-medium text-black hover:bg-[#fff3b0]"
+              >
+                {option}
+              </button>
+            ))
+          ) : (
+            <div className="px-3 py-3 text-sm text-gray-500">{emptyLabel}</div>
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export default function ParaphernaliaPage() {
   const { role } = useAuthRole();
   const { allowedColumns, restricted } = useMyColumnAccess("paraphernalia");
+  const detachmentAccess = useMyParaphernaliaDetachmentAccess();
   const isAdmin = role === "admin" || role === "superadmin";
-  const canViewPermission = (columnKey: string) => !restricted || allowedColumns.has(columnKey);
-  const canExport = isAdmin && canViewPermission("export_file");
-  const canImport = isAdmin && canViewPermission("import_file");
-  const canDownloadTemplate = isAdmin && canViewPermission("export_template");
+  const canManageInventory = !detachmentAccess.restricted && (isAdmin || detachmentAccess.faragonAccess);
+  const canViewPermission = useCallback(
+    (columnKey: string) => detachmentAccess.faragonAccess || !restricted || allowedColumns.has(columnKey),
+    [allowedColumns, detachmentAccess.faragonAccess, restricted]
+  );
+  const canExport = canManageInventory && canViewPermission("export_file");
+  const canImport = canManageInventory && canViewPermission("import_file");
+  const canDownloadTemplate = canManageInventory && canViewPermission("export_template");
+  const canCreateStockIn =
+    canManageInventory && (canViewPermission("add_stock_in") || canViewPermission("stock_in_item"));
+  const canCreateStockOut =
+    (canManageInventory || detachmentAccess.restricted) &&
+    detachmentAccess.canStockOut &&
+    (canViewPermission("add_stock_out") || canViewPermission("stock_out_items"));
+  const canViewStockInHistory = [
+    "stock_in_timestamp",
+    "stock_in_date",
+    "stock_in_status",
+    "stock_in_item",
+    "stock_in_quantity",
+    "stock_in_attachment",
+  ].some(canViewPermission);
+  const canViewInventorySections = [
+    "inventory_client_name",
+    "inventory_items",
+    "inventory_stock_balance",
+    "inventory_stock_in",
+    "inventory_stock_out",
+  ].some(canViewPermission);
+  const canViewStockOutHistory = [
+    "stock_out_timestamp",
+    "stock_out_date",
+    "stock_out_names",
+    "stock_out_items",
+    "stock_out_qty",
+    "stock_out_price",
+    "stock_out_status",
+    "stock_out_date_posted",
+  ].some(canViewPermission);
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -608,13 +682,19 @@ export default function ParaphernaliaPage() {
   const [stockInRows, setStockInRows] = useState<StockInRow[]>([]);
   const [stockOutRows, setStockOutRows] = useState<StockOutRow[]>([]);
   const [itemOptions, setItemOptions] = useState<ItemOption[]>([]);
+  const [employeeOptions, setEmployeeOptions] = useState<EmployeeOption[]>([]);
   const [selectedDetachment, setSelectedDetachment] = useState("ALL");
   const [manualDetachmentTables, setManualDetachmentTables] = useState<string[]>([]);
   const [newDetachmentTable, setNewDetachmentTable] = useState("");
   const [itemManagerOpen, setItemManagerOpen] = useState(false);
   const [itemBusy, setItemBusy] = useState(false);
   const [newItemName, setNewItemName] = useState("");
-  const [newItemCategory, setNewItemCategory] = useState<InventoryKind>("SEC");
+  const [newItemGroup, setNewItemGroup] = useState<EquipmentGroup>("Security / Safety");
+  const [newItemPrice, setNewItemPrice] = useState("");
+  const [itemPriceDrafts, setItemPriceDrafts] = useState<Record<string, string>>({});
+  const [itemManagerSearch, setItemManagerSearch] = useState("");
+  const [itemManagerError, setItemManagerError] = useState("");
+  const [itemManagerMessage, setItemManagerMessage] = useState("");
 
   const [entryModal, setEntryModal] = useState<EntryModalState>(null);
   const [stockInForm, setStockInForm] = useState<StockInForm>(EMPTY_STOCK_IN_FORM);
@@ -622,6 +702,8 @@ export default function ParaphernaliaPage() {
   const [attachmentFile, setAttachmentFile] = useState<File | null>(null);
   const [viewAllState, setViewAllState] = useState<ViewAllState>(null);
   const [deleteState, setDeleteState] = useState<DeleteState>(null);
+  const [detachmentTableToRemove, setDetachmentTableToRemove] = useState<string | null>(null);
+  const [removingDetachmentTable, setRemovingDetachmentTable] = useState(false);
   const [importModalOpen, setImportModalOpen] = useState(false);
   const [importSummary, setImportSummary] = useState<ImportSummaryData | null>(null);
   const [importSummaryOpen, setImportSummaryOpen] = useState(false);
@@ -663,7 +745,9 @@ export default function ParaphernaliaPage() {
       item_id: null,
       item_name: item.item,
       item_category: item.category,
+      item_group: equipmentGroupForName(item.item),
       display_order: item.no,
+      unit_price: 0,
     }));
   }, [itemOptions]);
 
@@ -675,9 +759,49 @@ export default function ParaphernaliaPage() {
     return map;
   }, [displayItemOptions]);
 
-  function resolveItemCategory(itemName: unknown): InventoryKind {
+  const itemGroupByName = useMemo(() => {
+    const map = new Map<string, EquipmentGroup>();
+    for (const item of displayItemOptions) {
+      map.set(normalizeItem(item.item_name), item.item_group);
+    }
+    return map;
+  }, [displayItemOptions]);
+
+  const itemPriceByName = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const item of displayItemOptions) map.set(normalizeItem(item.item_name), item.unit_price);
+    return map;
+  }, [displayItemOptions]);
+
+  useEffect(() => {
+    setItemPriceDrafts(
+      Object.fromEntries(displayItemOptions.map((item) => [item.item_id ?? item.item_name, String(item.unit_price)]))
+    );
+  }, [displayItemOptions]);
+
+  const managedItemOptions = useMemo(() => {
+    const query = itemManagerSearch.trim().toLowerCase();
+    if (!query) return displayItemOptions;
+    return displayItemOptions.filter((item) =>
+      [item.item_name, item.item_group, item.item_category, item.unit_price].join(" ").toLowerCase().includes(query)
+    );
+  }, [displayItemOptions, itemManagerSearch]);
+
+  const resolveItemCategory = useCallback((itemName: unknown): InventoryKind => {
     return itemCategoryByName.get(normalizeItem(itemName)) ?? defaultItemCategory(itemName);
-  }
+  }, [itemCategoryByName]);
+
+  const resolveClientName = useCallback((contractId: string | null | undefined, area: string | null | undefined, fallback: string | null | undefined) => {
+    const fromId = contractId ? contractById.get(contractId) : null;
+    const fromArea = area ? contractByArea.get(normalizeKey(area)) : null;
+    return safeText(fallback, "") || safeText(fromId?.client_name, "") || safeText(fromArea?.client_name, "") || "Unassigned Client";
+  }, [contractByArea, contractById]);
+
+  const resolveSpecificArea = useCallback((contractId: string | null | undefined, area: string | null | undefined) => {
+    const fromId = contractId ? contractById.get(contractId) : null;
+    const fromArea = area ? contractByArea.get(normalizeKey(area)) : null;
+    return safeText(area, "") || safeText(fromId?.specific_area, "") || safeText(fromArea?.specific_area, "") || "Unassigned Detachment";
+  }, [contractByArea, contractById]);
 
   const detachmentOptions = useMemo(() => {
     const map = new Map<string, string>();
@@ -689,49 +813,52 @@ export default function ParaphernaliaPage() {
     }
 
     for (const contract of contractOptions) add(contract.specific_area);
-    for (const row of stockInRows) add(resolveSpecificArea(row.contract_id, row.detachment));
-    for (const row of stockOutRows) add(resolveSpecificArea(row.contract_id, row.specific_area));
-    for (const value of manualDetachmentTables) add(value);
 
-    return Array.from(map.values()).sort((a, b) => a.localeCompare(b));
-  }, [contractOptions, stockInRows, stockOutRows, manualDetachmentTables, contractById, contractByArea]);
+    const values = Array.from(map.values()).sort((a, b) => a.localeCompare(b));
+    if (!detachmentAccess.restricted) return values;
+    const allowedKeys = new Set(Array.from(detachmentAccess.allowedDetachments, normalizeKey));
+    return values.filter((value) => allowedKeys.has(normalizeKey(value)));
+  }, [
+    contractOptions,
+    detachmentAccess.allowedDetachments,
+    detachmentAccess.restricted,
+  ]);
+
+  const creatableDetachmentOptions = useMemo(() => {
+    const existingKeys = new Set(manualDetachmentTables.map(normalizeKey));
+    return detachmentOptions.filter((detachment) => !existingKeys.has(normalizeKey(detachment)));
+  }, [detachmentOptions, manualDetachmentTables]);
+  const canCreateSelectedDetachment = creatableDetachmentOptions.some(
+    (detachment) => normalizeKey(detachment) === normalizeKey(newDetachmentTable)
+  );
+
+  const stockOutEmployeeOptions = useMemo(() => {
+    return employeeOptions
+      .slice()
+      .sort((a, b) => formatEmployeeName(a).localeCompare(formatEmployeeName(b)));
+  }, [employeeOptions]);
+
+  const itemDropdownOptions = useMemo(
+    () => displayItemOptions.map((item) => item.item_name),
+    [displayItemOptions]
+  );
+  const stockOutEmployeeNames = useMemo(
+    () => stockOutEmployeeOptions.map((employee) => formatEmployeeName(employee)),
+    [stockOutEmployeeOptions]
+  );
 
   useEffect(() => {
-    const storedTables = readStoredDetachmentTables();
-    if (storedTables.length) {
-      setManualDetachmentTables((prev) => mergeDetachmentTableNames(prev, storedTables));
-    }
-  }, []);
+    if (!detachmentAccess.restricted || detachmentAccess.loading) return;
+    const currentIsAllowed = detachmentOptions.some((value) => normalizeKey(value) === normalizeKey(selectedDetachment));
+    if (!currentIsAllowed) setSelectedDetachment(detachmentOptions[0] ?? "ALL");
+  }, [detachmentAccess.loading, detachmentAccess.restricted, detachmentOptions, selectedDetachment]);
 
   useEffect(() => {
     writeStoredDetachmentTables(manualDetachmentTables);
   }, [manualDetachmentTables]);
 
-  function resolveClientName(contractId: string | null | undefined, area: string | null | undefined, fallback: string | null | undefined) {
-    const fromId = contractId ? contractById.get(contractId) : null;
-    const fromArea = area ? contractByArea.get(normalizeKey(area)) : null;
-    return safeText(fallback, "") || safeText(fromId?.client_name, "") || safeText(fromArea?.client_name, "") || "Unassigned Client";
-  }
-
-  function resolveSpecificArea(contractId: string | null | undefined, area: string | null | undefined) {
-    const fromId = contractId ? contractById.get(contractId) : null;
-    const fromArea = area ? contractByArea.get(normalizeKey(area)) : null;
-    return safeText(area, "") || safeText(fromId?.specific_area, "") || safeText(fromArea?.specific_area, "") || "Unassigned Detachment";
-  }
-
   function clientNameForDetachment(detachment: string) {
     return safeText(contractByArea.get(normalizeKey(detachment))?.client_name, "");
-  }
-
-  function nextControlNumber(itemName: string, offset = 0) {
-    const year = new Date().getFullYear();
-    const prefix = controlPrefixForItem(itemName);
-    const prefixKey = `${prefix}-${year}-`;
-    const existingNumbers = [...stockInRows, ...stockOutRows]
-      .map((row) => normalizeControlNumber(row.control_number))
-      .filter((value) => value.startsWith(prefixKey));
-    const maxSequence = existingNumbers.reduce((max, value) => Math.max(max, parseControlSequence(value)), 0);
-    return formatControlNumber(itemName, maxSequence + offset + 1, year);
   }
 
   async function loadAll() {
@@ -759,9 +886,30 @@ export default function ParaphernaliaPage() {
 
       setContracts(nextContracts);
 
+      const employeesRes = await supabase
+        .from("applicants")
+        .select("applicant_id, first_name, middle_name, last_name, extn_name, detachment, status, is_archived, is_trashed")
+        .eq("is_archived", false)
+        .eq("is_trashed", false)
+        .limit(5000);
+      if (employeesRes.error) throw employeesRes.error;
+      setEmployeeOptions(
+        ((employeesRes.data ?? []) as Array<Record<string, unknown>>)
+          .filter((row) => normalizeKey(row.status) === "active")
+          .map((row) => ({
+            applicant_id: String(row.applicant_id ?? ""),
+            first_name: row.first_name == null ? null : String(row.first_name),
+            middle_name: row.middle_name == null ? null : String(row.middle_name),
+            last_name: row.last_name == null ? null : String(row.last_name),
+            extn_name: row.extn_name == null ? null : String(row.extn_name),
+            detachment: row.detachment == null ? null : String(row.detachment),
+          }))
+          .filter((row) => row.applicant_id && formatEmployeeName(row))
+      );
+
       const itemsWide = await supabase
         .from("paraphernalia_items")
-        .select("item_id, item_name, item_category, display_order, is_active")
+        .select("item_id, item_name, item_category, item_group, display_order, unit_price, is_active")
         .eq("is_active", true)
         .order("display_order", { ascending: true })
         .order("item_name", { ascending: true });
@@ -782,7 +930,9 @@ export default function ParaphernaliaPage() {
                 item_id: row.item_id == null ? null : String(row.item_id),
                 item_name: normalizeItem(row.item_name),
                 item_category: defaultItemCategory(row.item_name),
+                item_group: equipmentGroupForName(row.item_name),
                 display_order: null,
+                unit_price: 0,
               }))
               .filter((row) => row.item_name)
           );
@@ -794,7 +944,11 @@ export default function ParaphernaliaPage() {
               item_id: row.item_id == null ? null : String(row.item_id),
               item_name: normalizeItem(row.item_name),
               item_category: (String(row.item_category ?? "").trim().toUpperCase() === "OFFICE" ? "OFFICE" : "SEC") as InventoryKind,
+              item_group: EQUIPMENT_GROUPS.includes(String(row.item_group ?? "").trim() as EquipmentGroup)
+                ? String(row.item_group).trim() as EquipmentGroup
+                : equipmentGroupForName(row.item_name),
               display_order: toNumberOrNull(row.display_order),
+              unit_price: toNumberOrNull(row.unit_price) ?? 0,
             }))
             .filter((row) => row.item_name)
         );
@@ -812,17 +966,33 @@ export default function ParaphernaliaPage() {
         const dbDetachmentTables = ((detachmentTablesRes.data ?? []) as Record<string, unknown>[])
           .map((row) => normalizeDetachmentName(row.detachment))
           .filter(Boolean);
+        const validAreaKeys = new Set(
+          nextContracts
+            .map((contract) => normalizeKey(contract.specific_area))
+            .filter(Boolean)
+        );
+        const staleDbTables = dbDetachmentTables.filter((detachment) => !validAreaKeys.has(normalizeKey(detachment)));
+        const validDbTables = dbDetachmentTables.filter((detachment) => validAreaKeys.has(normalizeKey(detachment)));
+        const validStoredTables = readStoredDetachmentTables().filter((detachment) => validAreaKeys.has(normalizeKey(detachment)));
+        const nextTables = mergeDetachmentTableNames(validStoredTables, validDbTables);
 
-        setManualDetachmentTables((prev) => {
-          const next = mergeDetachmentTableNames(prev, readStoredDetachmentTables(), dbDetachmentTables);
-          writeStoredDetachmentTables(next);
-          return next;
-        });
+        writeStoredDetachmentTables(nextTables);
+        setManualDetachmentTables(nextTables);
+
+        if (staleDbTables.length) {
+          const cleanupResult = await supabase
+            .from("paraphernalia_detachment_tables")
+            .delete()
+            .in("detachment", staleDbTables);
+          if (cleanupResult.error) {
+            setSchemaWarning("Run SQL/supabase_paraphernalia_detachment_contract_areas.sql so obsolete detachment tables can be removed.");
+          }
+        }
       }
 
       const stockOutWide = await supabase
         .from("paraphernalia")
-        .select("id_paraphernalia, names, items, control_number, quantity, price, date, timestamp, created_at, status, date_posted, contract_id, client_name, specific_area")
+        .select("id_paraphernalia, names, items, quantity, price, date, timestamp, created_at, status, date_posted, contract_id, client_name, specific_area")
         .order("timestamp", { ascending: false })
         .limit(5000);
 
@@ -842,7 +1012,7 @@ export default function ParaphernaliaPage() {
 
       const stockInWide = await supabase
         .from("restock")
-        .select("id_restock, timestamptz, date, status, item, control_number, quanitity, attachment, detachment, contract_id, client_name")
+        .select("id_restock, timestamptz, date, status, item, quanitity, attachment, detachment, contract_id, client_name")
         .order("timestamptz", { ascending: false })
         .limit(5000);
 
@@ -868,7 +1038,6 @@ export default function ParaphernaliaPage() {
             date: row.date == null ? null : String(row.date),
             names: row.names == null ? null : String(row.names),
             item: row.items == null ? null : String(row.items),
-            control_number: row.control_number == null ? null : String(row.control_number),
             quantity: toNumberOrNull(row.quantity),
             price: toNumberOrNull(row.price),
             status: row.status == null ? null : String(row.status),
@@ -888,7 +1057,6 @@ export default function ParaphernaliaPage() {
             date: row.date == null ? null : String(row.date),
             status: row.status == null ? null : String(row.status),
             item: row.item == null ? null : String(row.item),
-            control_number: row.control_number == null ? null : String(row.control_number),
             quantity: toNumberOrNull(row.quanitity),
             attachment: row.attachment == null ? null : String(row.attachment),
             detachment: row.detachment == null ? null : String(row.detachment),
@@ -898,7 +1066,7 @@ export default function ParaphernaliaPage() {
           .filter((row) => row.id)
       );
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Failed to load paraphernalia data.");
+      setError(getErrorMessage(e, "Failed to load paraphernalia data."));
       setContracts([]);
       setStockInRows([]);
       setStockOutRows([]);
@@ -912,6 +1080,7 @@ export default function ParaphernaliaPage() {
     const channel = supabase
       .channel("realtime:paraphernalia-stock-flows")
       .on("postgres_changes", { event: "*", schema: "public", table: "contracts" }, () => void loadAll())
+      .on("postgres_changes", { event: "*", schema: "public", table: "applicants" }, () => void loadAll())
       .on("postgres_changes", { event: "*", schema: "public", table: "paraphernalia_items" }, () => void loadAll())
       .on("postgres_changes", { event: "*", schema: "public", table: "paraphernalia_detachment_tables" }, () => void loadAll())
       .on("postgres_changes", { event: "*", schema: "public", table: "paraphernalia" }, () => void loadAll())
@@ -964,51 +1133,161 @@ export default function ParaphernaliaPage() {
     return Array.from(rows.values())
       .map((row) => ({ ...row, stockBalance: row.stockIn - row.stockOut }))
       .sort((a, b) => a.clientName.localeCompare(b.clientName) || a.item.localeCompare(b.item));
-  }, [stockInRows, stockOutRows, contractById, contractByArea, itemCategoryByName]);
+  }, [stockInRows, stockOutRows, resolveClientName, resolveItemCategory, resolveSpecificArea]);
+
+  const mainInventoryRows = useMemo<MainInventoryRow[]>(() => {
+    const rows = new Map<string, MainInventoryRow>();
+
+    function ensureRow(itemName: unknown) {
+      const item = normalizeItem(itemName);
+      if (!item) return null;
+      const existing = rows.get(item);
+      if (existing) return existing;
+      const unitPrice = itemPriceByName.get(item) ?? 0;
+      const next: MainInventoryRow = {
+        id: item,
+        item,
+        category: resolveItemCategory(item),
+        group: itemGroupByName.get(item) ?? equipmentGroupForName(item),
+        unitPrice,
+        stockIn: 0,
+        stockOut: 0,
+        stockBalance: 0,
+        inventoryValue: 0,
+      };
+      rows.set(item, next);
+      return next;
+    }
+
+    for (const item of displayItemOptions) ensureRow(item.item_name);
+    for (const row of stockInRows) {
+      const target = ensureRow(row.item);
+      if (!target) continue;
+      const detachment = resolveSpecificArea(row.contract_id, row.detachment);
+      const isUnassignedLegacyReceipt = !normalizeKey(row.detachment) && !row.contract_id;
+      if (isUnassignedLegacyReceipt || isFaragonDetachment(detachment)) target.stockIn += row.quantity ?? 0;
+      else target.stockOut += row.quantity ?? 0;
+    }
+    for (const row of stockOutRows) {
+      const detachment = resolveSpecificArea(row.contract_id, row.specific_area);
+      const isUnassignedLegacyIssue = !normalizeKey(row.specific_area) && !row.contract_id;
+      if (!isUnassignedLegacyIssue && !isFaragonDetachment(detachment)) continue;
+      const target = ensureRow(row.item);
+      if (target) target.stockOut += row.quantity ?? 0;
+    }
+
+    return Array.from(rows.values())
+      .map((row) => {
+        const stockBalance = row.stockIn - row.stockOut;
+        return { ...row, stockBalance, inventoryValue: stockBalance * row.unitPrice };
+      })
+      .sort((a, b) => a.category.localeCompare(b.category) || a.item.localeCompare(b.item));
+  }, [displayItemOptions, itemGroupByName, itemPriceByName, resolveItemCategory, resolveSpecificArea, stockInRows, stockOutRows]);
 
   const q = search.trim().toLowerCase();
   const selectedDetachmentKey = normalizeKey(selectedDetachment);
 
-  function isSelectedDetachment(area: string) {
+  const isSelectedDetachment = useCallback((area: string) => {
+    if (detachmentAccess.restricted) {
+      const allowedKeys = new Set(Array.from(detachmentAccess.allowedDetachments, normalizeKey));
+      if (!allowedKeys.has(normalizeKey(area))) return false;
+    }
     if (!selectedDetachmentKey || selectedDetachmentKey === "all") return true;
     return normalizeKey(area) === selectedDetachmentKey;
-  }
+  }, [detachmentAccess.allowedDetachments, detachmentAccess.restricted, selectedDetachmentKey]);
+
+  const filteredMainInventory = useMemo(() => {
+    if (!q) return mainInventoryRows;
+    return mainInventoryRows.filter((row) =>
+      [row.item, row.category, row.unitPrice, row.stockIn, row.stockOut, row.stockBalance]
+        .join(" ")
+        .toLowerCase()
+        .includes(q)
+    );
+  }, [mainInventoryRows, q]);
+
+  const filteredMainSecurityInventory = useMemo(
+    () => filteredMainInventory.filter((row) => row.category === "SEC"),
+    [filteredMainInventory]
+  );
+
+  const filteredMainOfficeInventory = useMemo(
+    () => filteredMainInventory.filter((row) => row.category === "OFFICE"),
+    [filteredMainInventory]
+  );
+
+  const mainInventoryTotals = useMemo(
+    () => ({
+      stockIn: mainInventoryRows.reduce((sum, row) => sum + row.stockIn, 0),
+      stockOut: mainInventoryRows.reduce((sum, row) => sum + row.stockOut, 0),
+      stockBalance: mainInventoryRows.reduce((sum, row) => sum + row.stockBalance, 0),
+    }),
+    [mainInventoryRows]
+  );
+
+  const filteredMainStockIn = useMemo(() => {
+    return stockInRows.filter((row) => {
+      const area = resolveSpecificArea(row.contract_id, row.detachment);
+      const isLegacyMainReceipt = !normalizeKey(row.detachment) && !row.contract_id;
+      if (!isFaragonDetachment(area) && !isLegacyMainReceipt) return false;
+      if (!q) return true;
+      const clientName = resolveClientName(row.contract_id, row.detachment, row.client_name);
+      return [row.timestamp, row.date, row.status, row.item, row.quantity, row.attachment, area, clientName]
+        .join(" ")
+        .toLowerCase()
+        .includes(q);
+    });
+  }, [q, resolveClientName, resolveSpecificArea, stockInRows]);
+
+  const filteredMainTransfers = useMemo(() => {
+    return stockInRows.filter((row) => {
+      const area = resolveSpecificArea(row.contract_id, row.detachment);
+      const isLegacyMainReceipt = !normalizeKey(row.detachment) && !row.contract_id;
+      if (isFaragonDetachment(area) || isLegacyMainReceipt) return false;
+      if (!q) return true;
+      const clientName = resolveClientName(row.contract_id, row.detachment, row.client_name);
+      return [row.timestamp, row.date, row.status, row.item, row.quantity, row.attachment, area, clientName]
+        .join(" ")
+        .toLowerCase()
+        .includes(q);
+    });
+  }, [q, resolveClientName, resolveSpecificArea, stockInRows]);
 
   const scopedStockIn = useMemo(() => {
     return stockInRows.filter((row) => isSelectedDetachment(resolveSpecificArea(row.contract_id, row.detachment)));
-  }, [stockInRows, selectedDetachmentKey, contractById, contractByArea]);
+  }, [stockInRows, isSelectedDetachment, resolveSpecificArea]);
 
   const scopedStockOut = useMemo(() => {
     return stockOutRows.filter((row) => isSelectedDetachment(resolveSpecificArea(row.contract_id, row.specific_area)));
-  }, [stockOutRows, selectedDetachmentKey, contractById, contractByArea]);
+  }, [stockOutRows, isSelectedDetachment, resolveSpecificArea]);
 
   const scopedInventoryRows = useMemo(() => {
     return inventoryRows.filter((row) => isSelectedDetachment(row.specificArea));
-  }, [inventoryRows, selectedDetachmentKey]);
+  }, [inventoryRows, isSelectedDetachment]);
 
   const filteredStockIn = useMemo(() => {
     if (!q) return scopedStockIn;
     return scopedStockIn.filter((row) => {
       const clientName = resolveClientName(row.contract_id, row.detachment, row.client_name);
       const area = resolveSpecificArea(row.contract_id, row.detachment);
-      return [row.timestamp, row.date, row.status, row.item, row.control_number, row.quantity, row.attachment, area, clientName]
+      return [row.timestamp, row.date, row.status, row.item, row.quantity, row.attachment, area, clientName]
         .join(" ")
         .toLowerCase()
         .includes(q);
     });
-  }, [scopedStockIn, q, contractById, contractByArea]);
+  }, [scopedStockIn, q, resolveClientName, resolveSpecificArea]);
 
   const filteredStockOut = useMemo(() => {
     if (!q) return scopedStockOut;
     return scopedStockOut.filter((row) => {
       const clientName = resolveClientName(row.contract_id, row.specific_area, row.client_name);
       const area = resolveSpecificArea(row.contract_id, row.specific_area);
-      return [row.timestamp, row.date, row.names, row.item, row.control_number, row.quantity, row.price, row.status, row.date_posted, area, clientName]
+      return [row.timestamp, row.date, row.names, row.item, row.quantity, row.price, row.status, row.date_posted, area, clientName]
         .join(" ")
         .toLowerCase()
         .includes(q);
     });
-  }, [scopedStockOut, q, contractById, contractByArea]);
+  }, [scopedStockOut, q, resolveClientName, resolveSpecificArea]);
 
   const filteredSecInventory = useMemo(() => {
     return scopedInventoryRows.filter((row) => {
@@ -1024,18 +1303,45 @@ export default function ParaphernaliaPage() {
     });
   }, [scopedInventoryRows, q]);
 
+  const detachmentTableNavigation = useMemo(() => {
+    const allowedKeys = new Set(Array.from(detachmentAccess.allowedDetachments, normalizeKey));
+    const clientAreaKeys = new Set(contractOptions.map((contract) => normalizeKey(contract.specific_area)));
+    const knownDetachmentTables = mergeDetachmentTableNames(manualDetachmentTables).filter(
+      (detachment) => clientAreaKeys.has(normalizeKey(detachment))
+    );
+    const accessibleTables = detachmentAccess.restricted
+      ? mergeDetachmentTableNames(
+          knownDetachmentTables.filter((detachment) => allowedKeys.has(normalizeKey(detachment))),
+          Array.from(detachmentAccess.allowedDetachments).filter((detachment) => clientAreaKeys.has(normalizeKey(detachment)))
+        )
+      : knownDetachmentTables;
+
+    return accessibleTables.filter(
+      (detachment) => safeText(detachment, "") !== "" && !isFaragonDetachment(detachment)
+    );
+  }, [contractOptions, detachmentAccess.allowedDetachments, detachmentAccess.restricted, manualDetachmentTables]);
+
+  const paraphernaliaTableNavigation = useMemo(
+    () => mergeDetachmentTableNames(
+      !detachmentAccess.restricted ? [FARAGON_MAIN_LOGISTICS] : [],
+      detachmentTableNavigation
+    ),
+    [detachmentAccess.restricted, detachmentTableNavigation]
+  );
+
   const detachmentTableGroups = useMemo(() => {
-    const candidateDetachments =
+    const candidateDetachments = (
       selectedDetachmentKey === "all"
-        ? manualDetachmentTables
-        : manualDetachmentTables.filter((detachment) => normalizeKey(detachment) === selectedDetachmentKey);
+        ? detachmentTableNavigation
+        : detachmentTableNavigation.filter((detachment) => normalizeKey(detachment) === selectedDetachmentKey)
+    );
 
     function stockInMatches(row: StockInRow, detachment: string) {
       if (normalizeKey(resolveSpecificArea(row.contract_id, row.detachment)) !== normalizeKey(detachment)) return false;
       if (!q) return true;
       const clientName = resolveClientName(row.contract_id, row.detachment, row.client_name);
       const area = resolveSpecificArea(row.contract_id, row.detachment);
-      return [row.timestamp, row.date, row.status, row.item, row.control_number, row.quantity, row.attachment, area, clientName]
+      return [row.timestamp, row.date, row.status, row.item, row.quantity, row.attachment, area, clientName]
         .join(" ")
         .toLowerCase()
         .includes(q);
@@ -1046,7 +1352,7 @@ export default function ParaphernaliaPage() {
       if (!q) return true;
       const clientName = resolveClientName(row.contract_id, row.specific_area, row.client_name);
       const area = resolveSpecificArea(row.contract_id, row.specific_area);
-      return [row.timestamp, row.date, row.names, row.item, row.control_number, row.quantity, row.price, row.status, row.date_posted, area, clientName]
+      return [row.timestamp, row.date, row.names, row.item, row.quantity, row.price, row.status, row.date_posted, area, clientName]
         .join(" ")
         .toLowerCase()
         .includes(q);
@@ -1094,14 +1400,15 @@ export default function ParaphernaliaPage() {
         };
       });
   }, [
-    manualDetachmentTables,
+    detachmentTableNavigation,
     stockInRows,
     stockOutRows,
     inventoryRows,
     q,
-    contractById,
     contractByArea,
     selectedDetachmentKey,
+    resolveClientName,
+    resolveSpecificArea,
   ]);
 
   const stockInColumns = useMemo<ColumnDef<StockInRow>[]>(() => {
@@ -1110,7 +1417,6 @@ export default function ParaphernaliaPage() {
       { key: "stock_in_date", header: "Date", render: (row) => safeText(row.date) },
       { key: "stock_in_status", header: "STATUS", render: (row) => <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">{formatStockInStatus(row.status)}</span> },
       { key: "stock_in_item", header: "Item", render: (row) => safeText(row.item) },
-      { key: "stock_in_control_number", header: "CONTROLNUMBER", render: (row) => safeText(row.control_number) },
       { key: "stock_in_quantity", header: "Quantity", render: (row) => formatNumber(row.quantity) },
       {
         key: "stock_in_attachment",
@@ -1130,22 +1436,60 @@ export default function ParaphernaliaPage() {
       },
     ];
     return columns.filter((column) => canViewPermission(column.key));
-  }, [restricted, allowedColumns]);
+  }, [canViewPermission]);
+
+  const mainTransferColumns = useMemo<ColumnDef<StockInRow>[]>(() => [
+    { key: "transfer_timestamp", header: "Timestamp", render: (row) => formatDateTime(row.timestamp) },
+    { key: "transfer_date", header: "Date", render: (row) => safeText(row.date) },
+    {
+      key: "transfer_status",
+      header: "STATUS",
+      render: (row) => (
+        <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
+          {formatStockInStatus(row.status)}
+        </span>
+      ),
+    },
+    { key: "transfer_item", header: "Item", render: (row) => safeText(row.item) },
+    { key: "transfer_quantity", header: "Quantity", render: (row) => formatNumber(row.quantity) },
+    {
+      key: "transfer_detachment",
+      header: "Destination Detachment",
+      render: (row) => resolveSpecificArea(row.contract_id, row.detachment),
+    },
+    {
+      key: "transfer_client",
+      header: "Client Name",
+      render: (row) => resolveClientName(row.contract_id, row.detachment, row.client_name),
+    },
+    {
+      key: "transfer_attachment",
+      header: "ATTACHMENT",
+      render: (row) => {
+        const value = safeText(row.attachment);
+        if (value === "-") return value;
+        return /^https?:\/\//i.test(value) ? (
+          <a href={value} target="_blank" rel="noreferrer" className="font-medium text-[#8B1C1C] underline">
+            {makeAttachmentLabel(row.attachment)}
+          </a>
+        ) : value;
+      },
+    },
+  ], [resolveClientName, resolveSpecificArea]);
 
   const stockOutColumns = useMemo<ColumnDef<StockOutRow>[]>(() => {
     const columns: ColumnDef<StockOutRow>[] = [
       { key: "stock_out_timestamp", header: "Timestamp", render: (row) => formatDateTime(row.timestamp) },
       { key: "stock_out_date", header: "Date", render: (row) => safeText(row.date) },
-      { key: "stock_out_names", header: "Names", render: (row) => safeText(row.names) },
+      { key: "stock_out_names", header: "Issued To (Last Name First)", render: (row) => safeText(row.names) },
       { key: "stock_out_items", header: "ITEMS", render: (row) => safeText(row.item) },
-      { key: "stock_out_control_number", header: "CONTROLNUMBER", render: (row) => safeText(row.control_number) },
       { key: "stock_out_qty", header: "QTY", render: (row) => formatNumber(row.quantity) },
       { key: "stock_out_price", header: "PRICE", render: (row) => formatMoney(row.price) },
       { key: "stock_out_status", header: "STATUS", render: (row) => <span className="rounded-full bg-[#fff3b0] px-3 py-1 text-xs font-semibold text-[#6d4b00]">{safeText(row.status)}</span> },
       { key: "stock_out_date_posted", header: "Date Posted", render: (row) => safeText(row.date_posted) },
     ];
     return columns.filter((column) => canViewPermission(column.key));
-  }, [restricted, allowedColumns]);
+  }, [canViewPermission]);
 
   const inventoryColumns = useMemo<ColumnDef<InventorySummaryRow>[]>(() => {
     const columns: ColumnDef<InventorySummaryRow>[] = [
@@ -1156,15 +1500,39 @@ export default function ParaphernaliaPage() {
       { key: "inventory_stock_out", header: "Stock Out", render: (row) => formatNumber(row.stockOut) },
     ];
     return columns.filter((column) => canViewPermission(column.key));
-  }, [restricted, allowedColumns]);
+  }, [canViewPermission]);
 
-  function openCreate(kind: EntryKind, targetDetachment?: string, preferredInventoryKind?: InventoryKind) {
+  const mainInventoryColumns = useMemo<ColumnDef<MainInventoryRow>[]>(() => {
+    const columns: ColumnDef<MainInventoryRow>[] = [
+      { key: "main_inventory_item", header: "ITEMS", render: (row) => row.item },
+      { key: "main_inventory_category", header: "Equipment Category", render: (row) => row.group },
+      { key: "main_inventory_unit_price", header: "Unit Price", render: (row) => formatMoney(row.unitPrice) },
+      { key: "main_inventory_stock_in", header: "Total Stock In", render: (row) => formatNumber(row.stockIn) },
+      { key: "main_inventory_stock_out", header: "Allocated / Issued", render: (row) => formatNumber(row.stockOut) },
+      { key: "main_inventory_balance", header: "Available Stock", render: (row) => formatNumber(row.stockBalance) },
+      { key: "main_inventory_value", header: "Inventory Value", render: (row) => formatMoney(row.inventoryValue) },
+    ];
+    return columns.filter((column) => canViewPermission(column.key));
+  }, [canViewPermission]);
+
+  function openCreate(
+    kind: EntryKind,
+    targetDetachment?: string,
+    preferredInventoryKind?: InventoryKind,
+    transfer = false
+  ) {
+    if (kind === "stockIn" && !canCreateStockIn) return;
+    if (kind === "stockOut" && !canCreateStockOut) return;
     setError("");
     setInfoMessage("");
     setAttachmentFile(null);
     const defaultDetachment =
       targetDetachment ??
-      (selectedDetachmentKey && selectedDetachmentKey !== "all" ? selectedDetachment : safeText(contractOptions[0]?.specific_area, ""));
+      (kind === "stockIn"
+        ? FARAGON_MAIN_LOGISTICS
+        : selectedDetachmentKey && selectedDetachmentKey !== "all"
+          ? selectedDetachment
+          : safeText(detachmentOptions[0], ""));
     const defaultClient = contractByArea.get(normalizeKey(defaultDetachment))?.client_name ?? "";
     const preferredItem = preferredInventoryKind
       ? (displayItemOptions.find((item) => item.item_category === preferredInventoryKind)?.item_name ?? "")
@@ -1181,21 +1549,21 @@ export default function ParaphernaliaPage() {
       detachment: defaultDetachment,
       clientName: safeText(defaultClient, ""),
     });
-    setEntryModal({ kind, mode: "create" });
+    setEntryModal(kind === "stockIn" ? { kind, mode: "create", transfer } : { kind, mode: "create" });
   }
 
-  function openEditStockIn(row: StockInRow) {
+  function openEditStockIn(row: StockInRow, transfer = false) {
     const detachment = resolveSpecificArea(row.contract_id, row.detachment);
     setAttachmentFile(null);
     setStockInForm({
       date: safeText(row.date, ""),
       status: formatStockInStatus(row.status),
-      items: [{ key: makeLineKey(), item: normalizeItem(row.item), controlNumber: normalizeControlNumber(row.control_number), quantity: row.quantity == null ? "" : String(row.quantity) }],
+      items: [{ key: makeLineKey(), item: normalizeItem(row.item), quantity: row.quantity == null ? "" : String(row.quantity) }],
       attachment: safeText(row.attachment, ""),
       detachment,
       clientName: resolveClientName(row.contract_id, detachment, row.client_name),
     });
-    setEntryModal({ kind: "stockIn", mode: "edit", row });
+    setEntryModal({ kind: "stockIn", mode: "edit", row, transfer });
   }
 
   function openEditStockOut(row: StockOutRow) {
@@ -1203,7 +1571,7 @@ export default function ParaphernaliaPage() {
     setStockOutForm({
       date: safeText(row.date, ""),
       names: safeText(row.names, ""),
-      items: [{ key: makeLineKey(), item: normalizeItem(row.item), controlNumber: normalizeControlNumber(row.control_number), quantity: row.quantity == null ? "" : String(row.quantity), price: row.price == null ? "" : String(row.price) }],
+      items: [{ key: makeLineKey(), item: normalizeItem(row.item), quantity: row.quantity == null ? "" : String(row.quantity), price: row.price == null ? "" : String(row.price) }],
       status: safeText(row.status, "FREE").toUpperCase(),
       datePosted: safeText(row.date_posted, ""),
       detachment,
@@ -1213,17 +1581,20 @@ export default function ParaphernaliaPage() {
   }
 
   async function addDetachmentTable() {
-    const next = normalizeDetachmentName(newDetachmentTable || (selectedDetachmentKey !== "all" ? selectedDetachment : ""));
-    if (!next) return;
+    const requested = normalizeDetachmentName(newDetachmentTable);
     setError("");
     setInfoMessage("");
-    setManualDetachmentTables((prev) => {
-      const merged = mergeDetachmentTableNames(prev, readStoredDetachmentTables(), [next]);
-      writeStoredDetachmentTables(merged);
-      return merged;
-    });
-    setSelectedDetachment(next);
-    setNewDetachmentTable("");
+    const contract = contractByArea.get(normalizeKey(requested));
+    const next = normalizeDetachmentName(contract?.specific_area);
+
+    if (!next) {
+      setError("Select an existing Specific Area from the Client contracts list.");
+      return;
+    }
+    if (manualDetachmentTables.some((detachment) => normalizeKey(detachment) === normalizeKey(next))) {
+      setError(`${next} already has an individual table.`);
+      return;
+    }
 
     const { error: saveError } = await supabase.from("paraphernalia_detachment_tables").upsert(
       {
@@ -1235,29 +1606,50 @@ export default function ParaphernaliaPage() {
     );
 
     if (saveError) {
-      setSchemaWarning("Run SQL/supabase_paraphernalia_stock_in_out.sql so individual detachment tables persist in Supabase.");
+      setError(getErrorMessage(saveError, "Unable to create the detachment table."));
+      setSchemaWarning("Run SQL/supabase_paraphernalia_detachment_contract_areas.sql to enforce Client Specific Area tables.");
     } else {
+      setManualDetachmentTables((prev) => {
+        const merged = mergeDetachmentTableNames(prev, [next]);
+        writeStoredDetachmentTables(merged);
+        return merged;
+      });
+      setSelectedDetachment(next);
+      setNewDetachmentTable("");
       setInfoMessage(`Individual table created for ${next}.`);
     }
   }
 
   async function removeDetachmentTable(detachment: string) {
+    if (removingDetachmentTable) return;
+    setRemovingDetachmentTable(true);
     setError("");
     setInfoMessage("");
-    setManualDetachmentTables((prev) => {
-      const next = mergeDetachmentTableNames(prev).filter((value) => normalizeKey(value) !== normalizeKey(detachment));
-      writeStoredDetachmentTables(next);
-      return next;
-    });
-    const { error: updateError } = await supabase
-      .from("paraphernalia_detachment_tables")
-      .update({ is_active: false })
-      .eq("detachment", detachment);
+    try {
+      const { error: deleteError } = await supabase
+        .from("paraphernalia_detachment_tables")
+        .delete()
+        .eq("detachment", detachment);
 
-    if (updateError) {
-      setSchemaWarning("Run SQL/supabase_paraphernalia_stock_in_out.sql so individual detachment table changes persist in Supabase.");
-    } else {
+      if (deleteError) {
+        setError(getErrorMessage(deleteError, "Unable to remove the detachment table."));
+        setSchemaWarning("Run SQL/supabase_paraphernalia_detachment_contract_areas.sql so detachment table deletion is allowed.");
+        setDetachmentTableToRemove(null);
+        return;
+      }
+
+      setManualDetachmentTables((prev) => {
+        const next = mergeDetachmentTableNames(prev).filter((value) => normalizeKey(value) !== normalizeKey(detachment));
+        writeStoredDetachmentTables(next);
+        return next;
+      });
+      if (normalizeKey(selectedDetachment) === normalizeKey(detachment)) {
+        setSelectedDetachment("ALL");
+      }
       setInfoMessage(`Individual table removed for ${detachment}.`);
+      setDetachmentTableToRemove(null);
+    } finally {
+      setRemovingDetachmentTable(false);
     }
   }
 
@@ -1291,27 +1683,35 @@ export default function ParaphernaliaPage() {
 
   async function addItemOption() {
     const itemName = normalizeItem(newItemName);
+    const unitPrice = toNumberOrNull(newItemPrice) ?? 0;
     if (!itemName) {
-      setError("Enter an item name before adding it.");
+      setItemManagerError("Enter an item name before adding it.");
+      return;
+    }
+    if (unitPrice < 0) {
+      setItemManagerError("Enter a valid item price of zero or greater.");
       return;
     }
 
     setItemBusy(true);
-    setError("");
-    setInfoMessage("");
+    setItemManagerError("");
+    setItemManagerMessage("");
     try {
       const { data, error: upsertError } = await supabase
         .from("paraphernalia_items")
         .upsert(
           {
             item_name: itemName,
-            item_category: newItemCategory,
+            item_category: paraphernaliaKindForGroup(newItemGroup),
+            item_group: newItemGroup,
+            unit_price: unitPrice,
             display_order: displayItemOptions.length + 1,
             is_active: true,
+            updated_at: new Date().toISOString(),
           },
           { onConflict: "item_name" }
         )
-        .select("item_id, item_name, item_category, display_order")
+        .select("item_id, item_name, item_category, item_group, display_order, unit_price")
         .single();
 
       if (upsertError) throw upsertError;
@@ -1319,8 +1719,12 @@ export default function ParaphernaliaPage() {
       const nextItem: ItemOption = {
         item_id: data?.item_id == null ? null : String(data.item_id),
         item_name: normalizeItem(data?.item_name ?? itemName),
-        item_category: String(data?.item_category ?? newItemCategory).toUpperCase() === "OFFICE" ? "OFFICE" : "SEC",
+        item_category: String(data?.item_category ?? paraphernaliaKindForGroup(newItemGroup)).toUpperCase() === "OFFICE" ? "OFFICE" : "SEC",
+        item_group: EQUIPMENT_GROUPS.includes(String(data?.item_group ?? "").trim() as EquipmentGroup)
+          ? String(data?.item_group).trim() as EquipmentGroup
+          : newItemGroup,
         display_order: toNumberOrNull(data?.display_order),
+        unit_price: toNumberOrNull(data?.unit_price) ?? unitPrice,
       };
 
       setItemOptions((prev) => {
@@ -1328,9 +1732,46 @@ export default function ParaphernaliaPage() {
         return [...withoutExisting, nextItem];
       });
       setNewItemName("");
-      setInfoMessage("Item added to the dropdown.");
+      setNewItemPrice("");
+      setNewItemGroup("Security / Safety");
+      setItemManagerSearch("");
+      setItemManagerMessage(`${nextItem.item_name} is now available in the item dropdown.`);
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Unable to add item. Run the SQL migration first.");
+      const message = getErrorMessage(e, "Unable to add item.");
+      setItemManagerError(
+        message.includes("42501") || message.toLowerCase().includes("row-level security")
+          ? `${message} Run the latest Paraphernalia main inventory SQL migration to add the required RLS policy.`
+          : message
+      );
+    } finally {
+      setItemBusy(false);
+    }
+  }
+
+  async function saveItemPrice(item: ItemOption) {
+    if (!item.item_id) {
+      setItemManagerError("Run the Paraphernalia SQL migration before saving catalog prices.");
+      return;
+    }
+    const unitPrice = toNumberOrNull(itemPriceDrafts[item.item_id]);
+    if (unitPrice == null || unitPrice < 0) {
+      setItemManagerError(`Enter a valid price for ${item.item_name}.`);
+      return;
+    }
+
+    setItemBusy(true);
+    setItemManagerError("");
+    setItemManagerMessage("");
+    try {
+      const { error: updateError } = await supabase
+        .from("paraphernalia_items")
+        .update({ unit_price: unitPrice, updated_at: new Date().toISOString() })
+        .eq("item_id", item.item_id);
+      if (updateError) throw updateError;
+      setItemOptions((prev) => prev.map((row) => row.item_id === item.item_id ? { ...row, unit_price: unitPrice } : row));
+      setItemManagerMessage(`${item.item_name} price updated.`);
+    } catch (e: unknown) {
+      setItemManagerError(getErrorMessage(e, "Unable to update item price."));
     } finally {
       setItemBusy(false);
     }
@@ -1343,8 +1784,8 @@ export default function ParaphernaliaPage() {
     }
 
     setItemBusy(true);
-    setError("");
-    setInfoMessage("");
+    setItemManagerError("");
+    setItemManagerMessage("");
     try {
       const softDelete = await supabase.from("paraphernalia_items").update({ is_active: false }).eq("item_id", item.item_id);
       if (softDelete.error) {
@@ -1353,9 +1794,9 @@ export default function ParaphernaliaPage() {
       }
 
       setItemOptions((prev) => prev.filter((row) => row.item_id !== item.item_id));
-      setInfoMessage("Item removed from the dropdown.");
+      setItemManagerMessage(`${item.item_name} was removed from future selections.`);
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Unable to remove item.");
+      setItemManagerError(getErrorMessage(e, "Unable to remove item."));
     } finally {
       setItemBusy(false);
     }
@@ -1377,11 +1818,14 @@ export default function ParaphernaliaPage() {
     const normalized = normalizeItem(itemName);
     if (!normalized) return;
     if (displayItemOptions.some((item) => normalizeItem(item.item_name) === normalized)) return;
+    const itemGroup = equipmentGroupForName(normalized);
 
     const { error: upsertError } = await supabase.from("paraphernalia_items").upsert(
       {
         item_name: normalized,
-        item_category: resolveItemCategory(normalized),
+        item_category: paraphernaliaKindForGroup(itemGroup),
+        item_group: itemGroup,
+        unit_price: 0,
         display_order: displayItemOptions.length + 1,
         is_active: true,
       },
@@ -1398,29 +1842,50 @@ export default function ParaphernaliaPage() {
       {
         item_id: null,
         item_name: normalized,
-        item_category: resolveItemCategory(normalized),
+        item_category: paraphernaliaKindForGroup(itemGroup),
+        item_group: itemGroup,
         display_order: displayItemOptions.length + 1,
+        unit_price: 0,
       },
     ]);
   }
 
   async function saveStockIn(mode: EntryMode, row?: StockInRow) {
+    if (!canCreateStockIn) throw new Error("You do not have permission to add Stock In records.");
     const detachment = stockInForm.detachment.trim();
     const selectedContract = contractByArea.get(normalizeKey(detachment)) ?? null;
     const clientName = stockInForm.clientName.trim() || safeText(selectedContract?.client_name, "");
     const lines = stockInForm.items
-      .map((line, index) => ({
+      .map((line) => ({
         item: normalizeItem(line.item),
-        control_number: normalizeControlNumber(line.controlNumber) || nextControlNumber(line.item, index),
         quantity: toNumberOrNull(line.quantity),
       }))
-      .filter((line) => line.item || line.control_number || line.quantity != null);
+      .filter((line) => line.item || line.quantity != null);
 
     if (!stockInForm.date.trim()) throw new Error("Date is required for Stock In.");
     if (!detachment) throw new Error("Detachment is required. You can select a contract Specific Area or type a new detachment.");
     if (!lines.length) throw new Error("Add at least one Stock In item.");
     if (lines.some((line) => !line.item)) throw new Error("Every Stock In line needs an item.");
     if (lines.some((line) => line.quantity == null || line.quantity <= 0)) throw new Error("Every Stock In quantity must be greater than zero.");
+
+    if (!isFaragonDetachment(detachment)) {
+      const requestedByItem = new Map<string, number>();
+      for (const line of lines) requestedByItem.set(line.item, (requestedByItem.get(line.item) ?? 0) + (line.quantity ?? 0));
+      for (const [item, requested] of requestedByItem) {
+        let available = mainInventoryRows.find((inventoryRow) => inventoryRow.item === item)?.stockBalance ?? 0;
+        const previousDetachment = row ? resolveSpecificArea(row.contract_id, row.detachment) : "";
+        if (mode === "edit" && row && normalizeItem(row.item) === item) {
+          const previousQuantity = row.quantity ?? 0;
+          const previousWasMain = isFaragonDetachment(previousDetachment) || (!normalizeKey(row.detachment) && !row.contract_id);
+          available += previousWasMain ? -previousQuantity : previousQuantity;
+        }
+        if (requested > available) {
+          throw new Error(
+            `${item} only has ${formatNumber(Math.max(available, 0))} available for allocation from FARAGON Main Inventory.`
+          );
+        }
+      }
+    }
 
     let attachment = stockInForm.attachment.trim() || null;
     if (attachmentFile) attachment = await uploadAttachmentFile(attachmentFile);
@@ -1431,7 +1896,6 @@ export default function ParaphernaliaPage() {
       date: stockInForm.date.trim(),
       status: stockInForm.status.trim().toUpperCase(),
       item: line.item,
-      control_number: line.control_number,
       quanitity: String(line.quantity ?? 0),
       quantity: line.quantity,
       attachment,
@@ -1457,17 +1921,23 @@ export default function ParaphernaliaPage() {
   }
 
   async function saveStockOut(mode: EntryMode, row?: StockOutRow) {
+    if (!canCreateStockOut && mode === "create") throw new Error("You do not have permission to add Stock Out records.");
     const detachment = stockOutForm.detachment.trim();
+    if (detachmentAccess.restricted) {
+      const allowedKeys = new Set(Array.from(detachmentAccess.allowedDetachments, normalizeKey));
+      if (!allowedKeys.has(normalizeKey(detachment))) {
+        throw new Error("You can only create Stock Out records for your assigned detachment.");
+      }
+    }
     const selectedContract = contractByArea.get(normalizeKey(detachment)) ?? null;
     const clientName = stockOutForm.clientName.trim() || safeText(selectedContract?.client_name, "");
     const lines = stockOutForm.items
-      .map((line, index) => ({
+      .map((line) => ({
         item: normalizeItem(line.item),
-        control_number: normalizeControlNumber(line.controlNumber) || nextControlNumber(line.item, index),
         quantity: toNumberOrNull(line.quantity),
-        price: toNumberOrNull(line.price),
+        price: toNumberOrNull(line.price) ?? itemPriceByName.get(normalizeItem(line.item)) ?? 0,
       }))
-      .filter((line) => line.item || line.control_number || line.quantity != null || line.price != null);
+      .filter((line) => line.item || line.quantity != null || line.price != null);
 
     if (!stockOutForm.date.trim()) throw new Error("Date is required for Stock Out.");
     if (!stockOutForm.names.trim()) throw new Error("Names is required for Stock Out.");
@@ -1476,13 +1946,36 @@ export default function ParaphernaliaPage() {
     if (lines.some((line) => !line.item)) throw new Error("Every Stock Out line needs an item.");
     if (lines.some((line) => line.quantity == null || line.quantity <= 0)) throw new Error("Every Stock Out QTY must be greater than zero.");
 
+    const requestedByItem = new Map<string, number>();
+    for (const line of lines) requestedByItem.set(line.item, (requestedByItem.get(line.item) ?? 0) + (line.quantity ?? 0));
+    const targetIsFaragon = isFaragonDetachment(detachment);
+    for (const [item, requested] of requestedByItem) {
+      const available = targetIsFaragon
+        ? mainInventoryRows.find((inventoryRow) => inventoryRow.item === item)?.stockBalance ?? 0
+        : inventoryRows.find(
+            (inventoryRow) =>
+              normalizeKey(inventoryRow.specificArea) === normalizeKey(detachment) && inventoryRow.item === item
+          )?.stockBalance ?? 0;
+      const previousDetachment = row ? resolveSpecificArea(row.contract_id, row.specific_area) : "";
+      const editingAllowance =
+        mode === "edit" &&
+        row &&
+        normalizeKey(previousDetachment) === normalizeKey(detachment) &&
+        normalizeItem(row.item) === item
+          ? row.quantity ?? 0
+          : 0;
+      if (requested > available + editingAllowance) {
+        const inventoryName = targetIsFaragon ? "FARAGON Main Inventory" : `${detachment} inventory`;
+        throw new Error(`${item} only has ${formatNumber(available + editingAllowance)} available in ${inventoryName}.`);
+      }
+    }
+
     for (const line of lines) await ensureItemOption(line.item);
 
     const payloads = lines.map((line) => ({
       date: stockOutForm.date.trim(),
       names: stockOutForm.names.trim(),
       items: line.item,
-      control_number: line.control_number,
       quantity: line.quantity,
       price: line.price,
       status: stockOutForm.status.trim().toUpperCase(),
@@ -1518,8 +2011,33 @@ export default function ParaphernaliaPage() {
 
     try {
       if (entryModal.kind === "stockIn") {
+        if (entryModal.transfer) {
+          const destination = normalizeDetachmentName(stockInForm.detachment);
+          if (!destination || isFaragonDetachment(destination)) {
+            throw new Error("Select a destination detachment other than FARAGON.");
+          }
+          const { error: destinationError } = await supabase.from("paraphernalia_detachment_tables").upsert(
+            {
+              detachment: destination,
+              client_name: stockInForm.clientName.trim() || clientNameForDetachment(destination) || null,
+              is_active: true,
+              updated_at: new Date().toISOString(),
+            },
+            { onConflict: "detachment" }
+          );
+          if (destinationError) throw destinationError;
+          setManualDetachmentTables((prev) => mergeDetachmentTableNames(prev, [destination]));
+        }
         await saveStockIn(entryModal.mode, entryModal.row);
-        setInfoMessage(entryModal.mode === "edit" ? "Stock In record updated." : "Stock In record created.");
+        setInfoMessage(
+          entryModal.transfer
+            ? entryModal.mode === "edit"
+              ? "Stock Out transfer updated. The destination inventory was updated automatically."
+              : "Stock Out transfer created. The destination inventory was updated automatically."
+            : entryModal.mode === "edit"
+              ? "Stock In record updated."
+              : "Stock In record created."
+        );
       } else {
         await saveStockOut(entryModal.mode, entryModal.row);
         setInfoMessage(entryModal.mode === "edit" ? "Stock Out record updated." : "Stock Out record created.");
@@ -1529,7 +2047,7 @@ export default function ParaphernaliaPage() {
       setAttachmentFile(null);
       await loadAll();
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Unable to save paraphernalia record.");
+      setError(getErrorMessage(e, "Unable to save paraphernalia record."));
     } finally {
       setSaving(false);
     }
@@ -1552,13 +2070,13 @@ export default function ParaphernaliaPage() {
       setDeleteState(null);
       await loadAll();
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Unable to delete record.");
+      setError(getErrorMessage(e, "Unable to delete record."));
     } finally {
       setDeleting(false);
     }
   }
 
-  function parseParaphernaliaImportRow(row: Record<string, unknown>, idx = 0) {
+  function parseParaphernaliaImportRow(row: Record<string, unknown>) {
     const section = normalizeKey(pickByAliases(row, ["section", "type", "record type", "transaction"]));
     const kind: EntryKind =
       section.includes("out") || section.includes("issued") || section.includes("release")
@@ -1568,7 +2086,6 @@ export default function ParaphernaliaPage() {
     const detachment = normalizeDetachmentName(pickByAliases(row, ["detachment", "specific area", "area"]));
     const date = pickByAliases(row, ["date", "transaction date"]).trim();
     const quantity = toNumberOrNull(pickByAliases(row, ["quantity", "qty", "quanitity"]));
-    const controlNumber = normalizeControlNumber(pickByAliases(row, ["controlnumber", "control number", "control_no", "control no"])) || (item ? nextControlNumber(item, idx) : "");
     const clientName = pickByAliases(row, ["client_name", "client name", "client"]).trim() || clientNameForDetachment(detachment) || null;
     const selectedContract = contractByArea.get(normalizeKey(detachment));
 
@@ -1593,9 +2110,8 @@ export default function ParaphernaliaPage() {
           date,
           names,
           items: item,
-          control_number: controlNumber,
           quantity,
-          price: toNumberOrNull(pickByAliases(row, ["price", "unit price", "amount"])),
+          price: toNumberOrNull(pickByAliases(row, ["price", "unit price", "amount"])) ?? itemPriceByName.get(item) ?? 0,
           status: (pickByAliases(row, ["status"]).trim() || "FREE").toUpperCase(),
           date_posted: pickByAliases(row, ["date posted", "date_posted"]).trim() || null,
           specific_area: detachment,
@@ -1612,7 +2128,6 @@ export default function ParaphernaliaPage() {
         date,
         status: (pickByAliases(row, ["status"]).trim() || "RE-STOCKED").toUpperCase(),
         item,
-        control_number: controlNumber,
         quanitity: String(quantity),
         quantity,
         attachment: pickByAliases(row, ["attachment", "attachment url", "file"]).trim() || null,
@@ -1630,7 +2145,7 @@ export default function ParaphernaliaPage() {
     let skipped = 0;
     const parsedRows = rawRows
       .map((row, idx) => {
-        const parsed = parseParaphernaliaImportRow(row, idx);
+        const parsed = parseParaphernaliaImportRow(row);
         if (!parsed.payload) {
           skipped += 1;
           if (parsed.error) rowErrors.push(`Row ${idx + 2}: ${parsed.error}`);
@@ -1668,16 +2183,12 @@ export default function ParaphernaliaPage() {
     const stockInByKey = new Map<string, string>();
     for (const row of stockInRows) {
       const area = resolveSpecificArea(row.contract_id, row.detachment);
-      const controlKey = normalizeControlNumber(row.control_number);
-      if (controlKey) stockInByKey.set(`control:${controlKey}`, row.id);
       stockInByKey.set(`row:${normalizeKey(row.date)}|${normalizeKey(area)}|${normalizeItem(row.item)}|${normalizeKey(row.status)}`, row.id);
     }
 
     const stockOutByKey = new Map<string, string>();
     for (const row of stockOutRows) {
       const area = resolveSpecificArea(row.contract_id, row.specific_area);
-      const controlKey = normalizeControlNumber(row.control_number);
-      if (controlKey) stockOutByKey.set(`control:${controlKey}`, row.id);
       stockOutByKey.set(`row:${normalizeKey(row.date)}|${normalizeKey(area)}|${normalizeItem(row.item)}|${normalizeKey(row.names)}`, row.id);
     }
 
@@ -1686,10 +2197,9 @@ export default function ParaphernaliaPage() {
     const deduped = new Map<string, Record<string, unknown>>();
     for (const payload of parsedRows) {
       const kind = String(payload.__kind);
-      const controlKey = normalizeControlNumber(payload.control_number);
       const area = kind === "stockIn" ? normalizeKey(payload.detachment) : normalizeKey(payload.specific_area);
       const item = normalizeItem(kind === "stockIn" ? payload.item : payload.items);
-      const identity = controlKey || `${normalizeKey(payload.date)}|${area}|${item}|${normalizeKey(kind === "stockIn" ? payload.status : payload.names)}`;
+      const identity = `${normalizeKey(payload.date)}|${area}|${item}|${normalizeKey(kind === "stockIn" ? payload.status : payload.names)}`;
       const key = `${kind}:${identity}`;
       if (deduped.has(key)) skipped += 1;
       deduped.set(key, payload);
@@ -1697,15 +2207,15 @@ export default function ParaphernaliaPage() {
 
     for (const [key, payload] of deduped.entries()) {
       const kind = payload.__kind as EntryKind;
-      const { __kind, ...dbPayload } = payload;
-      const controlKey = normalizeControlNumber(payload.control_number);
+      const dbPayload = { ...payload };
+      delete dbPayload.__kind;
       const rowKey =
         kind === "stockIn"
           ? `row:${normalizeKey(payload.date)}|${normalizeKey(payload.detachment)}|${normalizeItem(payload.item)}|${normalizeKey(payload.status)}`
           : `row:${normalizeKey(payload.date)}|${normalizeKey(payload.specific_area)}|${normalizeItem(payload.items)}|${normalizeKey(payload.names)}`;
       const id = kind === "stockIn"
-        ? (controlKey ? stockInByKey.get(`control:${controlKey}`) : undefined) ?? stockInByKey.get(rowKey)
-        : (controlKey ? stockOutByKey.get(`control:${controlKey}`) : undefined) ?? stockOutByKey.get(rowKey);
+        ? stockInByKey.get(rowKey)
+        : stockOutByKey.get(rowKey);
 
       if (kind === "stockIn") {
         const result = id
@@ -1744,7 +2254,6 @@ export default function ParaphernaliaPage() {
       Date: safeText(row.date),
       Status: safeText(row.status),
       Item: safeText(row.item),
-      CONTROLNUMBER: safeText(row.control_number),
       Quantity: row.quantity ?? "",
       Attachment: safeText(row.attachment),
       Detachment: resolveSpecificArea(row.contract_id, row.detachment),
@@ -1758,7 +2267,6 @@ export default function ParaphernaliaPage() {
       Date: safeText(row.date),
       Names: safeText(row.names),
       Items: safeText(row.item),
-      CONTROLNUMBER: safeText(row.control_number),
       QTY: row.quantity ?? "",
       Price: row.price ?? "",
       Status: safeText(row.status),
@@ -1779,14 +2287,38 @@ export default function ParaphernaliaPage() {
     }));
   }
 
+  function mainInventoryExportRows(rows: MainInventoryRow[]) {
+    return rows.map((row) => ({
+      Items: row.item,
+      "Equipment Category": row.group,
+      "Unit Price": row.unitPrice,
+      "Total Stock In": row.stockIn,
+      "Total Stock Out": row.stockOut,
+      "Available Stock": row.stockBalance,
+      "Inventory Value": row.inventoryValue,
+    }));
+  }
+
   async function exportXlsx() {
     if (!canExport) return;
     const out = await buildBrandedWorkbookBuffer([
       {
+        name: "MainInventory",
+        title: "FARAGON Main Inventory",
+        subtitle: "Central stock availability and catalog prices",
+        rows: mainInventoryExportRows(filteredMainInventory),
+      },
+      {
         name: "StockIn",
-        title: "Paraphernalia Stock In",
-        subtitle: "Stock-in records grouped through Client contract Specific Area",
-        rows: stockInExportRows(filteredStockIn),
+        title: "FARAGON Paraphernalia Stock In",
+        subtitle: "Restocks received by FARAGON Main Inventory",
+        rows: stockInExportRows(filteredMainStockIn),
+      },
+      {
+        name: "MainTransfers",
+        title: "Paraphernalia Stock Out to Detachments",
+        subtitle: "FARAGON allocations that become Stock In at each destination detachment",
+        rows: stockInExportRows(filteredMainTransfers),
       },
       {
         name: "StockOut",
@@ -1796,13 +2328,13 @@ export default function ParaphernaliaPage() {
       },
       {
         name: "SecInventory",
-        title: "Paraphernalia Sec Inv. s",
+        title: "Security Inventory",
         subtitle: "Security inventory balance from Stock In minus Stock Out",
         rows: inventoryExportRows(filteredSecInventory),
       },
       {
         name: "OfficeSupplyInv",
-        title: "Paraphernalia Office Supply Inv.",
+        title: "Office Supply Inventory",
         subtitle: "Office supply inventory balance from Stock In minus Stock Out",
         rows: inventoryExportRows(filteredOfficeInventory),
       },
@@ -1813,9 +2345,11 @@ export default function ParaphernaliaPage() {
   function exportCsv() {
     if (!canExport) return;
     const rows = [
-      ...stockInExportRows(filteredStockIn).map((row) => ({ Section: "Stock In", ...row })),
+      ...mainInventoryExportRows(filteredMainInventory).map((row) => ({ Section: "FARAGON Main Inventory", ...row })),
+      ...stockInExportRows(filteredMainStockIn).map((row) => ({ Section: "FARAGON Stock In", ...row })),
+      ...stockInExportRows(filteredMainTransfers).map((row) => ({ Section: "Stock Out to Detachments", ...row })),
       ...stockOutExportRows(filteredStockOut).map((row) => ({ Section: "Stock Out", ...row })),
-      ...inventoryExportRows(filteredSecInventory).map((row) => ({ Section: "Sec Inventory", ...row })),
+      ...inventoryExportRows(filteredSecInventory).map((row) => ({ Section: "Security Inventory", ...row })),
       ...inventoryExportRows(filteredOfficeInventory).map((row) => ({ Section: "Office Supply Inventory", ...row })),
     ];
     const ws = XLSX.utils.aoa_to_sheet(buildBrandedAoa(rows, "Paraphernalia Stock Export", "Combined stock-in, stock-out, and inventory summary"));
@@ -1847,20 +2381,22 @@ export default function ParaphernaliaPage() {
       }
     }
 
-    addTable("Paraphernalia Stock In", stockInExportRows(filteredStockIn));
+    addTable("FARAGON Main Inventory", mainInventoryExportRows(filteredMainInventory));
+    addTable("FARAGON Paraphernalia Stock In", stockInExportRows(filteredMainStockIn));
+    addTable("Paraphernalia Stock Out to Detachments", stockInExportRows(filteredMainTransfers));
     addTable("Paraphernalia Stock Out", stockOutExportRows(filteredStockOut));
-    addTable("Paraphernalia Sec Inv. s", inventoryExportRows(filteredSecInventory));
-    addTable("Paraphernalia Office Supply Inv.", inventoryExportRows(filteredOfficeInventory));
+    addTable("Security Inventory", inventoryExportRows(filteredSecInventory));
+    addTable("Office Supply Inventory", inventoryExportRows(filteredOfficeInventory));
     doc.save(`paraphernalia_stock_${new Date().toISOString().slice(0, 10)}.pdf`);
   }
 
-  function renderActions(row: StockInRow | StockOutRow, kind: EntryKind) {
-    if (!isAdmin) return null;
+  function renderActions(row: StockInRow | StockOutRow, kind: EntryKind, transfer = false) {
+    if (!canManageInventory) return null;
     return (
       <div className="inline-flex items-center gap-2">
         <button
           type="button"
-          onClick={() => (kind === "stockIn" ? openEditStockIn(row as StockInRow) : openEditStockOut(row as StockOutRow))}
+          onClick={() => (kind === "stockIn" ? openEditStockIn(row as StockInRow, transfer) : openEditStockOut(row as StockOutRow))}
           className="rounded-xl border bg-white p-2 text-black hover:bg-[#fff8da]"
           title="Edit"
         >
@@ -1899,14 +2435,64 @@ export default function ParaphernaliaPage() {
     const viewAllKind = viewAllState.kind;
     const detachment = viewAllState.detachment;
 
+    if (viewAllKind === "mainStockIn" || viewAllKind === "mainTransfer") {
+      const isTransfer = viewAllKind === "mainTransfer";
+      const rows = isTransfer ? filteredMainTransfers : filteredMainStockIn;
+      return (
+        <ModalShell
+          open
+          title={isTransfer ? "View All Paraphernalia Stock Out to Detachments" : "View All FARAGON Paraphernalia Stock In"}
+          subtitle={
+            isTransfer
+              ? "Each transfer deducts FARAGON and increases the selected destination detachment."
+              : "These records increase the FARAGON Main Inventory balance."
+          }
+          onClose={() => setViewAllState(null)}
+        >
+          <DataTable
+            storageKey={isTransfer ? "paraphernalia-view-main-transfers" : "paraphernalia-view-main-stock-in"}
+            columns={isTransfer ? mainTransferColumns : stockInColumns}
+            rows={rows}
+            rowKey={(row) => row.id}
+            loading={false}
+            emptyLabel={isTransfer ? "No Stock Out transfers found." : "No FARAGON Stock In records found."}
+            actions={canManageInventory ? (row) => renderActions(row, "stockIn", isTransfer) : undefined}
+          />
+        </ModalShell>
+      );
+    }
+
+    if (viewAllKind === "mainSecurityInventory" || viewAllKind === "mainOfficeInventory") {
+      const isOffice = viewAllKind === "mainOfficeInventory";
+      const rows = isOffice ? filteredMainOfficeInventory : filteredMainSecurityInventory;
+      return (
+        <ModalShell
+          open
+          fullScreen
+          title={`FARAGON ${isOffice ? "Office Supply" : "Security"} Inventory`}
+          subtitle="Full inventory view. Use the table zoom controls or horizontal scroll when you need to inspect every column."
+          onClose={() => setViewAllState(null)}
+        >
+          <DataTable
+            storageKey={`paraphernalia-view-main-${isOffice ? "office" : "security"}-inventory`}
+            columns={mainInventoryColumns}
+            rows={rows}
+            rowKey={(row) => row.id}
+            loading={false}
+            emptyLabel={`No FARAGON ${isOffice ? "office supply" : "security"} inventory items found.`}
+          />
+        </ModalShell>
+      );
+    }
+
     const title =
       viewAllKind === "stockIn"
         ? "View All Paraphernalia Stock In"
         : viewAllKind === "stockOut"
           ? "View All Paraphernalia Stock Out"
           : viewAllKind === "secInventory"
-            ? "View All Paraphernalia Sec Inv. s"
-            : "View All Paraphernalia Office Supply Inv.";
+            ? "View All Security Inventory"
+            : "View All Office Supply Inventory";
 
     const allRows =
       viewAllKind === "stockIn"
@@ -1927,14 +2513,19 @@ export default function ParaphernaliaPage() {
     return (
       <ModalShell
         open={Boolean(viewAllKind)}
+        fullScreen={viewAllKind === "secInventory" || viewAllKind === "officeInventory"}
         title={detachment ? `${title}: ${detachment}` : title}
-        subtitle="Rows are segregated by the Client Name from the Client page contracts."
+        subtitle={
+          viewAllKind === "secInventory" || viewAllKind === "officeInventory"
+            ? "Full inventory view. Records are grouped by Client Name for easier reading."
+            : "Rows are segregated by the Client Name from the Client page contracts."
+        }
         onClose={() => setViewAllState(null)}
       >
         {viewAllKind === "stockIn"
           ? groupedByClient(rows as StockInRow[], (row) => resolveClientName(row.contract_id, row.detachment, row.client_name)).map(([clientName, clientRows]) => (
               <div key={clientName} className="mb-8">
-                <div className="mb-3 rounded-2xl bg-[#fff3b0] px-4 py-3 text-sm font-semibold text-black">{clientName}</div>
+                <div className="mb-3 rounded-2xl border border-amber-200 bg-[#fff3b0] px-5 py-4 text-lg font-bold text-black">{clientName}</div>
                 <DataTable
                   storageKey={`paraphernalia-view-stock-in-${normalizeKey(clientName)}`}
                   columns={stockInColumns}
@@ -1995,66 +2586,13 @@ export default function ParaphernaliaPage() {
               </p>
             </div>
 
-            <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={() => void loadAll()}
-                className="inline-flex items-center gap-2 rounded-xl border bg-white px-4 py-2 text-sm font-medium text-black hover:bg-gray-50"
-              >
-                <RefreshCw className="h-4 w-4" />
-                Refresh
-              </button>
-              {isAdmin ? (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => setItemManagerOpen(true)}
-                    className="inline-flex items-center gap-2 rounded-xl border bg-white px-4 py-2 text-sm font-semibold text-black hover:bg-gray-50"
-                  >
-                    <Pencil className="h-4 w-4" />
-                    Manage Items
-                  </button>
-                  {canImport ? (
-                    <button
-                      type="button"
-                      onClick={() => setImportModalOpen(true)}
-                      className="inline-flex items-center gap-2 rounded-xl border bg-white px-4 py-2 text-sm font-semibold text-black hover:bg-gray-50"
-                    >
-                      <Upload className="h-4 w-4" />
-                      Import Excel/CSV
-                    </button>
-                  ) : null}
-                  <button
-                    type="button"
-                    onClick={() => openCreate("stockIn")}
-                    className="inline-flex items-center gap-2 rounded-xl bg-[#8B1C1C] px-4 py-2 text-sm font-semibold text-white hover:brightness-110"
-                  >
-                    <Plus className="h-4 w-4" />
-                    Create Stock In
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => openCreate("stockOut")}
-                    className="inline-flex items-center gap-2 rounded-xl bg-[#FFDA03] px-4 py-2 text-sm font-semibold text-black hover:brightness-95"
-                  >
-                    <Plus className="h-4 w-4" />
-                    Create Stock Out
-                  </button>
-                </>
-              ) : null}
-            </div>
           </div>
         </div>
 
         {error ? <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
         {infoMessage ? <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{infoMessage}</div> : null}
         {schemaWarning ? <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">{schemaWarning}</div> : null}
-
-        <datalist id="paraphernalia-item-options">
-          {displayItemOptions.map((item) => (
-            <option key={`${item.item_id ?? item.item_name}-${item.item_name}`} value={item.item_name} />
-          ))}
-        </datalist>
+        {detachmentAccess.error ? <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">{detachmentAccess.error}</div> : null}
 
         <datalist id="paraphernalia-detachment-options">
           {detachmentOptions.map((detachment) => (
@@ -2062,73 +2600,131 @@ export default function ParaphernaliaPage() {
           ))}
         </datalist>
 
-        <div className="rounded-3xl border bg-white p-4 shadow-sm">
-          <div className="space-y-4">
-            <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-              <div className="grid flex-1 grid-cols-1 gap-3 md:grid-cols-2">
-              <label>
-                <span className={labelClass}>Available Detachment</span>
-                <select
-                  value={selectedDetachment}
-                  onChange={(event) => setSelectedDetachment(event.target.value)}
-                  className={inputClass}
-                >
-                  <option value="ALL">All Detachments</option>
-                  {detachmentOptions.map((detachment) => (
-                    <option key={detachment} value={detachment}>
-                      {detachment}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                <span className={labelClass}>Create Individual Detachment Table</span>
-                <div className="flex gap-2">
-                  <input
-                    list="paraphernalia-detachment-options"
-                    value={newDetachmentTable}
-                    onChange={(event) => setNewDetachmentTable(event.target.value)}
-                    className={inputClass}
-                    placeholder="Type detachment or choose above"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => void addDetachmentTable()}
-                    className="shrink-0 rounded-xl bg-[#FFDA03] px-4 py-2 text-sm font-semibold text-black hover:brightness-95"
-                  >
-                    Create
-                  </button>
-                </div>
-              </label>
+        <section className="overflow-visible rounded-[2rem] border border-[#e5dcc7] bg-white p-5 shadow-sm">
+          <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+            <div>
+              <div className="text-xs font-semibold uppercase tracking-[0.18em] text-[#8B1C1C]">Table Navigation</div>
+              <h2 className="mt-1 text-xl font-bold text-black">Choose a detachment inventory</h2>
+              <p className="mt-1 text-sm text-gray-600">Select one table to focus the page, or view every active table together.</p>
             </div>
-            <div className="rounded-2xl bg-[#fff9e6] px-4 py-3 text-sm text-gray-700">
-              Individual table sets: <span className="font-semibold text-black">{manualDetachmentTables.length}</span>
+            <div className="rounded-xl bg-[#fff9e6] px-3 py-2 text-sm font-semibold text-[#6d4b00]">
+              {detachmentTableNavigation.length} detachment table{detachmentTableNavigation.length === 1 ? "" : "s"}
             </div>
           </div>
 
-            {manualDetachmentTables.length ? (
-              <div className="flex flex-wrap gap-2">
-                {manualDetachmentTables.map((detachment) => (
-                  <div key={detachment} className="inline-flex items-center gap-2 rounded-full border bg-[#fff9e6] px-3 py-2 text-sm text-black">
-                    <span>{detachment}</span>
+          <div className={`mt-5 grid grid-cols-1 gap-4 ${canManageInventory ? "lg:grid-cols-2" : ""}`}>
+            <label>
+              <span className={labelClass}>Currently Viewing</span>
+              <select
+                value={selectedDetachment}
+                onChange={(event) => setSelectedDetachment(event.target.value)}
+                className={`${inputClass} min-h-11 bg-white`}
+              >
+                <option value="ALL">View All Tables</option>
+                {paraphernaliaTableNavigation.map((detachment) => (
+                  <option key={detachment} value={detachment}>
+                    {isFaragonDetachment(detachment) ? "FARAGON Main Inventory" : detachment}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            {canManageInventory ? (
+              <div>
+                <span className={labelClass}>Create Individual Detachment Table</span>
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <div className="min-w-0 flex-1">
+                    <SearchDropdownInput
+                      value={newDetachmentTable}
+                      onChange={setNewDetachmentTable}
+                      options={creatableDetachmentOptions}
+                      className={`${inputClass} min-h-11`}
+                      placeholder={creatableDetachmentOptions.length ? "Search Client Specific Area" : "All Client areas already have tables"}
+                      emptyLabel="No available Client Specific Area matches your search."
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void addDetachmentTable()}
+                    disabled={!canCreateSelectedDetachment}
+                    className="min-h-11 shrink-0 rounded-xl bg-[#FFDA03] px-5 py-2 text-sm font-bold text-black hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-45"
+                  >
+                    Create Table
+                  </button>
+                </div>
+                <div className="mt-1.5 text-xs text-gray-500">Only Specific Areas saved on the Client page can be selected.</div>
+              </div>
+            ) : null}
+          </div>
+
+          <div className="mt-5 rounded-2xl border border-amber-100 bg-[#fffdf5] p-3">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2 px-1">
+              <div className="text-sm font-bold text-black">Available Tables</div>
+              <div className="text-xs text-gray-500">
+                {selectedDetachmentKey === "all"
+                  ? "All tables are visible below"
+                  : `Filtered to ${isFaragonDetachment(selectedDetachment) ? "FARAGON Main Inventory" : selectedDetachment}`}
+              </div>
+            </div>
+
+            <div className="grid max-h-72 grid-cols-1 gap-2 overflow-y-auto pr-1 sm:grid-cols-2 xl:grid-cols-3">
+              <button
+                type="button"
+                onClick={() => setSelectedDetachment("ALL")}
+                className={`flex min-h-14 items-center rounded-xl border-2 px-4 text-left text-sm font-bold transition ${
+                  selectedDetachmentKey === "all"
+                    ? "border-[#8B1C1C] bg-[#8B1C1C] text-white shadow-md"
+                    : "border-amber-200 bg-white text-black hover:border-[#FFDA03] hover:bg-[#fff9e6]"
+                }`}
+              >
+                View All Tables
+              </button>
+
+              {paraphernaliaTableNavigation.map((detachment) => {
+                const isSelected = normalizeKey(detachment) === selectedDetachmentKey;
+                const isFaragon = isFaragonDetachment(detachment);
+                const label = isFaragon ? "FARAGON Main Inventory" : detachment;
+                return (
+                  <div
+                    key={detachment}
+                    className={`flex min-h-14 min-w-0 items-center rounded-xl border-2 transition ${
+                      isSelected
+                        ? "border-[#8B1C1C] bg-[#fff3b0] shadow-md"
+                        : "border-amber-200 bg-white hover:border-[#FFDA03] hover:bg-[#fff9e6]"
+                    }`}
+                  >
                     <button
                       type="button"
-                      onClick={() => void removeDetachmentTable(detachment)}
-                      className="rounded-full px-2 text-xs font-semibold text-red-600 hover:bg-red-50"
-                      title="Remove individual table"
+                      onClick={() => setSelectedDetachment(detachment)}
+                      className="min-w-0 flex-1 px-4 py-3 text-left text-sm font-bold text-black"
+                      title={`View only ${label}`}
                     >
-                      Remove
+                      <span className="block truncate">{label}</span>
                     </button>
+                    {canManageInventory && !isFaragon ? (
+                      <button
+                        type="button"
+                        onClick={() => setDetachmentTableToRemove(detachment)}
+                        className="mr-2 inline-flex h-9 shrink-0 items-center gap-1 rounded-lg px-2 text-xs font-bold text-red-700 hover:bg-red-50"
+                        title={`Remove ${detachment} table`}
+                        aria-label={`Remove ${detachment} table`}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                        <span className="hidden 2xl:inline">Remove</span>
+                      </button>
+                    ) : null}
                   </div>
-                ))}
-              </div>
-            ) : (
-              <div className="rounded-2xl border border-dashed bg-gray-50 px-4 py-3 text-sm text-gray-600">
-                No individual detachment tables yet. Select or type a detachment, then click Create.
-              </div>
-            )}
+                );
+              })}
             </div>
-        </div>
+
+            {!paraphernaliaTableNavigation.length ? (
+              <div className="mt-3 rounded-xl border border-dashed bg-white px-4 py-4 text-sm text-gray-600">
+                No detachment table is available for this account. Create one from a Client Specific Area first.
+              </div>
+            ) : null}
+          </div>
+        </section>
 
         <div className="flex flex-col gap-3 rounded-3xl border bg-white p-4 shadow-sm md:flex-row md:items-center md:justify-between">
           <label className="relative block w-full md:max-w-xl">
@@ -2159,6 +2755,199 @@ export default function ParaphernaliaPage() {
           ) : null}
         </div>
 
+        {!detachmentAccess.restricted && mainInventoryColumns.length && (selectedDetachmentKey === "all" || isFaragonDetachment(selectedDetachment)) ? (
+          <section className="space-y-4 rounded-[2rem] border border-[#e5dcc7] bg-white p-5 shadow-sm">
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div>
+                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-[#8B1C1C]">Detachment Table</div>
+                <h2 className="mt-1 text-2xl font-bold text-black">FARAGON Main Inventory</h2>
+                <p className="mt-1 text-sm text-gray-500">Main Logistics stock supplies every detachment inventory.</p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => void loadAll()}
+                  className="inline-flex items-center gap-2 rounded-xl border bg-white px-4 py-2 text-sm font-medium text-black hover:bg-gray-50"
+                >
+                  <RefreshCw className="h-4 w-4" />
+                  Refresh
+                </button>
+                {canViewPermission("manage_items") ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setItemManagerError("");
+                      setItemManagerMessage("");
+                      setItemManagerOpen(true);
+                    }}
+                    className="inline-flex items-center gap-2 rounded-xl border bg-white px-4 py-2 text-sm font-semibold text-black hover:bg-gray-50"
+                  >
+                    <Pencil className="h-4 w-4" />
+                    Manage Items
+                  </button>
+                ) : null}
+                {canImport ? (
+                  <button
+                    type="button"
+                    onClick={() => setImportModalOpen(true)}
+                    className="inline-flex items-center gap-2 rounded-xl border bg-white px-4 py-2 text-sm font-semibold text-black hover:bg-gray-50"
+                  >
+                    <Upload className="h-4 w-4" />
+                    Import Excel/CSV
+                  </button>
+                ) : null}
+                {canCreateStockIn ? (
+                  <button
+                    type="button"
+                    onClick={() => openCreate("stockIn", FARAGON_MAIN_LOGISTICS)}
+                    className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#8B1C1C] px-4 py-2 text-sm font-semibold text-white hover:brightness-110"
+                  >
+                    <Plus className="h-4 w-4" />
+                    Add FARAGON Stock In
+                  </button>
+                ) : null}
+                {canCreateStockIn ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const targetDetachment = detachmentOptions.find((detachment) => !isFaragonDetachment(detachment)) ?? "";
+                      openCreate("stockIn", targetDetachment, undefined, true);
+                    }}
+                    className="inline-flex items-center gap-2 rounded-xl bg-[#FFDA03] px-4 py-2 text-sm font-semibold text-black hover:brightness-95"
+                  >
+                    <Plus className="h-4 w-4" />
+                    Stock Out to Detachment
+                  </button>
+                ) : null}
+              </div>
+            </div>
+            <div className="grid grid-cols-3 gap-2 text-center text-xs md:max-w-xl">
+              <div className="rounded-2xl bg-emerald-50 px-3 py-2 text-emerald-700">
+                <div className="font-semibold">FARAGON Stock In</div>
+                <div className="text-base font-bold">{formatNumber(mainInventoryTotals.stockIn)}</div>
+              </div>
+              <div className="rounded-2xl bg-red-50 px-3 py-2 text-red-700">
+                <div className="font-semibold">Allocated / Issued</div>
+                <div className="text-base font-bold">{formatNumber(mainInventoryTotals.stockOut)}</div>
+              </div>
+              <div className="rounded-2xl bg-[#fff3b0] px-3 py-2 text-[#6d4b00]">
+                <div className="font-semibold">Available</div>
+                <div className="text-base font-bold">{formatNumber(mainInventoryTotals.stockBalance)}</div>
+              </div>
+            </div>
+            <div className="space-y-6">
+              <div className="space-y-4 rounded-3xl border-2 border-slate-200 bg-[#fffdf5] p-5 md:p-6">
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                  <div className="flex items-start gap-3">
+                    <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#8B1C1C] text-base font-bold text-white">1</span>
+                    <div>
+                      <h3 className="text-xl font-bold text-black">Security Inventory</h3>
+                      <p className="mt-1 text-base leading-6 text-gray-600">Security stock available for allocation to detachments.</p>
+                    </div>
+                  </div>
+                </div>
+                <DataTable
+                  storageKey="paraphernalia-main-security-inventory"
+                  columns={mainInventoryColumns}
+                  rows={filteredMainSecurityInventory}
+                  rowKey={(row) => row.id}
+                  loading={loading}
+                  emptyLabel="No FARAGON security inventory items found."
+                  previewLimit={4}
+                  onViewAll={() => setViewAllState({ kind: "mainSecurityInventory" })}
+                />
+              </div>
+              <div className="space-y-4 rounded-3xl border-2 border-slate-200 bg-[#fffdf5] p-5 md:p-6">
+                <div className="flex items-start gap-3">
+                  <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#8B1C1C] text-base font-bold text-white">2</span>
+                  <div>
+                    <h3 className="text-xl font-bold text-black">Office Supply Inventory</h3>
+                    <p className="mt-1 text-base leading-6 text-gray-600">Office supply stock available for allocation to detachments.</p>
+                  </div>
+                </div>
+                <DataTable
+                  storageKey="paraphernalia-main-office-inventory"
+                  columns={mainInventoryColumns}
+                  rows={filteredMainOfficeInventory}
+                  rowKey={(row) => row.id}
+                  loading={loading}
+                  emptyLabel="No FARAGON office supply inventory items found."
+                  previewLimit={4}
+                  onViewAll={() => setViewAllState({ kind: "mainOfficeInventory" })}
+                />
+              </div>
+            </div>
+            <div className="space-y-6">
+              <div className="space-y-4 rounded-3xl border-2 border-slate-200 bg-[#fffdf5] p-5 md:p-6">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex items-start gap-3">
+                    <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#8B1C1C] text-base font-bold text-white">3</span>
+                    <div>
+                      <h3 className="text-xl font-bold text-black">Paraphernalia Stock In</h3>
+                      <p className="mt-1 text-base leading-6 text-gray-600">Restocks received by FARAGON Main Inventory.</p>
+                    </div>
+                  </div>
+                  {canCreateStockIn ? (
+                    <button
+                      type="button"
+                      onClick={() => openCreate("stockIn", FARAGON_MAIN_LOGISTICS)}
+                      className="rounded-xl bg-[#8B1C1C] px-5 py-3 text-base font-bold text-white hover:brightness-110"
+                    >
+                      Add Stock In
+                    </button>
+                  ) : null}
+                </div>
+                <DataTable
+                  storageKey="paraphernalia-main-stock-in"
+                  columns={stockInColumns}
+                  rows={filteredMainStockIn}
+                  rowKey={(row) => row.id}
+                  loading={loading}
+                  emptyLabel="No FARAGON Stock In records found."
+                  actions={canManageInventory ? (row) => renderActions(row, "stockIn") : undefined}
+                  previewLimit={4}
+                  onViewAll={() => setViewAllState({ kind: "mainStockIn" })}
+                />
+              </div>
+
+              <div className="space-y-4 rounded-3xl border-2 border-slate-200 bg-[#fffdf5] p-5 md:p-6">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex items-start gap-3">
+                    <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#8B1C1C] text-base font-bold text-white">4</span>
+                    <div>
+                      <h3 className="text-xl font-bold text-black">Paraphernalia Stock Out</h3>
+                      <p className="mt-1 text-base leading-6 text-gray-600">FARAGON stock transferred to other detachment tables.</p>
+                    </div>
+                  </div>
+                  {canCreateStockIn ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const targetDetachment = detachmentOptions.find((detachment) => !isFaragonDetachment(detachment)) ?? "";
+                        openCreate("stockIn", targetDetachment, undefined, true);
+                      }}
+                      className="rounded-xl bg-[#FFDA03] px-5 py-3 text-base font-bold text-black hover:brightness-95"
+                    >
+                      Add Stock Out
+                    </button>
+                  ) : null}
+                </div>
+                <DataTable
+                  storageKey="paraphernalia-main-stock-out-transfers"
+                  columns={mainTransferColumns}
+                  rows={filteredMainTransfers}
+                  rowKey={(row) => row.id}
+                  loading={loading}
+                  emptyLabel="No Stock Out transfers to detachments found."
+                  actions={canManageInventory ? (row) => renderActions(row, "stockIn", true) : undefined}
+                  previewLimit={4}
+                  onViewAll={() => setViewAllState({ kind: "mainTransfer" })}
+                />
+              </div>
+            </div>
+          </section>
+        ) : null}
+
         <div className="space-y-8">
           {detachmentTableGroups.length ? (
             detachmentTableGroups.map((group) => (
@@ -2171,15 +2960,15 @@ export default function ParaphernaliaPage() {
                       {group.clientNames.length ? group.clientNames.join(", ") : "Custom detachment"}
                     </p>
                   </div>
-                  <div className="grid grid-cols-3 gap-2 text-center text-xs">
+                  <div className={`grid gap-2 text-center text-xs ${canViewStockOutHistory ? "grid-cols-3" : "grid-cols-2"}`}>
                     <div className="rounded-2xl bg-emerald-50 px-3 py-2 text-emerald-700">
                       <div className="font-semibold">Stock In</div>
                       <div className="text-base font-bold">{formatNumber(group.totalStockIn)}</div>
                     </div>
-                    <div className="rounded-2xl bg-red-50 px-3 py-2 text-red-700">
+                    {canViewStockOutHistory ? <div className="rounded-2xl bg-red-50 px-3 py-2 text-red-700">
                       <div className="font-semibold">Stock Out</div>
                       <div className="text-base font-bold">{formatNumber(group.totalStockOut)}</div>
-                    </div>
+                    </div> : null}
                     <div className="rounded-2xl bg-[#fff3b0] px-3 py-2 text-[#6d4b00]">
                       <div className="font-semibold">Balance</div>
                       <div className="text-base font-bold">{formatNumber(group.totalBalance)}</div>
@@ -2188,22 +2977,16 @@ export default function ParaphernaliaPage() {
                 </div>
 
                 <div className="grid grid-cols-1 gap-5">
-                  <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
-                    <div className="space-y-3 rounded-3xl border bg-[#fffdf5] p-4">
+                  {canViewInventorySections ? <div className="space-y-6">
+                    <div className="space-y-4 rounded-3xl border-2 border-slate-200 bg-[#fffdf5] p-5 md:p-6">
                       <div className="flex flex-wrap items-center justify-between gap-3">
-                        <div>
-                          <h3 className="text-lg font-semibold text-black">Paraphernalia Sec Inv. s</h3>
-                          <p className="text-sm text-gray-500">Security items for {group.detachment}.</p>
+                        <div className="flex items-start gap-3">
+                          <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#8B1C1C] text-base font-bold text-white">1</span>
+                          <div>
+                            <h3 className="text-xl font-bold text-black">Security Inventory</h3>
+                            <p className="mt-1 text-base leading-6 text-gray-600">Security items for {group.detachment}.</p>
+                          </div>
                         </div>
-                        {isAdmin ? (
-                          <button
-                            type="button"
-                            onClick={() => openCreate("stockIn", group.detachment, "SEC")}
-                            className="rounded-xl border bg-white px-4 py-2 text-sm font-semibold text-black hover:bg-gray-50"
-                          >
-                            Add Sec Items
-                          </button>
-                        ) : null}
                       </div>
                       <DataTable
                         storageKey={`paraphernalia-sec-inventory-${normalizeKey(group.detachment)}`}
@@ -2211,27 +2994,21 @@ export default function ParaphernaliaPage() {
                         rows={group.secInventory}
                         rowKey={(row) => row.id}
                         loading={loading}
-                        emptyLabel={`No Sec Inv. activity for ${group.detachment}.`}
+                        emptyLabel={`No Security Inventory activity for ${group.detachment}.`}
                         previewLimit={4}
                         onViewAll={() => setViewAllState({ kind: "secInventory", detachment: group.detachment })}
                       />
                     </div>
 
-                    <div className="space-y-3 rounded-3xl border bg-[#fffdf5] p-4">
+                    <div className="space-y-4 rounded-3xl border-2 border-slate-200 bg-[#fffdf5] p-5 md:p-6">
                       <div className="flex flex-wrap items-center justify-between gap-3">
-                        <div>
-                          <h3 className="text-lg font-semibold text-black">Paraphernalia Office Supply Inv.</h3>
-                          <p className="text-sm text-gray-500">Office supply items for {group.detachment}.</p>
+                        <div className="flex items-start gap-3">
+                          <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#8B1C1C] text-base font-bold text-white">2</span>
+                          <div>
+                            <h3 className="text-xl font-bold text-black">Office Supply Inventory</h3>
+                            <p className="mt-1 text-base leading-6 text-gray-600">Office supply items for {group.detachment}.</p>
+                          </div>
                         </div>
-                        {isAdmin ? (
-                          <button
-                            type="button"
-                            onClick={() => openCreate("stockIn", group.detachment, "OFFICE")}
-                            className="rounded-xl border bg-white px-4 py-2 text-sm font-semibold text-black hover:bg-gray-50"
-                          >
-                            Add Office Items
-                          </button>
-                        ) : null}
                       </div>
                       <DataTable
                         storageKey={`paraphernalia-office-inventory-${normalizeKey(group.detachment)}`}
@@ -2239,24 +3016,27 @@ export default function ParaphernaliaPage() {
                         rows={group.officeInventory}
                         rowKey={(row) => row.id}
                         loading={loading}
-                        emptyLabel={`No Office Supply Inv. activity for ${group.detachment}.`}
+                        emptyLabel={`No Office Supply Inventory activity for ${group.detachment}.`}
                         previewLimit={4}
                         onViewAll={() => setViewAllState({ kind: "officeInventory", detachment: group.detachment })}
                       />
                     </div>
-                  </div>
+                  </div> : null}
 
-                  <div className="space-y-3 rounded-3xl border bg-[#fffdf5] p-4">
+                  {canViewStockInHistory ? <div className="space-y-4 rounded-3xl border-2 border-slate-200 bg-[#fffdf5] p-5 md:p-6">
                     <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div>
-                        <h3 className="text-lg font-semibold text-black">Paraphernalia Stock In</h3>
-                        <p className="text-sm text-gray-500">Only Stock In records for {group.detachment}.</p>
+                      <div className="flex items-start gap-3">
+                        <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#8B1C1C] text-base font-bold text-white">3</span>
+                        <div>
+                          <h3 className="text-xl font-bold text-black">Paraphernalia Stock In</h3>
+                          <p className="mt-1 text-base leading-6 text-gray-600">Only Stock In records for {group.detachment}.</p>
+                        </div>
                       </div>
-                      {isAdmin ? (
+                      {canCreateStockIn ? (
                         <button
                           type="button"
                           onClick={() => openCreate("stockIn", group.detachment)}
-                          className="rounded-xl bg-[#8B1C1C] px-4 py-2 text-sm font-semibold text-white hover:brightness-110"
+                          className="rounded-xl bg-[#8B1C1C] px-5 py-3 text-base font-bold text-white hover:brightness-110"
                         >
                           Add Stock In
                         </button>
@@ -2269,23 +3049,26 @@ export default function ParaphernaliaPage() {
                       rowKey={(row) => row.id}
                       loading={loading}
                       emptyLabel={`No Stock In records for ${group.detachment}.`}
-                      actions={isAdmin ? (row) => renderActions(row, "stockIn") : undefined}
+                      actions={canManageInventory ? (row) => renderActions(row, "stockIn") : undefined}
                       previewLimit={4}
                       onViewAll={() => setViewAllState({ kind: "stockIn", detachment: group.detachment })}
                     />
-                  </div>
+                  </div> : null}
 
-                  <div className="space-y-3 rounded-3xl border bg-[#fffdf5] p-4">
+                  {canViewStockOutHistory ? <div className="space-y-4 rounded-3xl border-2 border-slate-200 bg-[#fffdf5] p-5 md:p-6">
                     <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div>
-                        <h3 className="text-lg font-semibold text-black">Paraphernalia Stock Out</h3>
-                        <p className="text-sm text-gray-500">Only Stock Out records for {group.detachment}.</p>
+                      <div className="flex items-start gap-3">
+                        <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#8B1C1C] text-base font-bold text-white">4</span>
+                        <div>
+                          <h3 className="text-xl font-bold text-black">Paraphernalia Stock Out</h3>
+                          <p className="mt-1 text-base leading-6 text-gray-600">Only Stock Out records for {group.detachment}.</p>
+                        </div>
                       </div>
-                      {isAdmin ? (
+                      {canCreateStockOut ? (
                         <button
                           type="button"
                           onClick={() => openCreate("stockOut", group.detachment)}
-                          className="rounded-xl bg-[#FFDA03] px-4 py-2 text-sm font-semibold text-black hover:brightness-95"
+                          className="rounded-xl bg-[#FFDA03] px-5 py-3 text-base font-bold text-black hover:brightness-95"
                         >
                           Add Stock Out
                         </button>
@@ -2298,11 +3081,26 @@ export default function ParaphernaliaPage() {
                       rowKey={(row) => row.id}
                       loading={loading}
                       emptyLabel={`No Stock Out records for ${group.detachment}.`}
-                      actions={isAdmin ? (row) => renderActions(row, "stockOut") : undefined}
+                      actions={canManageInventory ? (row) => renderActions(row, "stockOut") : undefined}
                       previewLimit={4}
                       onViewAll={() => setViewAllState({ kind: "stockOut", detachment: group.detachment })}
                     />
-                  </div>
+                  </div> : canCreateStockOut ? (
+                    <div className="flex flex-col gap-4 rounded-3xl border-2 border-amber-200 bg-[#fffdf5] p-5 md:flex-row md:items-center md:justify-between md:p-6">
+                      <div>
+                        <div className="text-xs font-semibold uppercase tracking-[0.18em] text-[#8B1C1C]">Allowed Action</div>
+                        <h3 className="mt-1 text-xl font-bold text-black">Add Stock Out</h3>
+                        <p className="mt-1 text-sm text-gray-600">Create a Stock Out record for {group.detachment}. Existing Stock Out history is not available to this account.</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => openCreate("stockOut", group.detachment)}
+                        className="shrink-0 rounded-xl bg-[#FFDA03] px-5 py-3 text-base font-bold text-black hover:brightness-95"
+                      >
+                        Add Stock Out
+                      </button>
+                    </div>
+                  ) : null}
 
                 </div>
               </section>
@@ -2317,15 +3115,25 @@ export default function ParaphernaliaPage() {
 
       <ModalShell
         open={Boolean(entryModal)}
-        title={entryModal?.kind === "stockIn" ? `${entryModal.mode === "edit" ? "Edit" : "Create"} Paraphernalia Stock In` : `${entryModal?.mode === "edit" ? "Edit" : "Create"} Paraphernalia Stock Out`}
-        subtitle="Detachment options come from the Client page contracts Specific Area column."
+        title={
+          entryModal?.kind === "stockIn"
+            ? entryModal.transfer
+              ? `${entryModal.mode === "edit" ? "Edit" : "Create"} Paraphernalia Stock Out to Detachment`
+              : `${entryModal.mode === "edit" ? "Edit" : "Create"} Paraphernalia Stock In`
+            : `${entryModal?.mode === "edit" ? "Edit" : "Create"} Paraphernalia Stock Out`
+        }
+        subtitle={
+          entryModal?.kind === "stockIn" && entryModal.transfer
+            ? "This deducts FARAGON Main Inventory and adds the same stock to the destination detachment."
+            : "Detachment options come from the Client page contracts Specific Area column."
+        }
         onClose={() => {
           if (!saving) setEntryModal(null);
         }}
         maxWidth="max-w-3xl"
       >
         {entryModal ? (
-          <form onSubmit={submitEntry} className="space-y-5">
+          <form onSubmit={submitEntry} className="space-y-5" noValidate>
             {entryModal.kind === "stockIn" ? (
               <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                 <label>
@@ -2345,7 +3153,9 @@ export default function ParaphernaliaPage() {
                 <div className="md:col-span-2 space-y-3 rounded-2xl border bg-gray-50 p-4">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
-                      <div className="text-sm font-semibold text-black">Stock In Items</div>
+                      <div className="text-sm font-semibold text-black">
+                        {entryModal.transfer ? "Stock Out Transfer Items" : "Stock In Items"}
+                      </div>
                       <div className="text-xs text-gray-500">Type to search/select an item, or type a new item name.</div>
                     </div>
                     <button
@@ -2357,24 +3167,15 @@ export default function ParaphernaliaPage() {
                     </button>
                   </div>
                   {stockInForm.items.map((line, index) => (
-                    <div key={line.key} className="grid grid-cols-1 gap-3 rounded-2xl bg-white p-3 md:grid-cols-[1fr_180px_140px_auto]">
+                    <div key={line.key} className="grid grid-cols-1 gap-3 rounded-2xl bg-white p-3 md:grid-cols-[1fr_140px_auto]">
                       <label>
                         <span className={labelClass}>Item {index + 1}</span>
-                        <input
-                          list="paraphernalia-item-options"
+                        <SearchDropdownInput
                           value={line.item}
-                          onChange={(event) => updateStockInLine(line.key, { item: event.target.value })}
+                          onChange={(item) => updateStockInLine(line.key, { item })}
+                          options={itemDropdownOptions}
                           className={inputClass}
                           required
-                        />
-                      </label>
-                      <label>
-                        <span className={labelClass}>CONTROLNUMBER</span>
-                        <input
-                          value={line.controlNumber}
-                          onChange={(event) => updateStockInLine(line.key, { controlNumber: event.target.value })}
-                          className={inputClass}
-                          placeholder={line.item ? nextControlNumber(line.item, index) : "Auto generated"}
                         />
                       </label>
                       <label>
@@ -2415,7 +3216,7 @@ export default function ParaphernaliaPage() {
                   </div>
                 </label>
                 <label>
-                  <span className={labelClass}>DETACHMENT</span>
+                  <span className={labelClass}>{entryModal.transfer ? "DESTINATION DETACHMENT" : "DETACHMENT"}</span>
                   <input
                     list="paraphernalia-detachment-options"
                     value={stockInForm.detachment}
@@ -2446,8 +3247,17 @@ export default function ParaphernaliaPage() {
                   <input type="date" value={stockOutForm.date} onChange={(event) => setStockOutForm((prev) => ({ ...prev, date: event.target.value }))} className={inputClass} required />
                 </label>
                 <label>
-                  <span className={labelClass}>Names</span>
-                  <input value={stockOutForm.names} onChange={(event) => setStockOutForm((prev) => ({ ...prev, names: event.target.value }))} className={inputClass} required />
+                  <span className={labelClass}>Issued To (Last Name First)</span>
+                  <SearchDropdownInput
+                    value={stockOutForm.names}
+                    onChange={(name) => setStockOutForm((prev) => ({ ...prev, names: name.toUpperCase() }))}
+                    options={stockOutEmployeeNames}
+                    className={inputClass}
+                    placeholder="Type the employee's last name"
+                    emptyLabel="No active employee in this detachment matches that name."
+                    required
+                  />
+                  <span className="mt-1 block text-xs text-gray-500">Active employees assigned to the selected detachment appear automatically.</span>
                 </label>
                 <div className="md:col-span-2 space-y-3 rounded-2xl border bg-gray-50 p-4">
                   <div className="flex flex-wrap items-center justify-between gap-3">
@@ -2464,24 +3274,18 @@ export default function ParaphernaliaPage() {
                     </button>
                   </div>
                   {stockOutForm.items.map((line, index) => (
-                    <div key={line.key} className="grid grid-cols-1 gap-3 rounded-2xl bg-white p-3 md:grid-cols-[1fr_180px_120px_140px_auto]">
+                    <div key={line.key} className="grid grid-cols-1 gap-3 rounded-2xl bg-white p-3 md:grid-cols-[1fr_120px_140px_auto]">
                       <label>
                         <span className={labelClass}>ITEMS {index + 1}</span>
-                        <input
-                          list="paraphernalia-item-options"
+                        <SearchDropdownInput
                           value={line.item}
-                          onChange={(event) => updateStockOutLine(line.key, { item: event.target.value })}
+                          onChange={(item) => {
+                            const catalogPrice = itemPriceByName.get(normalizeItem(item));
+                            updateStockOutLine(line.key, { item, ...(catalogPrice == null ? {} : { price: String(catalogPrice) }) });
+                          }}
+                          options={itemDropdownOptions}
                           className={inputClass}
                           required
-                        />
-                      </label>
-                      <label>
-                        <span className={labelClass}>CONTROLNUMBER</span>
-                        <input
-                          value={line.controlNumber}
-                          onChange={(event) => updateStockOutLine(line.key, { controlNumber: event.target.value })}
-                          className={inputClass}
-                          placeholder={line.item ? nextControlNumber(line.item, index) : "Auto generated"}
                         />
                       </label>
                       <label>
@@ -2520,46 +3324,56 @@ export default function ParaphernaliaPage() {
                     </div>
                   ))}
                 </div>
-                <label>
-                  <span className={labelClass}>STATUS</span>
-                  <select value={stockOutForm.status} onChange={(event) => setStockOutForm((prev) => ({ ...prev, status: event.target.value }))} className={inputClass}>
-                    {STOCK_OUT_STATUSES.map((status) => (
-                      <option key={status} value={status}>
-                        {status}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  <span className={labelClass}>Date Posted</span>
-                  <input type="date" value={stockOutForm.datePosted} onChange={(event) => setStockOutForm((prev) => ({ ...prev, datePosted: event.target.value }))} className={inputClass} />
-                </label>
-                <label>
-                  <span className={labelClass}>DETACHMENT / Specific Area</span>
-                  <input
-                    list="paraphernalia-detachment-options"
-                    value={stockOutForm.detachment}
-                    onChange={(event) => {
-                      const detachment = event.target.value;
-                      const matchedClient = clientNameForDetachment(detachment);
-                      setStockOutForm((prev) => ({ ...prev, detachment, clientName: matchedClient || prev.clientName }));
-                    }}
-                    className={inputClass}
-                    placeholder="Select or type detachment"
-                    required
-                  />
-                </label>
-                <label>
-                  <span className={labelClass}>Client Name for Custom Detachment</span>
-                  <input
-                    value={stockOutForm.clientName}
-                    onChange={(event) => setStockOutForm((prev) => ({ ...prev, clientName: event.target.value }))}
-                    className={inputClass}
-                    placeholder="Optional"
-                  />
-                </label>
+                {entryModal.mode === "edit" ? (
+                  <>
+                    <label>
+                      <span className={labelClass}>STATUS</span>
+                      <select value={stockOutForm.status} onChange={(event) => setStockOutForm((prev) => ({ ...prev, status: event.target.value }))} className={inputClass}>
+                        {STOCK_OUT_STATUSES.map((status) => (
+                          <option key={status} value={status}>
+                            {status}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      <span className={labelClass}>Date Posted</span>
+                      <input type="date" value={stockOutForm.datePosted} onChange={(event) => setStockOutForm((prev) => ({ ...prev, datePosted: event.target.value }))} className={inputClass} />
+                    </label>
+                    <label>
+                      <span className={labelClass}>DETACHMENT / Specific Area</span>
+                      <input
+                        list="paraphernalia-detachment-options"
+                        value={stockOutForm.detachment}
+                        onChange={(event) => {
+                          const detachment = event.target.value;
+                          const matchedClient = clientNameForDetachment(detachment);
+                          setStockOutForm((prev) => ({ ...prev, detachment, clientName: matchedClient || prev.clientName, names: "" }));
+                        }}
+                        className={inputClass}
+                        placeholder="Select or type detachment"
+                        required
+                      />
+                    </label>
+                    <label>
+                      <span className={labelClass}>Client Name for Custom Detachment</span>
+                      <input
+                        value={stockOutForm.clientName}
+                        onChange={(event) => setStockOutForm((prev) => ({ ...prev, clientName: event.target.value }))}
+                        className={inputClass}
+                        placeholder="Optional"
+                      />
+                    </label>
+                  </>
+                ) : null}
               </div>
             )}
+
+            {error ? (
+              <div role="alert" aria-live="assertive" className="rounded-2xl border-2 border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold leading-6 text-red-700">
+                {error}
+              </div>
+            ) : null}
 
             {saving ? <LoadingCircle label={attachmentFile ? "Uploading and saving..." : "Saving..."} sizeClassName="h-6 w-6" className="py-2" /> : null}
 
@@ -2585,7 +3399,13 @@ export default function ParaphernaliaPage() {
         maxWidth="max-w-4xl"
       >
         <div className="space-y-5">
-          <div className="grid grid-cols-1 gap-3 rounded-2xl border bg-gray-50 p-4 md:grid-cols-[1fr_180px_auto]">
+          {itemManagerError ? (
+            <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{itemManagerError}</div>
+          ) : null}
+          {itemManagerMessage ? (
+            <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{itemManagerMessage}</div>
+          ) : null}
+          <div className="grid grid-cols-1 gap-3 rounded-2xl border bg-gray-50 p-4 md:grid-cols-[1fr_220px_160px_auto]">
             <label>
               <span className={labelClass}>New Item Name</span>
               <input
@@ -2596,11 +3416,22 @@ export default function ParaphernaliaPage() {
               />
             </label>
             <label>
-              <span className={labelClass}>Inventory Type</span>
-              <select value={newItemCategory} onChange={(event) => setNewItemCategory(event.target.value as InventoryKind)} className={inputClass}>
-                <option value="SEC">Sec Inv.</option>
-                <option value="OFFICE">Office Supply Inv.</option>
+              <span className={labelClass}>Equipment Category</span>
+              <select value={newItemGroup} onChange={(event) => setNewItemGroup(event.target.value as EquipmentGroup)} className={inputClass}>
+                {EQUIPMENT_GROUPS.map((group) => <option key={group} value={group}>{group}</option>)}
               </select>
+            </label>
+            <label>
+              <span className={labelClass}>Unit Price</span>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={newItemPrice}
+                onChange={(event) => setNewItemPrice(event.target.value)}
+                className={inputClass}
+                placeholder="0.00"
+              />
             </label>
             <div className="flex items-end">
               <button
@@ -2614,35 +3445,106 @@ export default function ParaphernaliaPage() {
             </div>
           </div>
 
-          <div className="max-h-[50vh] overflow-auto rounded-2xl border">
-            <table className="min-w-full text-left text-sm">
+          <label className="relative block">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+            <input
+              value={itemManagerSearch}
+              onChange={(event) => setItemManagerSearch(event.target.value)}
+              className={`${inputClass} pl-10`}
+              placeholder="Search item name, category, inventory type, or price..."
+            />
+          </label>
+
+          <TableZoomWrapper storageKey="paraphernalia-80:manage-items" defaultZoom={0.8}>
+            <div className="max-h-[50vh] overflow-auto rounded-2xl border">
+              <table className="min-w-full text-left text-sm">
               <thead className="bg-[#FFDA03] text-black">
                 <tr>
                   <th className="px-4 py-3">ITEMS</th>
-                  <th className="px-4 py-3">Inventory Type</th>
+                  <th className="px-4 py-3">Equipment Category</th>
+                  <th className="px-4 py-3">Unit Price</th>
                   <th className="px-4 py-3 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y bg-white">
-                {displayItemOptions.map((item) => (
+                {managedItemOptions.map((item) => (
                   <tr key={`${item.item_id ?? item.item_name}-manager`}>
                     <td className="px-4 py-3 font-medium text-black">{item.item_name}</td>
-                    <td className="px-4 py-3 text-gray-700">{item.item_category === "OFFICE" ? "Office Supply Inv." : "Sec Inv."}</td>
+                    <td className="px-4 py-3 text-gray-700">{item.item_group}</td>
+                    <td className="px-4 py-3">
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={itemPriceDrafts[item.item_id ?? item.item_name] ?? String(item.unit_price)}
+                        onChange={(event) => setItemPriceDrafts((prev) => ({ ...prev, [item.item_id ?? item.item_name]: event.target.value }))}
+                        className="w-32 rounded-xl border px-3 py-2 text-right text-sm text-black"
+                      />
+                    </td>
                     <td className="px-4 py-3 text-right">
-                      <button
-                        type="button"
-                        onClick={() => void removeItemOption(item)}
-                        disabled={itemBusy}
-                        className="rounded-xl border border-red-200 bg-white px-3 py-2 text-xs font-semibold text-red-600 hover:bg-red-50 disabled:opacity-60"
-                      >
-                        Remove
-                      </button>
+                      <div className="inline-flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => void saveItemPrice(item)}
+                          disabled={itemBusy || !item.item_id}
+                          className="rounded-xl border bg-white px-3 py-2 text-xs font-semibold text-black hover:bg-gray-50 disabled:opacity-60"
+                        >
+                          Save Price
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void removeItemOption(item)}
+                          disabled={itemBusy}
+                          className="rounded-xl border border-red-200 bg-white px-3 py-2 text-xs font-semibold text-red-600 hover:bg-red-50 disabled:opacity-60"
+                        >
+                          Remove
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
+                {managedItemOptions.length === 0 ? (
+                  <tr>
+                    <td colSpan={4} className="px-4 py-8 text-center text-sm text-gray-500">No items match your search.</td>
+                  </tr>
+                ) : null}
               </tbody>
-            </table>
-          </div>
+              </table>
+            </div>
+          </TableZoomWrapper>
+        </div>
+      </ModalShell>
+
+      <ModalShell
+        open={Boolean(detachmentTableToRemove)}
+        title="Remove Detachment Table?"
+        subtitle={
+          detachmentTableToRemove
+            ? `Delete the saved table definition for ${detachmentTableToRemove}? Existing Stock In and Stock Out history will be preserved.`
+            : undefined
+        }
+        onClose={() => {
+          if (!removingDetachmentTable) setDetachmentTableToRemove(null);
+        }}
+        maxWidth="max-w-md"
+      >
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-900">
+          This deletes the navigation table from Supabase. It does not delete historical inventory records.
+        </div>
+        <div className="mt-5 flex justify-end gap-2">
+          <button type="button" disabled={removingDetachmentTable} onClick={() => setDetachmentTableToRemove(null)} className="rounded-xl border bg-white px-5 py-2.5 text-sm font-semibold text-black hover:bg-gray-50 disabled:opacity-50">
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              if (detachmentTableToRemove) void removeDetachmentTable(detachmentTableToRemove);
+            }}
+            disabled={removingDetachmentTable}
+            className="rounded-xl bg-red-600 px-5 py-2.5 text-sm font-bold text-white hover:bg-red-700 disabled:opacity-50"
+          >
+            {removingDetachmentTable ? "Deleting..." : "Delete Table"}
+          </button>
         </div>
       </ModalShell>
 
@@ -2677,12 +3579,11 @@ export default function ParaphernaliaPage() {
           date: "2026-05-30",
           status: "RE-STOCKED",
           item: "CIGNUS",
-          controlnumber: "CIG-2026-0001",
           quantity: 1,
           attachment: "Optional text or URL",
           detachment: "Sample Detachment",
           client_name: "Sample Client",
-          names: "Required for Stock Out only",
+          names: "DELA CRUZ, JUAN (required for Stock Out only)",
           price: 0,
           date_posted: "2026-05-30",
         }}

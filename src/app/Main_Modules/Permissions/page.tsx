@@ -23,6 +23,8 @@ type AdminRow = {
 	role: string | null;
 	full_name: string | null;
 	is_active: boolean | null;
+	assigned_detachment: string | null;
+	applicant_id: string | null;
 };
 
 type RoleIdRow = { role_id: string };
@@ -109,6 +111,8 @@ function PermissionsPageContent() {
 	const [adminSearch, setAdminSearch] = useState("");
 	const [loadingAdmins, setLoadingAdmins] = useState(false);
 	const [loadingAccess, setLoadingAccess] = useState(false);
+	const [detachmentOptions, setDetachmentOptions] = useState<string[]>(["FARAGON"]);
+	const [savingDetachment, setSavingDetachment] = useState(false);
 
 	const [roleModuleAccess, setRoleModuleAccess] = useState<Set<string>>(new Set());
 	const [roleModuleEditAccess, setRoleModuleEditAccess] = useState<Set<string>>(new Set());
@@ -159,7 +163,7 @@ function PermissionsPageContent() {
 		try {
 			const { data, error: adminErr } = await supabase
 				.from("admins")
-				.select("id, username, role, full_name, is_active")
+				.select("id, username, role, full_name, is_active, assigned_detachment, applicant_id")
 				.order("username");
 			if (adminErr) throw adminErr;
 
@@ -176,7 +180,29 @@ function PermissionsPageContent() {
 		}
 	}, []);
 
+	const loadDetachments = useCallback(async () => {
+		const [contractsResult, savedResult] = await Promise.all([
+			supabase.from("contracts").select("specific_area").order("specific_area").limit(5000),
+			supabase.from("paraphernalia_detachment_tables").select("detachment").eq("is_active", true).order("detachment"),
+		]);
+		const values = new Map<string, string>([["faragon", "FARAGON"]]);
+		for (const row of (contractsResult.data ?? []) as Array<{ specific_area?: string | null }>) {
+			const value = String(row.specific_area ?? "").trim().replace(/\s+/g, " ");
+			if (value) values.set(value.toLowerCase(), value);
+		}
+		for (const row of (savedResult.data ?? []) as Array<{ detachment?: string | null }>) {
+			const value = String(row.detachment ?? "").trim().replace(/\s+/g, " ");
+			if (value) values.set(value.toLowerCase(), value);
+		}
+		setDetachmentOptions(
+			Array.from(values.values()).sort((a, b) =>
+				a === "FARAGON" ? -1 : b === "FARAGON" ? 1 : a.localeCompare(b)
+			)
+		);
+	}, []);
+
 	const selectedAdmin = useMemo(() => admins.find((a) => a.id === selectedAdminId) ?? null, [admins, selectedAdminId]);
+	const selectedAdminIsSecurityAccount = Boolean(selectedAdmin?.applicant_id);
 
 	useEffect(() => {
 		if (!preselectedAdminId) return;
@@ -317,17 +343,48 @@ function PermissionsPageContent() {
 	useEffect(() => {
 		loadModules();
 		loadAdmins();
+		loadDetachments();
 
 		const channel = supabase
 			.channel("realtime:rbac-permissions")
 			.on("postgres_changes", { event: "*", schema: "public", table: "modules" }, () => loadModules())
 			.on("postgres_changes", { event: "*", schema: "public", table: "admins" }, () => loadAdmins())
+			.on("postgres_changes", { event: "*", schema: "public", table: "contracts" }, () => loadDetachments())
+			.on("postgres_changes", { event: "*", schema: "public", table: "paraphernalia_detachment_tables" }, () => loadDetachments())
 			.subscribe();
 
 		return () => {
 			supabase.removeChannel(channel);
 		};
-	}, [loadAdmins, loadModules]);
+	}, [loadAdmins, loadDetachments, loadModules]);
+
+	async function updateAssignedDetachment(nextDetachment: string) {
+		setError("");
+		setSuccess("");
+		if (!canManage) return setError("Only Superadmin can change detachment assignments.");
+		if (!selectedAdmin) return setError("Please select an account.");
+		if (normalizeModuleKey(selectedAdmin.role) === "superadmin") return;
+
+		setSavingDetachment(true);
+		try {
+			const value = nextDetachment.trim() || null;
+			const { error: updateError } = await supabase
+				.from("admins")
+				.update({ assigned_detachment: value })
+				.eq("id", selectedAdmin.id);
+			if (updateError) throw updateError;
+			setAdmins((prev) => prev.map((row) => row.id === selectedAdmin.id ? { ...row, assigned_detachment: value } : row));
+			setSuccess(value ? `${selectedAdmin.username} assigned to ${value}.` : `${selectedAdmin.username}'s detachment assignment was cleared.`);
+			void logAudit("RBAC_ACCOUNT_PARAPHERNALIA_DETACHMENT", {
+				admin_id: selectedAdmin.id,
+				detachment: value,
+			});
+		} catch (e: unknown) {
+			setError(`${getErrorMessage(e)} Run SQL/supabase_paraphernalia_main_inventory_and_access.sql if assigned_detachment is missing.`);
+		} finally {
+			setSavingDetachment(false);
+		}
+	}
 
 	useEffect(() => {
 		if (!selectedAdminId) {
@@ -343,6 +400,7 @@ function PermissionsPageContent() {
 		setSuccess("");
 		if (!canManage) return setError("Only Superadmin can change individual access.");
 		if (!selectedAdminId) return setError("Please select an account.");
+		if (selectedAdminIsSecurityAccount) return setError("Security Account access is fixed to its assigned Paraphernalia table.");
 		if (normalizeModuleKey(selectedAdmin?.role) === "superadmin") {
 			return setError("Superadmin already has full access by default.");
 		}
@@ -438,6 +496,7 @@ function PermissionsPageContent() {
 		setSuccess("");
 		if (!canManage) return setError("Only Superadmin can change individual access.");
 		if (!selectedAdminId) return setError("Please select an account.");
+		if (selectedAdminIsSecurityAccount) return setError("Security Accounts cannot receive page edit access.");
 		if (normalizeModuleKey(selectedAdmin?.role) === "superadmin") {
 			return setError("Superadmin already has full access by default.");
 		}
@@ -490,6 +549,7 @@ function PermissionsPageContent() {
 		setSuccess("");
 		if (!canManage) return setError("Only Superadmin can change individual access.");
 		if (!selectedAdminId) return setError("Please select an account.");
+		if (selectedAdminIsSecurityAccount) return setError("Security Accounts cannot receive page delete access.");
 		if (normalizeModuleKey(selectedAdmin?.role) === "superadmin") {
 			return setError("Superadmin already has full access by default.");
 		}
@@ -536,6 +596,7 @@ function PermissionsPageContent() {
 		setSuccess("");
 		if (!canManage) return setError("Only Superadmin can change individual access.");
 		if (!selectedAdminId) return setError("Please select an account.");
+		if (selectedAdminIsSecurityAccount) return setError("Security Account columns use the fixed Paraphernalia profile.");
 		if (normalizeModuleKey(selectedAdmin?.role) === "superadmin") {
 			return setError("Superadmin already has full access by default.");
 		}
@@ -628,7 +689,8 @@ function PermissionsPageContent() {
 			(a) =>
 				a.username.toLowerCase().includes(q) ||
 				(a.full_name ?? "").toLowerCase().includes(q) ||
-				(a.role ?? "").toLowerCase().includes(q)
+				(a.role ?? "").toLowerCase().includes(q) ||
+				(a.assigned_detachment ?? "").toLowerCase().includes(q)
 		);
 	}, [adminSearch, admins]);
 
@@ -732,12 +794,43 @@ function PermissionsPageContent() {
 				</div>
 
 				{selectedAdmin ? (
-					<div className="mt-4 rounded-xl border p-3">
-						<div className="text-sm font-semibold text-black">{selectedAdmin.username}</div>
-						<div className="text-xs text-gray-500">
-							{selectedAdmin.full_name || "(No full name)"} · role: {selectedAdmin.role ?? "(none)"}
+					<>
+					{selectedAdminIsSecurityAccount ? (
+						<div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-medium text-amber-900">
+							Security Account: fixed to Paraphernalia, its assigned detachment, Stock In, Security Inventory, Office Supply Inventory, and Add Stock Out.
 						</div>
+					) : null}
+					<div className="mt-4 grid gap-4 rounded-xl border p-3 md:grid-cols-[1fr_minmax(260px,420px)] md:items-end">
+						<div>
+							<div className="text-sm font-semibold text-black">{selectedAdmin.username}</div>
+							<div className="text-xs text-gray-500">
+								{selectedAdmin.full_name || "(No full name)"} · role: {selectedAdmin.role ?? "(none)"}
+							</div>
+						</div>
+						<label>
+							<span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-600">
+								Paraphernalia Detachment Assignment
+							</span>
+							<select
+								value={selectedAdmin.assigned_detachment ?? ""}
+								onChange={(event) => void updateAssignedDetachment(event.target.value)}
+								disabled={!canManage || savingDetachment || normalizeModuleKey(selectedAdmin.role) === "superadmin"}
+								className="w-full rounded-xl border bg-white px-3 py-2 text-sm text-black disabled:bg-gray-100"
+							>
+								<option value="">Use role/default assignment</option>
+								{detachmentOptions.map((detachment) => (
+									<option key={detachment} value={detachment}>{detachment}</option>
+								))}
+								{selectedAdmin.assigned_detachment && !detachmentOptions.includes(selectedAdmin.assigned_detachment) ? (
+									<option value={selectedAdmin.assigned_detachment}>{selectedAdmin.assigned_detachment}</option>
+								) : null}
+							</select>
+							<div className="mt-1 text-[11px] text-gray-500">
+								Security Accounts stay limited to this assignment; administrative FARAGON assignments retain full access.
+							</div>
+						</label>
 					</div>
+					</>
 				) : null}
 
 				{!selectedAdminId ? (
@@ -819,7 +912,7 @@ function PermissionsPageContent() {
 																	}
 																	void toggleAdminModule(m.module_key);
 																}}
-																disabled={!canManage || moduleBusy || moduleLockedByRole}
+														disabled={!canManage || moduleBusy || moduleLockedByRole || selectedAdminIsSecurityAccount}
 															/>
 														</label>
 														<label className="text-xs text-gray-700 flex items-center gap-2">
@@ -834,7 +927,7 @@ function PermissionsPageContent() {
 																	}
 																	void toggleAdminEdit(m.module_key);
 																}}
-																disabled={!canManage || editBusy || editLockedByRole}
+														disabled={!canManage || editBusy || editLockedByRole || selectedAdminIsSecurityAccount}
 															/>
 														</label>
 														<label className="text-xs text-gray-700 flex items-center gap-2">
@@ -849,7 +942,7 @@ function PermissionsPageContent() {
 																}
 																void toggleAdminDelete(m.module_key);
 															}}
-																disabled={!canManage || deleteBusy || deleteLockedByRole}
+														disabled={!canManage || deleteBusy || deleteLockedByRole || selectedAdminIsSecurityAccount}
 															/>
 														</label>
 													</div>
@@ -882,7 +975,7 @@ function PermissionsPageContent() {
 																	}
 																	void toggleAdminColumn(m.module_key, col);
 																}}
-																disabled={!canManage || colBusy || colLockedByRole}
+														disabled={!canManage || colBusy || colLockedByRole || selectedAdminIsSecurityAccount}
 															/>
 															<span>{formatPermissionColumnLabel(col)}</span>
 														</label>

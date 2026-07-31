@@ -106,9 +106,9 @@ export default function ArchivePage() {
   const { canDelete: canDeleteArchive } = useMyModuleDeleteAccess("archive");
   const [viewMode, setViewMode] = useState<"grid" | "table">(() => {
     if (typeof window !== "undefined") {
-      return (localStorage.getItem("archive:viewMode") as "grid" | "table") || "grid";
+      return (localStorage.getItem("archive:viewMode:v2") as "grid" | "table") || "table";
     }
-    return "grid";
+    return "table";
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>("");
@@ -153,7 +153,7 @@ export default function ArchivePage() {
 
   useEffect(() => {
     try {
-      const saved = window.localStorage.getItem("archive:viewMode");
+      const saved = window.localStorage.getItem("archive:viewMode:v2");
       if (saved === "grid" || saved === "table") setViewMode(saved);
     } catch {
       // ignore
@@ -203,7 +203,7 @@ export default function ArchivePage() {
 
   useEffect(() => {
     try {
-      window.localStorage.setItem("archive:viewMode", viewMode);
+      window.localStorage.setItem("archive:viewMode:v2", viewMode);
     } catch {
       // ignore
     }

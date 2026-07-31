@@ -26,6 +26,7 @@ type RoleColumnAccessRow = {
 	column_key: string;
 	can_read: boolean | null;
 };
+type SecurityRoleSourceRow = { role: string | null };
 
 function getErrorMessage(e: unknown) {
 	if (e instanceof Error) return e.message;
@@ -102,6 +103,7 @@ export default function RolesPage() {
 	const [editAccess, setEditAccess] = useState<Record<string, Set<string>>>({});
 	const [roleColumnAccess, setRoleColumnAccess] = useState<Record<string, Record<string, Set<string>>>>({});
 	const [roleColumnRestrictedModules, setRoleColumnRestrictedModules] = useState<Record<string, Set<string>>>({});
+	const [securityAccountRoleNames, setSecurityAccountRoleNames] = useState<Set<string>>(new Set());
 	const [selectedRoleId, setSelectedRoleId] = useState<string>("");
 	const [savingKey, setSavingKey] = useState<string>("");
 	const [roleSearch, setRoleSearch] = useState("");
@@ -137,11 +139,12 @@ export default function RolesPage() {
 		setError("");
 		setSuccess("");
 		try {
-			const [rRes, mRes, aRes, cRes] = await Promise.all([
+			const [rRes, mRes, aRes, cRes, securityAccountsRes] = await Promise.all([
 				supabase.from("app_roles").select("role_id, role_name").order("role_name"),
 				supabase.from("modules").select("module_key, display_name").order("module_key"),
 				supabase.from("role_module_access").select("role_id, module_key, can_read, can_write, can_edit"),
 				supabase.from("role_column_access").select("role_id, module_key, column_key, can_read"),
+				supabase.from("admins").select("role").not("applicant_id", "is", null),
 			]);
 
 			if (rRes.error) return setError(rRes.error.message);
@@ -160,6 +163,15 @@ export default function RolesPage() {
 
 			setRoles(loadedRoles);
 			setModules(loadedModules);
+			setSecurityAccountRoleNames(
+				securityAccountsRes.error
+					? new Set()
+					: new Set(
+						((securityAccountsRes.data as SecurityRoleSourceRow[] | null) ?? [])
+							.map((row) => normalizeRoleName(row.role ?? ""))
+							.filter(Boolean)
+					)
+			);
 
 			const map: Record<string, Set<string>> = {};
 			const deleteMap: Record<string, Set<string>> = {};
@@ -235,6 +247,7 @@ export default function RolesPage() {
 			.on("postgres_changes", { event: "*", schema: "public", table: "role_module_access" }, () => load())
 			.on("postgres_changes", { event: "*", schema: "public", table: "role_column_access" }, () => load())
 			.on("postgres_changes", { event: "*", schema: "public", table: "modules" }, () => load())
+			.on("postgres_changes", { event: "*", schema: "public", table: "admins" }, () => load())
 			.subscribe();
 
 		return () => {
@@ -270,7 +283,7 @@ export default function RolesPage() {
 	}
 
 	function openEditRoleDialog(roleRow: RoleRow) {
-		if (!canManage || roleRow.role_name === "superadmin") return;
+		if (!canManage || roleRow.role_name === "superadmin" || securityAccountRoleNames.has(roleRow.role_name)) return;
 		setError("");
 		setSuccess("");
 		setRoleDialogMode("edit");
@@ -289,6 +302,9 @@ export default function RolesPage() {
 		setError("");
 		setSuccess("");
 		if (!canManage) return setError("Only Superadmin can manage roles.");
+		if (roleDialogMode === "edit" && securityAccountRoleNames.has(roleDialogOriginalName)) {
+			return setError("Security Account roles are fixed and cannot be renamed.");
+		}
 
 		const nextName = normalizeRoleName(roleDialogName);
 		if (!nextName) return setError("Role name is required");
@@ -355,6 +371,7 @@ export default function RolesPage() {
 		setSuccess("");
 		if (!canManage) return setError("Only Superadmin can manage roles.");
 		if (roleRow.role_name === "superadmin") return setError("Superadmin cannot be deleted.");
+		if (securityAccountRoleNames.has(roleRow.role_name)) return setError("Security Account roles cannot be deleted while linked accounts use them.");
 
 		const confirmMessage = `Delete the role "${roleRow.role_name}"? This removes its page and column permissions.`;
 		if (!window.confirm(confirmMessage)) return;
@@ -406,6 +423,7 @@ export default function RolesPage() {
 	);
 
 	const selectedRoleIsSuperadmin = selectedRole?.role_name === "superadmin";
+	const selectedRoleIsSecurityAccountRole = Boolean(selectedRole && securityAccountRoleNames.has(selectedRole.role_name));
 
 	const filteredRoles = useMemo(() => {
 		const q = roleSearch.trim().toLowerCase();
@@ -451,6 +469,7 @@ export default function RolesPage() {
 		setError("");
 		setSuccess("");
 		if (!canManage) return setError("Only Superadmin can change module access.");
+		if (selectedRoleIsSecurityAccountRole) return setError("Security Account roles use the fixed Paraphernalia access profile.");
 		const key = normalizeModuleKey(moduleKey);
 		const opKey = `role-module:${roleId}:${key}`;
 		setSavingKey(opKey);
@@ -502,6 +521,7 @@ export default function RolesPage() {
 		setError("");
 		setSuccess("");
 		if (!canManage) return setError("Only Superadmin can change module access.");
+		if (selectedRoleIsSecurityAccountRole) return setError("Security Account roles cannot receive delete access.");
 		const key = normalizeModuleKey(moduleKey);
 		const opKey = `role-delete:${roleId}:${key}`;
 		setSavingKey(opKey);
@@ -536,6 +556,7 @@ export default function RolesPage() {
 		setError("");
 		setSuccess("");
 		if (!canManage) return setError("Only Superadmin can change module access.");
+		if (selectedRoleIsSecurityAccountRole) return setError("Security Account roles cannot receive edit access.");
 		const key = normalizeModuleKey(moduleKey);
 		const opKey = `role-edit:${roleId}:${key}`;
 		setSavingKey(opKey);
@@ -570,6 +591,7 @@ export default function RolesPage() {
 		setError("");
 		setSuccess("");
 		if (!canManage) return setError("Only Superadmin can change column access.");
+		if (selectedRoleIsSecurityAccountRole) return setError("Security Account columns use the fixed Paraphernalia profile.");
 		const key = normalizeModuleKey(moduleKey);
 		const column = String(columnKey ?? "").trim();
 		if (!key || !column) return;
@@ -825,7 +847,7 @@ export default function RolesPage() {
 								<div className="text-sm font-semibold text-black">{labelFromRole(selectedRole.role_name)}</div>
 								<div className="text-xs text-gray-500">Role key: {selectedRole.role_name}</div>
 							</div>
-							{canManage && !selectedRoleIsSuperadmin ? (
+							{canManage && !selectedRoleIsSuperadmin && !selectedRoleIsSecurityAccountRole ? (
 								<div className="flex flex-wrap justify-end gap-2">
 									<button
 										onClick={() => openEditRoleDialog(selectedRole)}
@@ -845,6 +867,11 @@ export default function RolesPage() {
 							) : null}
 						</div>
 						<div className="text-xs text-gray-600">Enabled pages: {selectedAccess.size}</div>
+						{selectedRoleIsSecurityAccountRole ? (
+							<div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-900">
+								Security Account role: fixed to Paraphernalia, Stock In, both inventory summaries, and Add Stock Out.
+							</div>
+						) : null}
 						<div className="max-h-40 overflow-auto space-y-2">
 							{Array.from(selectedAccess)
 								.sort()
@@ -906,6 +933,9 @@ export default function RolesPage() {
 						</div>
 						{selectedRoleIsSuperadmin ? (
 							<div className="mt-1 text-xs text-gray-500">Superadmin always has full page and column access by default.</div>
+						) : null}
+						{selectedRoleIsSecurityAccountRole ? (
+							<div className="mt-1 text-xs text-amber-700">Security Account access is locked to the required Paraphernalia profile.</div>
 						) : null}
 					</div>
 					<div className="text-xs rounded-full border px-3 py-1 text-gray-600 bg-gray-50">
@@ -1067,7 +1097,7 @@ export default function RolesPage() {
 																type="checkbox"
 																checked={checked}
 																onChange={() => toggleAccess(selectedRole.role_id, m.module_key)}
-																disabled={!canManage || busy || selectedRoleIsSuperadmin}
+														disabled={!canManage || busy || selectedRoleIsSuperadmin || selectedRoleIsSecurityAccountRole}
 															/>
 														</label>
 														<label className="text-xs text-gray-700 flex items-center gap-2">
@@ -1076,7 +1106,7 @@ export default function RolesPage() {
 																type="checkbox"
 																checked={editChecked}
 																onChange={() => toggleEditAccess(selectedRole.role_id, m.module_key)}
-																disabled={!canManage || editBusy || selectedRoleIsSuperadmin}
+														disabled={!canManage || editBusy || selectedRoleIsSuperadmin || selectedRoleIsSecurityAccountRole}
 															/>
 														</label>
 														<label className="text-xs text-gray-700 flex items-center gap-2">
@@ -1085,7 +1115,7 @@ export default function RolesPage() {
 																type="checkbox"
 																checked={deleteChecked}
 																onChange={() => toggleDeleteAccess(selectedRole.role_id, m.module_key)}
-																disabled={!canManage || deleteBusy || selectedRoleIsSuperadmin}
+														disabled={!canManage || deleteBusy || selectedRoleIsSuperadmin || selectedRoleIsSecurityAccountRole}
 															/>
 														</label>
 													</div>
@@ -1109,7 +1139,7 @@ export default function RolesPage() {
 																	onChange={() =>
 																		toggleRoleColumn(selectedRole.role_id, m.module_key, col, columnsForModule(m.module_key))
 																	}
-																	disabled={!canManage || colBusy || selectedRoleIsSuperadmin}
+														disabled={!canManage || colBusy || selectedRoleIsSuperadmin || selectedRoleIsSecurityAccountRole}
 																/>
 																<span>{formatPermissionColumnLabel(col)}</span>
 															</label>
