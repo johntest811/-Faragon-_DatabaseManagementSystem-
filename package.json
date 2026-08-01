@@ -1,7 +1,7 @@
 {
   "name": "database-management-app",
   "productName": "Faragon Database",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Database management desktop app",
   "author": "JOHN",
   "private": true,

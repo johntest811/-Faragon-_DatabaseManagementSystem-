@@ -328,10 +328,18 @@ export default function ApplicantsPage() {
 
 	if (!canAccessApplicants) {
 		return (
-			<section className="glass-panel animate-fade-in rounded-3xl p-6 space-y-2">
+			<section className="glass-panel animate-fade-in rounded-3xl p-6 space-y-3">
 				<div className="text-lg font-semibold text-black">Applicant</div>
 				<div className="text-sm text-gray-600">You do not have access to this page.</div>
 				{accessError ? <div className="text-xs text-red-600">{accessError}</div> : null}
+				<div className="pt-2">
+					<button
+						onClick={() => router.push("/Main_Modules/Requests/?module=applicants")}
+						className="inline-flex items-center gap-2 rounded-xl bg-[#FFDA03] px-4 py-2 text-sm font-semibold text-black hover:bg-[#EFCB00]"
+					>
+						Request Access
+					</button>
+				</div>
 			</section>
 		);
 	}

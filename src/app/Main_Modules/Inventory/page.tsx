@@ -3,7 +3,7 @@
 import { useCallback, useMemo, useState, useEffect, useRef } from "react";
 import { Boxes, Download, FileDown, FileText, Pencil, Search, Upload, X } from "lucide-react";
 import { supabase } from "@/app/Client/SupabaseClients";
-import { useAuthRole, useMyColumnAccess } from "@/app/Client/useRbac";
+import { useAuthRole, useMyColumnAccess, useMyModuleAccess } from "@/app/Client/useRbac";
 import LoadingCircle from "@/app/Components/LoadingCircle";
 import TableZoomWrapper from "@/app/Components/TableZoomWrapper";
 import * as XLSX from "xlsx";
@@ -460,6 +460,7 @@ function formatTimestamp(value: string | null) {
 
 export default function LogisticsInventoryPage() {
   const { role } = useAuthRole();
+  const { canAccess: canAccessInventory } = useMyModuleAccess("inventory");
   const {
     allowedColumns: allowedInventoryColumns,
     restricted: inventoryColumnsRestricted,
@@ -1726,6 +1727,23 @@ function downloadInventoryTemplateXlsx() {
 
   const mainInventoryHeaderCell = (align = "text-left", rounded = "") =>
     `sticky top-0 z-20 bg-[#FFDA03] px-4 py-3 ${align} font-semibold text-black whitespace-nowrap shadow-[0_2px_0_rgba(0,0,0,0.16)] ${rounded}`;
+
+  if (!canAccessInventory) {
+    return (
+      <section className="glass-panel animate-fade-in rounded-3xl p-6 space-y-3">
+        <div className="text-lg font-semibold text-black">Inventory</div>
+        <div className="text-sm text-gray-600">You do not have access to view this page.</div>
+        <div className="pt-2">
+          <button
+            onClick={() => window.location.href = "/Main_Modules/Requests/?module=inventory"}
+            className="inline-flex items-center gap-2 rounded-xl bg-[#FFDA03] px-4 py-2 text-sm font-semibold text-black hover:bg-[#EFCB00]"
+          >
+            Request Access
+          </button>
+        </div>
+      </section>
+    );
+  }
 
   return (
     <>

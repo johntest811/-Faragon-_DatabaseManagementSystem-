@@ -5,6 +5,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   app: {
     readBundledTextFile: (fileName) => ipcRenderer.invoke('app:readBundledTextFile', { fileName }),
+    onWindowShown: (callback) => {
+      const subscription = () => callback();
+      ipcRenderer.on('app:windowShown', subscription);
+      return () => ipcRenderer.off('app:windowShown', subscription);
+    },
     onUpdateProgress: (callback) => {
       const subscription = (_event, value) => callback(value);
       ipcRenderer.on('app:updateDownloadProgress', subscription);
@@ -14,7 +19,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
       const subscription = (_event, value) => callback(value);
       ipcRenderer.on('app:updateDownloaded', subscription);
       return () => ipcRenderer.off('app:updateDownloaded', subscription);
-    }
+    },
+    checkForUpdates: () => ipcRenderer.invoke('app:checkForUpdates'),
+    downloadUpdate: () => ipcRenderer.invoke('app:downloadUpdate'),
+    installUpdate: () => ipcRenderer.invoke('app:installUpdate'),
+    getVersion: () => ipcRenderer.invoke('app:getVersion'),
   },
 
   admin: {

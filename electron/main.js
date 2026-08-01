@@ -4211,6 +4211,7 @@ function createWindow(url) {
       win.maximize();
       win.show();
       win.focus();
+      win.webContents.send('app:windowShown');
     } catch {
       // ignore
     }

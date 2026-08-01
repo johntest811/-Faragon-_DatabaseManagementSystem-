@@ -50,7 +50,6 @@ export default function ClientRoot({
   const pathname = usePathname() ?? "";
   const isLoginRoute = pathname.startsWith("/Login");
   const [startupSplashPending, setStartupSplashPending] = useState(true);
-  const [startupSplashComplete, setStartupSplashComplete] = useState(false);
   const [showSplash, setShowSplash] = useState(true);
   const [splashFadingOut, setSplashFadingOut] = useState(false);
   const [splashReason, setSplashReason] = useState<SplashReason>("startup");
@@ -59,13 +58,7 @@ export default function ClientRoot({
   const wasOnlineRef = useRef(true);
   const splashFinishTimerRef = useRef<number | null>(null);
   const splashFinishingRef = useRef(false);
-
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setStartupSplashComplete(true);
-    }, 3500);
-    return () => clearTimeout(timer);
-  }, []);
+  const nonStartupSplashShownRef = useRef(false);
 
   useRealtimeRefresh(APP_REFRESH_TABLES, {
     debounceMs: isSlowConnection ? 1800 : 900,
@@ -124,7 +117,7 @@ export default function ClientRoot({
         ? "logout"
         : pathname.startsWith("/Main_Modules") && loginRequested
           ? "login"
-          : (!startupSplashComplete || startupSplashPending)
+          : startupSplashPending && !nonStartupSplashShownRef.current
             ? "startup"
             : null;
 
@@ -142,17 +135,22 @@ export default function ClientRoot({
         // ignore
       }
 
+      if (requestedReason === "logout" || requestedReason === "login") {
+        nonStartupSplashShownRef.current = true;
+      }
+
       setSplashReason(requestedReason);
       setShowSplash(true);
       setSplashFadingOut(false);
       return;
     }
 
-    if (startupSplashPending) setStartupSplashPending(false);
+    if (nonStartupSplashShownRef.current || startupSplashPending) return;
+
     setShowSplash(false);
     setSplashReason(null);
     setSplashFadingOut(false);
-  }, [pathname, startupSplashPending, startupSplashComplete]);
+  }, [pathname, startupSplashPending]);
 
   useEffect(() => {
     return () => {

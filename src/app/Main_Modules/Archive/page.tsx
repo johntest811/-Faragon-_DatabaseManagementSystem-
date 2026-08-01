@@ -4,7 +4,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../Client/SupabaseClients";
 import { RotateCcw, LayoutGrid, Table, SlidersHorizontal, Search } from "lucide-react";
-import { useAuthRole, useMyModuleDeleteAccess } from "../../Client/useRbac";
+import { useAuthRole, useMyModuleAccess, useMyModuleDeleteAccess } from "../../Client/useRbac";
 import LoadingCircle from "../../Components/LoadingCircle";
 import TableZoomWrapper from "@/app/Components/TableZoomWrapper";
 import DetachmentHistoryPopover from "../Components/DetachmentHistoryPopover";
@@ -103,6 +103,7 @@ function serviceYearsExact(fromIso: string | null, now = new Date()) {
 export default function ArchivePage() {
   const router = useRouter();
   const { role: sessionRole } = useAuthRole();
+  const { canAccess: canAccessArchive } = useMyModuleAccess("archive");
   const { canDelete: canDeleteArchive } = useMyModuleDeleteAccess("archive");
   const [viewMode, setViewMode] = useState<"grid" | "table">(() => {
     if (typeof window !== "undefined") {
@@ -370,6 +371,23 @@ export default function ArchivePage() {
     }
 
     setItems((prev) => prev.filter((x) => x.applicant_id !== employee.applicant_id));
+  }
+
+  if (!canAccessArchive) {
+    return (
+      <section className="glass-panel animate-fade-in rounded-3xl p-6 space-y-3">
+        <div className="text-lg font-semibold text-black">Archive</div>
+        <div className="text-sm text-gray-600">You do not have access to view this page.</div>
+        <div className="pt-2">
+          <button
+            onClick={() => router.push("/Main_Modules/Requests/?module=archive")}
+            className="inline-flex items-center gap-2 rounded-xl bg-[#FFDA03] px-4 py-2 text-sm font-semibold text-black hover:bg-[#EFCB00]"
+          >
+            Request Access
+          </button>
+        </div>
+      </section>
+    );
   }
 
   return (

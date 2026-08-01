@@ -1042,6 +1042,23 @@ if (hiredMonthFilter !== "ALL") {
 		setServiceExportOpen(false);
 	}
 
+	if (!canAccessEmployees) {
+		return (
+			<section className="glass-panel animate-fade-in rounded-3xl p-6 space-y-3">
+				<div className="text-lg font-semibold text-black">Employees</div>
+				<div className="text-sm text-gray-600">You do not have access to view this page.</div>
+				<div className="pt-2">
+					<button
+						onClick={() => router.push("/Main_Modules/Requests/?module=employees")}
+						className="inline-flex items-center gap-2 rounded-xl bg-[#FFDA03] px-4 py-2 text-sm font-semibold text-black hover:bg-[#EFCB00]"
+					>
+						Request Access
+					</button>
+				</div>
+			</section>
+		);
+	}
+
 	return (
 		<div className="space-y-5">
 			<div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">

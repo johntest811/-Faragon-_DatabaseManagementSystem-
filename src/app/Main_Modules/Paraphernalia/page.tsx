@@ -1,11 +1,12 @@
 "use client";
 
-import { FormEvent, ReactNode, useCallback, useEffect, useId, useMemo, useState } from "react";
+import { FormEvent, ReactNode, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Download, FileText, Maximize2, Pencil, Plus, RefreshCw, Search, Trash2, Upload } from "lucide-react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { supabase } from "@/app/Client/SupabaseClients";
-import { useAuthRole, useMyColumnAccess, useMyParaphernaliaDetachmentAccess } from "@/app/Client/useRbac";
+import { useAuthRole, useMyColumnAccess, useMyModuleAccess, useMyParaphernaliaDetachmentAccess } from "@/app/Client/useRbac";
 import LoadingCircle from "@/app/Components/LoadingCircle";
 import ImportSummaryModal, { ImportSummaryData } from "../Components/ImportSummaryModal";
 import SpreadsheetImportModal from "@/app/Components/SpreadsheetImportModal";
@@ -569,21 +570,52 @@ function SearchDropdownInput({
   emptyLabel?: string;
 }) {
   const [open, setOpen] = useState(false);
+  const [coords, setCoords] = useState<{ top: number; left: number; width: number }>({ top: 0, left: 0, width: 0 });
+  const inputRef = useRef<HTMLInputElement | null>(null);
   const listboxId = useId();
+
+  const updateCoords = useCallback(() => {
+    if (inputRef.current) {
+      const rect = inputRef.current.getBoundingClientRect();
+      setCoords({
+        top: rect.bottom + window.scrollY,
+        left: rect.left + window.scrollX,
+        width: rect.width,
+      });
+    }
+  }, []);
+
+  useLayoutEffect(() => {
+    if (open) {
+      updateCoords();
+      window.addEventListener("resize", updateCoords);
+      window.addEventListener("scroll", updateCoords, true);
+      return () => {
+        window.removeEventListener("resize", updateCoords);
+        window.removeEventListener("scroll", updateCoords, true);
+      };
+    }
+  }, [open, updateCoords]);
+
   const query = value.trim().toLowerCase();
   const filteredOptions = options
     .filter((option) => !query || option.toLowerCase().includes(query))
     .slice(0, 60);
 
   return (
-    <div className={`relative ${open ? "z-50" : ""}`}>
+    <div className="relative">
       <input
+        ref={inputRef}
         value={value}
         onChange={(event) => {
           onChange(event.target.value);
+          updateCoords();
           setOpen(true);
         }}
-        onFocus={() => setOpen(true)}
+        onFocus={() => {
+          updateCoords();
+          setOpen(true);
+        }}
         onBlur={() => setOpen(false)}
         onKeyDown={(event) => {
           if (event.key === "Escape") setOpen(false);
@@ -597,36 +629,51 @@ function SearchDropdownInput({
         aria-controls={listboxId}
         aria-autocomplete="list"
       />
-      {open ? (
-        <div id={listboxId} role="listbox" className="absolute left-0 right-0 top-full z-[120] mt-1 max-h-56 overflow-y-auto rounded-xl border-2 border-slate-200 bg-white p-1 shadow-2xl">
-          {filteredOptions.length ? (
-            filteredOptions.map((option) => (
-              <button
-                key={option}
-                type="button"
-                role="option"
-                aria-selected={option === value}
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={() => {
-                  onChange(option);
-                  setOpen(false);
-                }}
-                className="block w-full rounded-lg px-3 py-2.5 text-left text-sm font-medium text-black hover:bg-[#fff3b0]"
-              >
-                {option}
-              </button>
-            ))
-          ) : (
-            <div className="px-3 py-3 text-sm text-gray-500">{emptyLabel}</div>
-          )}
-        </div>
-      ) : null}
+      {open && typeof document !== "undefined"
+        ? createPortal(
+            <div
+              id={listboxId}
+              role="listbox"
+              style={{
+                position: "absolute",
+                top: `${coords.top + 4}px`,
+                left: `${coords.left}px`,
+                width: `${coords.width}px`,
+                zIndex: 999999,
+              }}
+              className="max-h-56 overflow-y-auto rounded-xl border-2 border-slate-200 bg-white p-1 shadow-2xl"
+            >
+              {filteredOptions.length ? (
+                filteredOptions.map((option) => (
+                  <button
+                    key={option}
+                    type="button"
+                    role="option"
+                    aria-selected={option === value}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => {
+                      onChange(option);
+                      setOpen(false);
+                    }}
+                    className="block w-full rounded-lg px-3 py-2.5 text-left text-sm font-medium text-black hover:bg-[#fff3b0]"
+                  >
+                    {option}
+                  </button>
+                ))
+              ) : (
+                <div className="px-3 py-3 text-sm text-gray-500">{emptyLabel}</div>
+              )}
+            </div>,
+            document.body
+          )
+        : null}
     </div>
   );
 }
 
 export default function ParaphernaliaPage() {
   const { role } = useAuthRole();
+  const { canAccess: canAccessParaphernalia } = useMyModuleAccess("paraphernalia");
   const { allowedColumns, restricted } = useMyColumnAccess("paraphernalia");
   const detachmentAccess = useMyParaphernaliaDetachmentAccess();
   const isAdmin = role === "admin" || role === "superadmin";
@@ -2573,6 +2620,23 @@ export default function ParaphernaliaPage() {
     );
   }
 
+  if (!canAccessParaphernalia) {
+    return (
+      <section className="glass-panel animate-fade-in rounded-3xl p-6 space-y-3">
+        <div className="text-lg font-semibold text-black">Paraphernalia</div>
+        <div className="text-sm text-gray-600">You do not have access to view this page.</div>
+        <div className="pt-2">
+          <button
+            onClick={() => window.location.href = "/Main_Modules/Requests/?module=paraphernalia"}
+            className="inline-flex items-center gap-2 rounded-xl bg-[#FFDA03] px-4 py-2 text-sm font-semibold text-black hover:bg-[#EFCB00]"
+          >
+            Request Access
+          </button>
+        </div>
+      </section>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-[#f7f3e8] p-4 md:p-6">
       <div className="mx-auto max-w-7xl space-y-6">
@@ -2630,7 +2694,7 @@ export default function ParaphernaliaPage() {
             </label>
 
             {canManageInventory ? (
-              <div>
+              <div className="relative z-20">
                 <span className={labelClass}>Create Individual Detachment Table</span>
                 <div className="flex flex-col gap-2 sm:flex-row">
                   <div className="min-w-0 flex-1">

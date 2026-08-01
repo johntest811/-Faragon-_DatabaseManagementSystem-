@@ -7,7 +7,7 @@ import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { supabase } from "@/app/Client/SupabaseClients";
-import { useAuthRole, useMyColumnAccess } from "@/app/Client/useRbac";
+import { useAuthRole, useMyColumnAccess, useMyModuleAccess } from "@/app/Client/useRbac";
 import LoadingCircle from "@/app/Components/LoadingCircle";
 import TableZoomWrapper from "@/app/Components/TableZoomWrapper";
 import { useToast } from "@/app/Components/ToastProvider";
@@ -315,6 +315,7 @@ function omitBlankCreatedAt<T extends Record<string, unknown>>(payload: T) {
 
 export default function ClientsPage() {
   const { role } = useAuthRole();
+  const { canAccess: canAccessClient } = useMyModuleAccess("client");
   const { allowedColumns, restricted } = useMyColumnAccess("client");
   const toast = useToast();
   const lastToastRef = useRef<{ error: string; save: string }>({ error: "", save: "" });
@@ -1357,7 +1358,22 @@ export default function ClientsPage() {
     return hasCurrent || !current ? CLIENT_SECTORS : [{ value: current, label: `Current: ${current}` }, ...CLIENT_SECTORS];
   }, [contractForm.cluster]);
 
-  /* ------------------- Render ------------------- */
+  if (!canAccessClient) {
+    return (
+      <section className="glass-panel animate-fade-in rounded-3xl p-6 space-y-3">
+        <div className="text-lg font-semibold text-black">Client & Contracts</div>
+        <div className="text-sm text-gray-600">You do not have access to view this page.</div>
+        <div className="pt-2">
+          <button
+            onClick={() => window.location.href = "/Main_Modules/Requests/?module=client"}
+            className="inline-flex items-center gap-2 rounded-xl bg-[#FFDA03] px-4 py-2 text-sm font-semibold text-black hover:bg-[#EFCB00]"
+          >
+            Request Access
+          </button>
+        </div>
+      </section>
+    );
+  }
 
   return (
     <div className="space-y-5">

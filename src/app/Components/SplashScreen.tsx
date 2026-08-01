@@ -7,6 +7,12 @@ type SplashScreenProps = {
   fadingOut?: boolean;
 };
 
+type SplashScreenElectronApi = {
+  app?: {
+    onWindowShown?: (callback: () => void) => () => void;
+  };
+};
+
 export default function SplashScreen({
   onFinish,
   fadingOut = false,
@@ -20,22 +26,44 @@ export default function SplashScreen({
   }, [onFinish]);
 
   useEffect(() => {
-    const started = Date.now();
-    const totalMs = 4200;
-    const bgTimer = setTimeout(() => setBgBlack(true), 1500);
+    let bgTimer: NodeJS.Timeout | null = null;
+    let finishTimer: NodeJS.Timeout | null = null;
+    let interval: NodeJS.Timeout | null = null;
 
-    const interval = setInterval(() => {
-      const elapsed = Date.now() - started;
-      const pct = Math.max(0, Math.min(100, (elapsed / totalMs) * 100));
-      setProgress(pct);
-    }, 30);
+    function startAnimation() {
+      if (bgTimer) clearTimeout(bgTimer);
+      if (finishTimer) clearTimeout(finishTimer);
+      if (interval) clearInterval(interval);
 
-    const finishTimer = setTimeout(() => finishRef.current?.(), totalMs);
+      setBgBlack(false);
+      setProgress(0);
+
+      const started = Date.now();
+      const totalMs = 4200;
+
+      bgTimer = setTimeout(() => setBgBlack(true), 1500);
+
+      interval = setInterval(() => {
+        const elapsed = Date.now() - started;
+        const pct = Math.max(0, Math.min(100, (elapsed / totalMs) * 100));
+        setProgress(pct);
+      }, 30);
+
+      finishTimer = setTimeout(() => finishRef.current?.(), totalMs);
+    }
+
+    startAnimation();
+
+    const electronAPI = (globalThis as { electronAPI?: SplashScreenElectronApi }).electronAPI;
+    const unsub = electronAPI?.app?.onWindowShown?.(() => {
+      startAnimation();
+    });
 
     return () => {
-      clearTimeout(bgTimer);
-      clearTimeout(finishTimer);
-      clearInterval(interval);
+      if (bgTimer) clearTimeout(bgTimer);
+      if (finishTimer) clearTimeout(finishTimer);
+      if (interval) clearInterval(interval);
+      unsub?.();
     };
   }, []);
 

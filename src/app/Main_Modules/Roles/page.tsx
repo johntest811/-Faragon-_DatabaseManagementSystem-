@@ -737,6 +737,41 @@ export default function RolesPage() {
 		}
 	}
 
+	async function bulkSetRoleAccess(roleId: string, preset: "full" | "readonly" | "clear") {
+		setError("");
+		setSuccess("");
+		if (!canManage) return setError("Only Superadmin can change module access.");
+		if (selectedRoleIsSecurityAccountRole) return setError("Security Account roles cannot use bulk presets.");
+		setSavingKey(`bulk:${roleId}:${preset}`);
+
+		try {
+			if (preset === "clear") {
+				await supabase.from("role_column_access").delete().eq("role_id", roleId);
+				await supabase.from("role_module_access").delete().eq("role_id", roleId);
+				setSuccess("All role permissions cleared.");
+			} else {
+				const rows = modules.map((m) => ({
+					role_id: roleId,
+					module_key: m.module_key,
+					can_read: true,
+					can_write: preset === "full",
+					can_edit: preset === "full",
+				}));
+				const { error: upsertErr } = await supabase
+					.from("role_module_access")
+					.upsert(rows, { onConflict: "role_id,module_key" });
+				if (upsertErr) throw upsertErr;
+				setSuccess(preset === "full" ? "Full access granted for all modules." : "Read-only access set for all modules.");
+			}
+			logAudit("RBAC_BULK_ROLE_PRESET", { role_id: roleId, preset });
+			load();
+		} catch (e: unknown) {
+			setError(getErrorMessage(e));
+		} finally {
+			setSavingKey("");
+		}
+	}
+
 	const accessDenied = role !== null && role !== "superadmin";
 	if (accessDenied) {
 		return (
@@ -943,13 +978,38 @@ export default function RolesPage() {
 					</div>
 				</div>
 
-				<div className="mt-3">
+				<div className="flex flex-wrap items-center justify-between gap-2 mt-3">
 					<input
 						value={moduleSearch}
 						onChange={(e) => setModuleSearch(e.target.value)}
 						placeholder="Search page/module key or column"
-						className="w-full md:w-96 border rounded-xl px-3 py-2 text-sm text-black"
+						className="w-full md:w-80 border rounded-xl px-3 py-2 text-sm text-black"
 					/>
+					{selectedRole && canManage && !selectedRoleIsSuperadmin && !selectedRoleIsSecurityAccountRole ? (
+						<div className="flex items-center gap-2">
+							<button
+								type="button"
+								onClick={() => void bulkSetRoleAccess(selectedRole.role_id, "full")}
+								className="rounded-xl border bg-emerald-50 border-emerald-200 px-3 py-1.5 text-xs font-semibold text-emerald-800 hover:bg-emerald-100"
+							>
+								Grant Full Access
+							</button>
+							<button
+								type="button"
+								onClick={() => void bulkSetRoleAccess(selectedRole.role_id, "readonly")}
+								className="rounded-xl border bg-amber-50 border-amber-200 px-3 py-1.5 text-xs font-semibold text-amber-800 hover:bg-amber-100"
+							>
+								Read-Only Access
+							</button>
+							<button
+								type="button"
+								onClick={() => void bulkSetRoleAccess(selectedRole.role_id, "clear")}
+								className="rounded-xl border bg-red-50 border-red-200 px-3 py-1.5 text-xs font-semibold text-red-800 hover:bg-red-100"
+							>
+								Clear All Access
+							</button>
+						</div>
+					) : null}
 				</div>
 
 				{!selectedRole ? (
@@ -992,93 +1052,6 @@ export default function RolesPage() {
 													checked ? "bg-[#FFF7CC] border-[#FFDA03]" : "bg-white"
 												}`}
 											>
-															{/*
-																<div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/45 p-4" onClick={closeRoleDialog}>
-																	<div className="w-full max-w-xl overflow-hidden rounded-[28px] border border-white/70 bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
-																		<div className="bg-gradient-to-r from-[#111827] via-[#8B1C1C] to-[#611313] px-6 py-5 text-white">
-																			<div className="flex items-start justify-between gap-4">
-																				<div>
-																					<div className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.25em] text-white/75">
-																						{roleDialogMode === "create" ? <Plus className="h-3.5 w-3.5 text-[#FFDA03]" /> : <PencilLine className="h-3.5 w-3.5 text-[#FFDA03]" />}
-																						{roleDialogMode === "create" ? "New role" : "Edit role"}
-																					</div>
-																					<div className="mt-3 text-2xl font-semibold">
-																						{roleDialogMode === "create" ? "Create Role" : `Edit ${labelFromRole(roleDialogOriginalName)}`}
-																					</div>
-																					<div className="mt-1 text-sm text-white/75">
-																						{roleDialogMode === "create"
-																							? "Create a new position key for accounts and permissions without leaving the Roles tab."
-																							: "Rename the role key and keep existing admin accounts in sync automatically."}
-																					</div>
-																				</div>
-																				<button
-																					type="button"
-																					onClick={closeRoleDialog}
-																					className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/15 bg-white/10 text-white hover:bg-white/15"
-																					disabled={roleDialogBusy}
-																				>
-																					<X className="h-4 w-4" />
-																				</button>
-																			</div>
-																		</div>
-
-																		<div className="p-6">
-																			<div className="mb-1 text-xs font-semibold uppercase tracking-wide text-black">Role key</div>
-																			<input
-																				value={roleDialogName}
-																				onChange={(e) => setRoleDialogName(e.target.value)}
-																				placeholder="hr_manager"
-																				className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-black outline-none focus:border-[#8B1C1C] focus:ring-4 focus:ring-[#8B1C1C]/10"
-																				disabled={roleDialogBusy}
-																			/>
-																			<div className="mt-3 text-xs text-gray-500">
-																				The role key is stored in lowercase. Editing a role updates any admin accounts using the old key.
-																			</div>
-
-																			{roleDialogMode === "edit" ? (
-																				<div className="mt-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700">
-																					Deletion is blocked while any admin account still uses this role.
-																				</div>
-																			) : null}
-
-																			<div className="mt-6 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
-																				{roleDialogMode === "edit" ? (
-																					<button
-																						type="button"
-																						onClick={() => {
-																							if (roleDialogRole) void deleteRole(roleDialogRole);
-																						}}
-																						className="inline-flex items-center justify-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 font-semibold text-red-700 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
-																						disabled={roleDialogBusy || !roleDialogRole || roleDialogRole.role_name === "superadmin"}
-																					>
-																						<Trash2 className="h-4 w-4" />
-																						Delete role
-																					</button>
-																				) : null}
-																				<div className="flex items-center gap-2 sm:ml-auto">
-																					<button
-																						type="button"
-																						onClick={closeRoleDialog}
-																						className="rounded-xl border bg-white px-4 py-2.5 text-black hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
-																						disabled={roleDialogBusy}
-																					>
-																						Cancel
-																					</button>
-																					<button
-																						onClick={submitRoleDialog}
-																						className={`inline-flex items-center gap-2 rounded-xl px-4 py-2.5 font-semibold ${
-																							canManage ? "bg-[#FFDA03] text-black hover:bg-[#EFCB00]" : "bg-[#FFDA03] text-black opacity-60"
-																						}`}
-																						disabled={!canManage || roleDialogBusy}
-																					>
-																						{roleDialogBusy ? "Saving..." : roleDialogMode === "create" ? "Create Role" : "Save Changes"}
-																					</button>
-																				</div>
-																			</div>
-																		</div>
-																	</div>
-																</div>
-															*/}
 												<div className="flex items-center justify-between gap-3">
 													<div className="min-w-0">
 														<div className="text-sm font-medium text-black">{m.display_name}</div>

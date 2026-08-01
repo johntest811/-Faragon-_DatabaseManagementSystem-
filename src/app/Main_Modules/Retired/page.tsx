@@ -4,7 +4,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../Client/SupabaseClients";
 import { Pencil, LayoutGrid, Table, SlidersHorizontal, Search } from "lucide-react";
-import { useAuthRole, useMyModuleDeleteAccess } from "../../Client/useRbac";
+import { useAuthRole, useMyModuleAccess, useMyModuleDeleteAccess } from "../../Client/useRbac";
 import EmployeeEditorModal from "../../Components/EmployeeEditorModal";
 import LoadingCircle from "../../Components/LoadingCircle";
 import TableZoomWrapper from "@/app/Components/TableZoomWrapper";
@@ -117,6 +117,7 @@ function serviceYearsExact(fromIso: string | null, now = new Date()) {
 export default function RetiredPage() {
   const router = useRouter();
   const { role: sessionRole } = useAuthRole();
+  const { canAccess: canAccessRetired } = useMyModuleAccess("retired");
   const { canDelete: canDeleteRetired } = useMyModuleDeleteAccess("retired");
 
   const [viewMode, setViewMode] = useState<"grid" | "table">(() => {
@@ -382,6 +383,23 @@ export default function RetiredPage() {
     }
 
     await fetchEmployees();
+  }
+
+  if (!canAccessRetired) {
+    return (
+      <section className="glass-panel animate-fade-in rounded-3xl p-6 space-y-3">
+        <div className="text-lg font-semibold text-black">Retired</div>
+        <div className="text-sm text-gray-600">You do not have access to view this page.</div>
+        <div className="pt-2">
+          <button
+            onClick={() => router.push("/Main_Modules/Requests/?module=retired")}
+            className="inline-flex items-center gap-2 rounded-xl bg-[#FFDA03] px-4 py-2 text-sm font-semibold text-black hover:bg-[#EFCB00]"
+          >
+            Request Access
+          </button>
+        </div>
+      </section>
+    );
   }
 
   return (

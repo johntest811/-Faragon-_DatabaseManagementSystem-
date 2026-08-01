@@ -30,6 +30,7 @@ import {
   ClipboardCheck,
   KeyRound,
   Sparkles,
+  Download,
 } from "lucide-react";
 
 type LayoutProps = Readonly<{ children: React.ReactNode }>;
@@ -595,7 +596,80 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
   const [expiringOpen, setExpiringOpen] = useState(false);
   const [carInsuranceExpiringOpen, setCarInsuranceExpiringOpen] = useState(false);
   const [contractExpiringOpen, setContractExpiringOpen] = useState(false);
+  const [updateOpen, setUpdateOpen] = useState(false);
+  const [updateChecking, setUpdateChecking] = useState(false);
+  const [updateDownloading, setUpdateDownloading] = useState(false);
+  const [updateDownloaded, setUpdateDownloaded] = useState(false);
+  const [updateProgress, setUpdateProgress] = useState<{ percent: number } | null>(null);
+  const [updateInfo, setUpdateInfo] = useState<{ updateAvailable: boolean; version?: string | null; currentVersion?: string | null } | null>(null);
+  const [currentAppVersion, setCurrentAppVersion] = useState<string>("0.1.1");
   const [, setAdminAlertOpen] = useState(false);
+
+  useEffect(() => {
+    const electronAPI = (globalThis as any).electronAPI;
+    if (!electronAPI?.app) return;
+
+    electronAPI.app.getVersion?.().then((v: string) => {
+      if (v) setCurrentAppVersion(v);
+    });
+
+    const unsubProgress = electronAPI.app.onUpdateProgress?.((p: { percent: number }) => {
+      setUpdateDownloading(true);
+      setUpdateProgress(p);
+    });
+
+    const unsubDownloaded = electronAPI.app.onUpdateDownloaded?.((info: { version: string }) => {
+      setUpdateDownloading(false);
+      setUpdateDownloaded(true);
+      setUpdateInfo((prev) => ({ ...prev, updateAvailable: true, version: info?.version }));
+    });
+
+    return () => {
+      unsubProgress?.();
+      unsubDownloaded?.();
+    };
+  }, []);
+
+  const handleCheckForUpdates = useCallback(async () => {
+    const electronAPI = (globalThis as any).electronAPI;
+    if (!electronAPI?.app?.checkForUpdates) return;
+    setUpdateChecking(true);
+    try {
+      const res = await electronAPI.app.checkForUpdates();
+      if (res && res.success) {
+        setUpdateInfo({
+          updateAvailable: Boolean(res.updateAvailable),
+          version: res.version,
+          currentVersion: res.currentVersion,
+        });
+      }
+    } catch {
+      // ignore
+    } finally {
+      setUpdateChecking(false);
+    }
+  }, []);
+
+  const handleDownloadUpdate = useCallback(async () => {
+    const electronAPI = (globalThis as any).electronAPI;
+    if (!electronAPI?.app?.downloadUpdate) return;
+    setUpdateDownloading(true);
+    try {
+      await electronAPI.app.downloadUpdate();
+    } catch {
+      setUpdateDownloading(false);
+    }
+  }, []);
+
+  const handleInstallUpdate = useCallback(async () => {
+    const electronAPI = (globalThis as any).electronAPI;
+    if (!electronAPI?.app?.installUpdate) return;
+    try {
+      await electronAPI.app.installUpdate();
+    } catch {
+      // ignore
+    }
+  }, []);
   const [activityCount, setActivityCount] = useState(0);
   const [activityMissingTable, setActivityMissingTable] = useState(false);
   const [resendingKey, setResendingKey] = useState<string | null>(null);
@@ -696,13 +770,13 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
   const applyVisibleExpiringRows = useCallback((rows: ExpiringSummaryRow[]) => {
     setExpiringRows(rows);
     setExpiringCount(
-      rows.filter((row) => !isCarInsuranceExpiringRow(row) && !isContractExpiringRow(row) && Number(row.sent_count ?? 0) <= 0).length
+      rows.filter((row) => !isCarInsuranceExpiringRow(row) && !isContractExpiringRow(row)).length
     );
     setCarInsuranceExpiringCount(
-      rows.filter((row) => isCarInsuranceExpiringRow(row) && Number(row.sent_count ?? 0) <= 0).length
+      rows.filter((row) => isCarInsuranceExpiringRow(row)).length
     );
     setContractExpiringCount(
-      rows.filter((row) => isContractExpiringRow(row) && Number(row.sent_count ?? 0) <= 0).length
+      rows.filter((row) => isContractExpiringRow(row)).length
     );
   }, []);
 
@@ -1848,6 +1922,106 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
               </div>
 
               <div className="flex items-center gap-3">
+                {/* Desktop App Updater Dropdown */}
+                {typeof window !== "undefined" && Boolean((globalThis as any).electronAPI?.app) ? (
+                  <div className="relative" data-update-menu>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setUpdateOpen((v) => !v);
+                        setActivityOpen(false);
+                        setPreviewOpen(false);
+                        setExpiringOpen(false);
+                        setCarInsuranceExpiringOpen(false);
+                        setContractExpiringOpen(false);
+                        setAdminAlertOpen(false);
+                        void handleCheckForUpdates();
+                      }}
+                      className="relative h-10 w-10 rounded-xl bg-[#FFDA03] text-black flex items-center justify-center hover:bg-[#ffe552] active:scale-95 transition-all duration-200 shadow-sm"
+                      aria-label="Application Updates"
+                      title="Check for Desktop Updates"
+                    >
+                      <Download className="w-5 h-5" />
+                      {updateInfo?.updateAvailable || updateDownloaded ? (
+                        <span
+                          className="absolute -top-1.5 -right-1.5 min-w-[20px] h-[20px] px-1 rounded-full bg-red-600 text-white text-[10px] font-black leading-[20px] text-center shadow-md animate-pulse border-2 border-white"
+                          aria-label="Update available"
+                        >
+                          !
+                        </span>
+                      ) : null}
+                    </button>
+
+                    {updateOpen ? (
+                      <div className="absolute right-0 mt-3 w-[360px] max-w-[90vw] rounded-2xl border-2 border-slate-200 bg-white shadow-2xl overflow-hidden z-50 animate-slide-up">
+                        <div className="px-5 py-3.5 border-b bg-gradient-to-r from-amber-50 to-orange-50/40 flex items-center justify-between">
+                          <div className="text-sm font-black text-slate-900 tracking-wide">Desktop App Updates</div>
+                          <span className="text-xs font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded border border-slate-200">v{currentAppVersion}</span>
+                        </div>
+
+                        <div className="p-5 space-y-4 text-slate-800">
+                          {updateChecking ? (
+                            <div className="flex items-center gap-3 text-sm text-slate-600 font-semibold py-2">
+                              <div className="h-4 w-4 rounded-full border-2 border-amber-500 border-t-transparent animate-spin" />
+                              <span>Checking GitHub for updates...</span>
+                            </div>
+                          ) : updateDownloaded ? (
+                            <div className="space-y-3">
+                              <div className="text-sm font-bold text-emerald-800 bg-emerald-50 p-3 rounded-xl border border-emerald-200">
+                                ✓ Update Ready! Click below to restart and automatically apply the update.
+                              </div>
+                              <button
+                                type="button"
+                                onClick={handleInstallUpdate}
+                                className="w-full py-2.5 px-4 rounded-xl bg-emerald-600 text-white font-bold text-sm hover:bg-emerald-700 active:scale-95 transition-all shadow-md"
+                              >
+                                Restart & Install Now
+                              </button>
+                            </div>
+                          ) : updateDownloading ? (
+                            <div className="space-y-2">
+                              <div className="flex justify-between text-xs font-bold text-slate-700">
+                                <span>Downloading update...</span>
+                                <span>{Math.round(updateProgress?.percent ?? 0)}%</span>
+                              </div>
+                              <div className="w-full bg-slate-200 h-2.5 rounded-full overflow-hidden">
+                                <div
+                                  className="bg-amber-500 h-full transition-all duration-200"
+                                  style={{ width: `${Math.min(100, Math.max(0, updateProgress?.percent ?? 0))}%` }}
+                                />
+                              </div>
+                            </div>
+                          ) : updateInfo?.updateAvailable ? (
+                            <div className="space-y-3">
+                              <div className="text-sm font-semibold text-slate-700">
+                                New version <span className="font-extrabold text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">v{updateInfo.version}</span> is available!
+                              </div>
+                              <button
+                                type="button"
+                                onClick={handleDownloadUpdate}
+                                className="w-full py-2.5 px-4 rounded-xl bg-[#8B1C1C] text-white font-bold text-sm hover:bg-[#a62323] active:scale-95 transition-all shadow-md"
+                              >
+                                Download & Install Update
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="space-y-3">
+                              <div className="text-sm text-slate-600 font-medium">You are using the latest version of Faragon Database.</div>
+                              <button
+                                type="button"
+                                onClick={handleCheckForUpdates}
+                                className="w-full py-2 px-3 rounded-xl border border-slate-300 text-slate-700 font-bold text-xs hover:bg-slate-100 transition-all"
+                              >
+                                Check for Updates Again
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+
                 {canViewRecentActivitiesWidget ? (
                 <div className="relative" data-activity-menu>
                   <button
