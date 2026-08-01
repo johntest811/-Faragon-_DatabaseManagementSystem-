@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Faragon Database</string>
+    <string name="title_activity_main">Faragon Database</string>
+    <string name="package_name">com.faragon.databasemanagement</string>
+    <string name="custom_url_scheme">com.faragon.databasemanagement</string>
+</resources>

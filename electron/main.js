@@ -1,5 +1,5 @@
 const { app, BrowserWindow, protocol, dialog, ipcMain, safeStorage, Menu } = require('electron');
-const { autoUpdater } = require('electron-updater');
+const { autoUpdater, CancellationToken } = require('electron-updater');
 const path = require('path');
 const fs = require('fs');
 
@@ -4519,6 +4519,7 @@ if (gotSingleInstanceLock) {
 // Auto Updater Configurations
 autoUpdater.autoDownload = false;
 autoUpdater.autoInstallOnAppQuit = false;
+let updateCancellationToken = null;
 
 autoUpdater.on('checking-for-update', () => {
   console.log('[updater] Checking for update...');
@@ -4534,6 +4535,9 @@ autoUpdater.on('update-not-available', (info) => {
 
 autoUpdater.on('error', (err) => {
   console.error('[updater] Error checking/downloading update:', err);
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('app:updateError', { error: err?.message ?? String(err) });
+  }
 });
 
 autoUpdater.on('download-progress', (progressObj) => {
@@ -4578,7 +4582,12 @@ ipcMain.handle('app:checkForUpdates', async () => {
 // IPC Handler for starting download
 ipcMain.handle('app:downloadUpdate', async () => {
   try {
-    await autoUpdater.downloadUpdate();
+    if (updateCancellationToken) {
+      updateCancellationToken.cancel();
+      updateCancellationToken = null;
+    }
+    updateCancellationToken = new CancellationToken();
+    await autoUpdater.downloadUpdate(updateCancellationToken);
     return { success: true };
   } catch (err) {
     console.error('[updater] downloadUpdate failed:', err);
@@ -4586,10 +4595,26 @@ ipcMain.handle('app:downloadUpdate', async () => {
   }
 });
 
+// IPC Handler for cancelling download
+ipcMain.handle('app:cancelDownload', async () => {
+  try {
+    if (updateCancellationToken) {
+      updateCancellationToken.cancel();
+      updateCancellationToken = null;
+      console.log('[updater] Download cancelled by user.');
+    }
+    return { success: true };
+  } catch (err) {
+    console.error('[updater] cancelDownload failed:', err);
+    return { success: false, error: err?.message ?? String(err) };
+  }
+});
+
 // IPC Handler for quitting and installing
 ipcMain.handle('app:installUpdate', async () => {
   try {
-    autoUpdater.quitAndInstall();
+    // isSilent: true (silent update without wizard popups), isForceRun: true (automatically re-launch app after update)
+    autoUpdater.quitAndInstall(true, true);
     return { success: true };
   } catch (err) {
     console.error('[updater] installUpdate failed:', err);

@@ -46,3 +46,22 @@ npm ls @electron/rebuild
 	- `admin_column_access_overrides`
 	- `user_column_access_overrides`
 	- `access_requests.requested_column_key`
+
+
+
+
+
+	How to Fix It (1-Minute Fix)
+Locate latest.yml on your computer: Open your local project directory: 📂 c:\Users\JOHN\Music\Faragon\DatabaseManagement\dist\ You will see a file named latest.yml.
+
+Upload latest.yml to your GitHub Release:
+
+Go to your GitHub Release page (Faragon Database 0.1.2).
+Click the Edit release button (the pencil icon ✏️ at the top right of the release box).
+Drag and drop latest.yml from your dist/ folder into the Attach binaries... box alongside Faragon.Database.Setup.0.1.2.exe.
+Click Update release (or Save).
+
+
+Faragon.Database.Setup.0.1.3.exe
+upload the latest.yml also
+Bump version in package.json to "0.1.2".

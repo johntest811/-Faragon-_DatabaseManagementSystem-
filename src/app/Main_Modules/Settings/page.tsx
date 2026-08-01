@@ -1571,11 +1571,11 @@ export default function SettingsPage() {
 	}
 
 	return (
-		<section className="glass-panel animate-slide-up rounded-2xl shadow-2xl p-5 space-y-6 border-none">
-			<div className="flex items-center justify-between gap-3 mb-4">
+		<section className="glass-panel animate-slide-up rounded-3xl shadow-xl p-6 space-y-6 border-none">
+			<div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 pb-4">
 				<div>
-					<div className="text-lg font-semibold text-black">Settings</div>
-					<div className="text-sm text-gray-500">Email notifications for expiring licenses and other records</div>
+					<h1 className="text-2xl font-black tracking-tight text-slate-900">Settings & System Preferences</h1>
+					<p className="text-xs font-medium text-slate-500 mt-1">Configure user profile, automated Gmail alerts, licensure expiry rules, and system updates.</p>
 				</div>
 				<div className="flex items-center gap-2">
 					{canAdminExport ? (
@@ -1607,14 +1607,14 @@ export default function SettingsPage() {
 								}
 						}}
 							disabled={exporting || !isDesktop}
-							className="animated-btn px-4 py-2 rounded-xl bg-[#FFDA03] text-black font-medium disabled:opacity-50 hover:brightness-95"
+							className="animated-btn px-4 py-2.5 rounded-xl bg-[#FFDA03] text-black font-bold text-sm disabled:opacity-50 hover:brightness-95 shadow-sm active:scale-95 transition-all"
 						>
 							{exporting ? "Exporting…" : "Export database"}
 						</button>
 					) : null}
 					<button
 						onClick={() => router.push("/Main_Modules/Dashboard/")}
-						className="animated-btn px-4 py-2 rounded-xl bg-white border hover:bg-white"
+						className="animated-btn px-4 py-2.5 rounded-xl bg-white border border-slate-200 text-slate-700 font-bold text-sm hover:bg-slate-50 shadow-sm active:scale-95 transition-all"
 					>
 						Back
 					</button>
@@ -1622,18 +1622,18 @@ export default function SettingsPage() {
 			</div>
 
 			<div className="flex flex-wrap items-center gap-2">
-				<div className="inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm">
-					<span className="text-gray-600">Notifications:</span>
-					<span className={enabled ? "text-green-700 font-semibold" : "text-gray-600 font-semibold"}>
+				<div className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white/90 px-3.5 py-2 text-xs shadow-sm">
+					<span className="text-slate-500 font-semibold">Notifications:</span>
+					<span className={enabled ? "text-emerald-700 font-extrabold bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200" : "text-slate-600 font-bold bg-slate-100 px-2 py-0.5 rounded"}>
 						{enabled ? "Enabled" : "Disabled"}
 					</span>
 				</div>
-				<div className="inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm">
-					<span className="text-gray-600">Log:</span>
+				<div className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white/90 px-3.5 py-2 text-xs shadow-sm">
+					<span className="text-slate-500 font-semibold">Log Status:</span>
 					<select
 						value={logStatus}
 						onChange={(e) => setLogStatus(e.target.value)}
-						className="rounded-lg border px-2 py-1 text-black bg-white"
+						className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs text-slate-800 font-bold bg-white focus:outline-none"
 					>
 						<option value="ALL" className="text-black">All</option>
 						<option value="SENT" className="text-black">Sent</option>
@@ -1643,50 +1643,55 @@ export default function SettingsPage() {
 					</select>
 				</div>
 				{!hydrated ? (
-					<div className="text-xs text-gray-500">Checking desktop integration...</div>
+					<div className="text-xs text-slate-400 font-medium">Checking desktop integration...</div>
 				) : isDesktop ? (
-					<div className="text-xs text-gray-500">
-						Gmail user in env: {envHasGmailUser ? "yes" : envHasGmailUser === false ? "no" : "unknown"} • Gmail pass in env:{" "}
-						{envHasGmailPass ? "yes" : envHasGmailPass === false ? "no" : "unknown"}
+					<div className="text-xs text-slate-500 font-medium bg-slate-100 px-3 py-1.5 rounded-xl border border-slate-200">
+						Gmail user in env: <span className="font-bold text-slate-800">{envHasGmailUser ? "yes" : envHasGmailUser === false ? "no" : "unknown"}</span> • Gmail pass in env:{" "}
+						<span className="font-bold text-slate-800">{envHasGmailPass ? "yes" : envHasGmailPass === false ? "no" : "unknown"}</span>
 					</div>
 				) : (
-					<div className="text-xs text-gray-500">
+					<div className="text-xs text-slate-500 font-medium bg-amber-50 text-amber-900 px-3 py-1.5 rounded-xl border border-amber-200">
 						Sender setup is managed in the Electron app. Automatic emails only run while the desktop app is open.
 					</div>
 				)}
 			</div>
 
 			{loading ? (
-				<div className="glass-panel rounded-2xl border-none p-8">
+				<div className="rounded-3xl border border-slate-200/80 bg-white/90 p-12 shadow-sm flex items-center justify-center">
 					<LoadingCircle label="Loading settings..." />
 				</div>
 			) : (
 				<div className="space-y-6">
 					{error ? (
-						<div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-							{error}
+						<div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-semibold text-red-800 shadow-sm flex items-center gap-2">
+							<span>⚠️</span>
+							<span>{error}</span>
 						</div>
 					) : null}
 					{success ? (
-						<div className="rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
-							{success}
+						<div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-800 shadow-sm flex items-center gap-2">
+							<span>✓</span>
+							<span>{success}</span>
 						</div>
 					) : null}
 
-					<div className="glass-panel animate-scale-in rounded-2xl border-none p-4">
-						<div className="flex flex-wrap items-start justify-between gap-3 mb-3">
+					{/* My Profile */}
+					<div className="rounded-3xl border border-slate-200/80 bg-white/90 p-6 shadow-sm backdrop-blur-md transition-all duration-200 hover:shadow-md">
+						<div className="flex flex-wrap items-start justify-between gap-3 mb-4 pb-3 border-b border-slate-100">
 							<div>
-								<div className="font-semibold text-black">My profile</div>
-								<div className="text-xs text-gray-500">
-									Shown in top navigation. Images are stored in bucket <span className="font-mono">{PROFILE_BUCKET}</span>.
+								<div className="text-base font-extrabold text-slate-900">My Profile</div>
+								<div className="text-xs font-medium text-slate-500 mt-0.5">
+									Shown in top navigation header. Images are saved in bucket <span className="font-mono text-slate-700 font-bold">{PROFILE_BUCKET}</span>.
 								</div>
 							</div>
-							<div className="text-xs text-gray-500">Account: {profileUsername || "-"}</div>
+							<div className="text-xs font-bold text-slate-700 bg-slate-100 px-3 py-1 rounded-full border border-slate-200">
+								Account: {profileUsername || "-"}
+							</div>
 						</div>
 
 						{profileAdminId ? (
-							<div className="grid grid-cols-1 md:grid-cols-[auto,1fr] gap-4 items-start">
-								<div className="h-24 w-24 rounded-2xl overflow-hidden border bg-gray-100 flex items-center justify-center shrink-0">
+							<div className="grid grid-cols-1 md:grid-cols-[auto,1fr] gap-6 items-start">
+								<div className="h-28 w-28 rounded-2xl overflow-hidden border border-slate-200 bg-slate-100 flex items-center justify-center shrink-0 shadow-inner">
 									{profileImageUrl ? (
 										<div
 											role="img"
@@ -1695,42 +1700,42 @@ export default function SettingsPage() {
 											style={{ backgroundImage: `url("${profileImageUrl}")` }}
 										/>
 									) : (
-										<span className="text-xl font-semibold text-gray-500">{profileBadgeLabel}</span>
+										<span className="text-2xl font-black text-slate-400 tracking-wider">{profileBadgeLabel}</span>
 									)}
 								</div>
 
-								<div className="space-y-3 min-w-0">
+								<div className="space-y-4 min-w-0">
 									<div>
-										<label className="block text-sm mb-1 text-black">Display name</label>
+										<label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1.5">Display Name</label>
 										<input
 											value={profileDisplayName}
 											onChange={(e) => setProfileDisplayName(e.target.value)}
 											placeholder="Enter your display name"
-											className="w-full rounded-xl border px-3 py-2 text-black"
+											className="w-full rounded-xl border border-slate-200 px-3.5 py-2 text-sm text-slate-900 font-medium placeholder:text-slate-400 focus:border-[#8B1C1C] focus:outline-none focus:ring-4 focus:ring-[#8B1C1C]/10 transition-all"
 										/>
 									</div>
 
-									<div className="text-xs text-gray-500 break-all">
-										Current image path: {profileImagePath || "Not uploaded"}
+									<div className="text-xs font-medium text-slate-400 break-all">
+										Current image path: <span className="font-mono text-slate-600">{profileImagePath || "Not uploaded"}</span>
 									</div>
 
-									<div className="flex flex-wrap items-center gap-2">
+									<div className="flex flex-wrap items-center gap-2.5">
 										<button
 											type="button"
 											onClick={() => void saveProfileName()}
 											disabled={profileSaving || profileUploading || profileRemoving}
-											className="animated-btn px-4 py-2 rounded-xl bg-black text-white disabled:opacity-50 hover:bg-gray-800"
+											className="animated-btn px-4 py-2 rounded-xl bg-slate-900 text-white font-bold text-xs disabled:opacity-50 hover:bg-slate-800 shadow-sm active:scale-95 transition-all"
 										>
-											{profileSaving ? "Saving..." : "Save name"}
+											{profileSaving ? "Saving..." : "Save Name"}
 										</button>
 
 										<button
 											type="button"
 											onClick={() => profileFileInputRef.current?.click()}
 											disabled={profileUploading || profileSaving || profileRemoving}
-											className="animated-btn px-4 py-2 rounded-xl bg-[#FFDA03] text-black font-medium disabled:opacity-50 hover:brightness-95"
+											className="animated-btn px-4 py-2 rounded-xl bg-[#FFDA03] text-black font-bold text-xs disabled:opacity-50 hover:brightness-95 shadow-sm active:scale-95 transition-all"
 										>
-											{profileUploading ? "Uploading..." : "Upload image"}
+											{profileUploading ? "Uploading..." : "Upload Image"}
 										</button>
 
 										{profileImagePath ? (
@@ -1738,18 +1743,18 @@ export default function SettingsPage() {
 												type="button"
 												onClick={() => void removeProfileImage()}
 												disabled={profileRemoving || profileUploading || profileSaving}
-												className="animated-btn px-4 py-2 rounded-xl bg-white border text-black disabled:opacity-50 hover:bg-white"
+												className="animated-btn px-4 py-2 rounded-xl bg-white border border-slate-200 text-slate-700 font-bold text-xs disabled:opacity-50 hover:bg-slate-50 shadow-sm active:scale-95 transition-all"
 											>
-												{profileRemoving ? "Removing..." : "Remove image"}
+												{profileRemoving ? "Removing..." : "Remove Image"}
 											</button>
 										) : null}
 									</div>
 
-									<div className="text-xs text-gray-500">Accepted image files up to 5MB.</div>
+									<div className="text-[11px] text-slate-400 font-medium">Accepted image files up to 5MB.</div>
 								</div>
 							</div>
 						) : (
-							<div className="rounded-xl border border-yellow-200 bg-yellow-50 px-3 py-2 text-sm text-yellow-800">
+							<div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm font-semibold text-amber-900">
 								No active admin session found. Sign in again to edit your profile.
 							</div>
 						)}
@@ -1769,31 +1774,31 @@ export default function SettingsPage() {
 
 					{/* System Updates */}
 					{isDesktop ? (
-						<div className="glass-panel animate-scale-in rounded-2xl border-none p-4">
-							<div className="flex flex-wrap items-start justify-between gap-3 mb-3">
+						<div className="rounded-3xl border border-slate-200/80 bg-white/90 p-6 shadow-sm backdrop-blur-md transition-all duration-200 hover:shadow-md">
+							<div className="flex flex-wrap items-start justify-between gap-3 mb-4 pb-3 border-b border-slate-100">
 								<div>
-									<div className="font-semibold text-black">System Updates</div>
-									<div className="text-xs text-gray-500">
-										Check for software updates and install them instantly.
+									<div className="text-base font-extrabold text-slate-900">System Updates</div>
+									<div className="text-xs font-medium text-slate-500 mt-0.5">
+										Check for software updates and install them seamlessly without manual reinstalling.
 									</div>
 								</div>
 								{currentVersion && (
-									<div className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">
+									<div className="rounded-full bg-slate-100 border border-slate-200 px-3 py-1 text-xs font-extrabold text-slate-700">
 										Current Version: v{currentVersion}
 									</div>
 								)}
 							</div>
 
-							<div className="mt-4 flex flex-col gap-4">
+							<div className="mt-2 flex flex-col gap-4">
 								{updaterState === "idle" && (
 									<div>
-										<p className="text-sm text-gray-600">
+										<p className="text-sm text-slate-600 font-medium">
 											Keep your application up to date with the latest features, security patches, and database optimizations.
 										</p>
 										<button
 											type="button"
 											onClick={handleCheckForUpdates}
-											className="mt-3 min-h-10 rounded-xl bg-[#FFDA03] px-5 py-2 text-sm font-bold text-black hover:brightness-95 transition-all duration-200"
+											className="mt-3 min-h-10 rounded-xl bg-[#FFDA03] px-5 py-2 text-xs font-extrabold text-black hover:brightness-95 active:scale-95 transition-all duration-200 shadow-sm"
 										>
 											Check for Updates
 										</button>
@@ -1801,21 +1806,21 @@ export default function SettingsPage() {
 								)}
 
 								{updaterState === "checking" && (
-									<div className="flex items-center gap-3">
-										<div className="h-5 w-5 animate-spin rounded-full border-2 border-[#FFDA03] border-t-transparent"></div>
-										<span className="text-sm text-gray-700 font-medium">Checking for updates on GitHub...</span>
+									<div className="flex items-center gap-3 py-2">
+										<div className="h-5 w-5 animate-spin rounded-full border-2 border-amber-500 border-t-transparent"></div>
+										<span className="text-sm text-slate-700 font-bold">Checking GitHub for updates...</span>
 									</div>
 								)}
 
 								{updaterState === "no-update" && (
 									<div>
-										<div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800 font-medium">
-											Your application is up to date! You are running the latest version.
+										<div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800 font-bold">
+											✓ Your application is up to date! You are running the latest version.
 										</div>
 										<button
 											type="button"
 											onClick={handleCheckForUpdates}
-											className="mt-3 min-h-10 rounded-xl bg-slate-100 border border-slate-200 px-5 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-200 transition-all duration-200"
+											className="mt-3 min-h-10 rounded-xl bg-slate-100 border border-slate-200 px-5 py-2 text-xs font-bold text-slate-700 hover:bg-slate-200 transition-all duration-200"
 										>
 											Check Again
 										</button>
@@ -1824,22 +1829,22 @@ export default function SettingsPage() {
 
 								{updaterState === "available" && (
 									<div>
-										<div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-											<div className="font-semibold mb-1">New Version Available!</div>
-											A new update (v{updateVersion}) is available. Would you like to download it now?
+										<div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 font-medium">
+											<div className="font-bold mb-1">New Version Available!</div>
+											A new update (<span className="font-extrabold text-amber-950">v{updateVersion}</span>) is ready to download.
 										</div>
 										<div className="mt-3 flex gap-2">
 											<button
 												type="button"
 												onClick={handleDownloadUpdate}
-												className="min-h-10 rounded-xl bg-black px-5 py-2 text-sm font-bold text-white hover:bg-gray-800 transition-all duration-200"
+												className="min-h-10 rounded-xl bg-slate-900 px-5 py-2 text-xs font-extrabold text-white hover:bg-slate-800 active:scale-95 transition-all duration-200 shadow-sm"
 											>
 												Download Update
 											</button>
 											<button
 												type="button"
 												onClick={() => setUpdaterState("idle")}
-												className="min-h-10 rounded-xl bg-white border px-5 py-2 text-sm font-semibold text-black hover:bg-gray-50 transition-all duration-200"
+												className="min-h-10 rounded-xl bg-white border border-slate-200 px-5 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 transition-all duration-200"
 											>
 												Later
 											</button>
@@ -1849,13 +1854,13 @@ export default function SettingsPage() {
 
 								{updaterState === "downloading" && (
 									<div>
-										<div className="flex justify-between text-sm text-gray-700 font-medium mb-1.5">
+										<div className="flex justify-between text-xs text-slate-700 font-bold mb-1.5">
 											<span>Downloading latest version...</span>
 											<span>{downloadPercent}%</span>
 										</div>
-										<div className="w-full bg-slate-100 rounded-full h-2.5 overflow-hidden">
+										<div className="w-full bg-slate-100 rounded-full h-3 overflow-hidden border border-slate-200 p-0.5">
 											<div
-												className="bg-[#FFDA03] h-2.5 rounded-full transition-all duration-300"
+												className="bg-gradient-to-r from-amber-400 to-amber-600 h-full rounded-full transition-all duration-300 shadow-sm"
 												style={{ width: `${downloadPercent}%` }}
 											></div>
 										</div>
@@ -1864,14 +1869,14 @@ export default function SettingsPage() {
 
 								{updaterState === "downloaded" && (
 									<div>
-										<div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800 mb-3">
-											<div className="font-semibold mb-1">Download Complete!</div>
-											The update has been downloaded. Restart the application to install and run the new version.
+										<div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800 mb-3 font-medium">
+											<div className="font-bold mb-1">Download Complete!</div>
+											The update has been downloaded. Click below to restart and automatically apply the new version.
 										</div>
 										<button
 											type="button"
 											onClick={handleInstallUpdate}
-											className="min-h-10 rounded-xl bg-black px-6 py-2.5 text-sm font-bold text-white hover:bg-gray-800 transition-all duration-200 shadow-md"
+											className="min-h-10 rounded-xl bg-emerald-600 px-6 py-2.5 text-xs font-extrabold text-white hover:bg-emerald-700 active:scale-95 transition-all duration-200 shadow-md"
 										>
 											Restart and Install
 										</button>
@@ -1880,14 +1885,14 @@ export default function SettingsPage() {
 
 								{updaterState === "error" && (
 									<div>
-										<div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 mb-3">
-											<div className="font-semibold mb-1">Update Failed</div>
+										<div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 mb-3 font-medium">
+											<div className="font-bold mb-1">Update Failed</div>
 											{updaterError || "An error occurred during update process."}
 										</div>
 										<button
 											type="button"
 											onClick={handleCheckForUpdates}
-											className="min-h-10 rounded-xl bg-[#FFDA03] px-5 py-2 text-sm font-bold text-black hover:brightness-95 transition-all duration-200"
+											className="min-h-10 rounded-xl bg-[#FFDA03] px-5 py-2 text-xs font-extrabold text-black hover:brightness-95 transition-all duration-200"
 										>
 											Try Again
 										</button>
@@ -1897,28 +1902,30 @@ export default function SettingsPage() {
 						</div>
 					) : null}
 
-					<div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
-						<div className="glass-panel animate-scale-in rounded-2xl border-none p-4">
-							<div className="font-semibold mb-2 text-black">Gmail Sender</div>
-							<div className="text-xs text-gray-500 mb-4">
-								Used to send notification emails. The desktop app sends them with Gmail App Password auth while the app is open.
+					<div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+						{/* Gmail Sender */}
+						<div className="rounded-3xl border border-slate-200/80 bg-white/90 p-6 shadow-sm backdrop-blur-md transition-all duration-200 hover:shadow-md">
+							<div className="font-extrabold mb-1 text-slate-900 text-base">Gmail Sender & Email Template</div>
+							<div className="text-xs font-medium text-slate-500 mb-4">
+								Used to send notification emails. The desktop app sends them with Gmail App Password auth while active.
 							</div>
 
 							{isDesktop ? (
-								<div className="rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700 mb-3">
-									<div className="flex flex-wrap items-center gap-2">
-										<span className="font-semibold">Sender priority:</span>
-										<span className="font-mono">GMAIL_USER</span>
-										<span className="text-gray-500">(env)</span>
-										<span className="text-gray-500">→</span>
-										<span>this saved Gmail User</span>
-										<span className="text-gray-500">(Settings)</span>
-										<span className="text-gray-500">•</span>
-										<span>Env app password: {envHasGmailPass ? "yes" : envHasGmailPass === false ? "no" : "unknown"}</span>
-										<span className="text-gray-500">•</span>
-										<span>Stored app password in DB: {dbHasStoredPassword ? "yes" : "no"}</span>
+								<div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-3.5 text-xs text-slate-700 mb-4 space-y-2">
+									<div className="flex flex-wrap items-center gap-1.5 leading-relaxed">
+										<span className="font-bold">Sender Priority:</span>
+										<span className="font-mono text-slate-900 bg-white px-1.5 py-0.5 rounded border">GMAIL_USER</span>
+										<span className="text-slate-400">(env)</span>
+										<span className="text-slate-400">→</span>
+										<span className="font-semibold text-slate-800">Saved Gmail User</span>
+										<span className="text-slate-400">(Settings)</span>
 									</div>
-									<div className="mt-2 flex flex-wrap gap-2">
+									<div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500 pt-1 border-t border-slate-200/60">
+										<span>Env Pass: <strong className="text-slate-800">{envHasGmailPass ? "yes" : envHasGmailPass === false ? "no" : "unknown"}</strong></span>
+										<span>•</span>
+										<span>Stored Pass in DB: <strong className="text-slate-800">{dbHasStoredPassword ? "yes" : "no"}</strong></span>
+									</div>
+									<div className="pt-2 flex flex-wrap gap-2">
 										<button
 											onClick={async () => {
 												setError("");
@@ -1938,9 +1945,9 @@ export default function SettingsPage() {
 												}
 										}}
 										disabled={!dbHasStoredPassword}
-										className="animated-btn px-3 py-2 rounded-xl bg-white border disabled:opacity-50 text-black hover:bg-white"
+										className="animated-btn px-3 py-1.5 rounded-xl bg-white border border-slate-200 disabled:opacity-50 text-slate-700 font-bold text-xs hover:bg-slate-100 shadow-sm active:scale-95 transition-all"
 									>
-										Clear stored app password
+										Clear Stored App Password
 									</button>
 									<button
 											onClick={async () => {
@@ -1967,291 +1974,304 @@ export default function SettingsPage() {
 													setError(errorMessage(e));
 												}
 										}}
-										className="animated-btn px-3 py-2 rounded-xl bg-red-600 text-white hover:bg-red-700"
+										className="animated-btn px-3 py-1.5 rounded-xl bg-red-600 text-white font-bold text-xs hover:bg-red-700 shadow-sm active:scale-95 transition-all"
 									>
-										Remove sender
+										Remove Sender
 									</button>
 								</div>
 							</div>
 						) : null}
 
-							<label className="block text-sm mb-1 text-black">Gmail User</label>
-							<input
-								value={gmailUser}
-								onChange={(e) => setGmailUser(e.target.value)}
-								placeholder="yourcompany.notifications@gmail.com"
-								className="w-full rounded-xl border px-3 py-2 text-black"
-							/>
-
-							<div className="flex items-center gap-2 mt-3">
-								<input
-									id="isActive"
-									type="checkbox"
-									checked={isActive}
-									onChange={(e) => setIsActive(e.target.checked)}
-								/>
-								<label htmlFor="isActive" className="text-sm text-black">
-									Active
-								</label>
-							</div>
-
-							<div className="flex items-center gap-2 mt-3">
-								<input
-									id="storePass"
-									type="checkbox"
-									checked={storeAppPassword}
-									onChange={async (e) => {
-									const next = e.target.checked;
-									setStoreAppPassword(next);
-									setError("");
-									setSuccess("");
-
-									if (!next) {
-										setGmailAppPassword("");
-										setLoadedStoredPassword(false);
-										return;
-									}
-
-									// If DB already has one, auto-load it (we already received it via loadNotificationConfig).
-									if (!dbHasStoredPassword) return;
-									if (safeText(dbStoredPasswordCache)) {
-										setGmailAppPassword(dbStoredPasswordCache);
-										setLoadedStoredPassword(true);
-										return;
-									}
-
-									// Fallback for older/partial configs: try fetching via IPC if available.
-									if (!electronAPI?.settings?.getStoredGmailAppPassword) return;
-									try {
-										const res = await electronAPI.settings.getStoredGmailAppPassword();
-										setGmailAppPassword(res?.password ?? "");
-										setLoadedStoredPassword(true);
-									} catch (err: unknown) {
-										setError(errorMessage(err));
-										setStoreAppPassword(false);
-										setLoadedStoredPassword(false);
-									}
-								}}
-								/>
-								<label htmlFor="storePass" className="text-sm text-black">
-									Store Gmail App Password in database (not recommended)
-								</label>
-							</div>
-
-							{storeAppPassword ? (
-								<div className="mt-3">
-									<label className="block text-sm mb-1 text-black">Gmail App Password</label>
+							<div className="space-y-4">
+								<div>
+									<label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1.5">Gmail User</label>
 									<input
-										type={showAppPassword ? "text" : "password"}
-										value={gmailAppPassword}
-										onChange={(e) => {
-											setLoadedStoredPassword(false);
-											setGmailAppPassword(e.target.value);
-										}}
-										placeholder="xxxx xxxx xxxx xxxx"
-										className="w-full rounded-xl border px-3 py-2 text-black"
+										value={gmailUser}
+										onChange={(e) => setGmailUser(e.target.value)}
+										placeholder="yourcompany.notifications@gmail.com"
+										className="w-full rounded-xl border border-slate-200 px-3.5 py-2 text-sm text-slate-900 font-medium placeholder:text-slate-400 focus:border-[#8B1C1C] focus:outline-none focus:ring-4 focus:ring-[#8B1C1C]/10 transition-all"
 									/>
-									<label className="mt-2 inline-flex items-center gap-2 text-xs text-gray-700">
-										<input
-											type="checkbox"
-											checked={showAppPassword}
-											onChange={(e) => setShowAppPassword(e.target.checked)}
-										/>
-										Show app password
+								</div>
+
+								<div className="flex items-center gap-2.5">
+									<input
+										id="isActive"
+										type="checkbox"
+										checked={isActive}
+										onChange={(e) => setIsActive(e.target.checked)}
+										className="h-4 w-4 rounded border-slate-300 text-[#8B1C1C] focus:ring-[#8B1C1C]"
+									/>
+									<label htmlFor="isActive" className="text-sm font-bold text-slate-800 select-none">
+										Active Gmail Sender
 									</label>
-									<div className="text-xs text-gray-500 mt-1">
-										If a stored password exists, it will auto-fill when you enable the checkbox.
+								</div>
+
+								<div className="flex items-center gap-2.5">
+									<input
+										id="storePass"
+										type="checkbox"
+										checked={storeAppPassword}
+										onChange={async (e) => {
+										const next = e.target.checked;
+										setStoreAppPassword(next);
+										setError("");
+										setSuccess("");
+
+										if (!next) {
+											setGmailAppPassword("");
+											setLoadedStoredPassword(false);
+											return;
+										}
+
+										if (!dbHasStoredPassword) return;
+										if (safeText(dbStoredPasswordCache)) {
+											setGmailAppPassword(dbStoredPasswordCache);
+											setLoadedStoredPassword(true);
+											return;
+										}
+
+										if (!electronAPI?.settings?.getStoredGmailAppPassword) return;
+										try {
+											const res = await electronAPI.settings.getStoredGmailAppPassword();
+											setGmailAppPassword(res?.password ?? "");
+											setLoadedStoredPassword(true);
+										} catch (err: unknown) {
+											setError(errorMessage(err));
+											setStoreAppPassword(false);
+											setLoadedStoredPassword(false);
+										}
+									}}
+									className="h-4 w-4 rounded border-slate-300 text-[#8B1C1C] focus:ring-[#8B1C1C]"
+									/>
+									<label htmlFor="storePass" className="text-sm font-semibold text-slate-700 select-none">
+										Store Gmail App Password in database
+									</label>
+								</div>
+
+								{storeAppPassword ? (
+									<div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
+										<label className="block text-xs font-bold uppercase tracking-wider text-slate-700">Gmail App Password</label>
+										<input
+											type={showAppPassword ? "text" : "password"}
+											value={gmailAppPassword}
+											onChange={(e) => {
+												setLoadedStoredPassword(false);
+												setGmailAppPassword(e.target.value);
+											}}
+											placeholder="xxxx xxxx xxxx xxxx"
+											className="w-full rounded-xl border border-slate-200 px-3.5 py-2 text-sm text-slate-900 font-mono"
+										/>
+										<label className="inline-flex items-center gap-2 text-xs text-slate-700 font-medium">
+											<input
+												type="checkbox"
+												checked={showAppPassword}
+												onChange={(e) => setShowAppPassword(e.target.checked)}
+											/>
+											Show app password
+										</label>
+									</div>
+								) : null}
+
+								<div>
+									<label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1.5">Email Subject</label>
+									<input
+										value={emailSubject}
+										onChange={(e) => setEmailSubject(e.target.value)}
+										placeholder="NOTICE: LICENSE EXPIRATION ALERT ({count})"
+										className="w-full rounded-xl border border-slate-200 px-3.5 py-2 text-sm text-slate-900 font-medium placeholder:text-slate-400 focus:border-[#8B1C1C] focus:outline-none focus:ring-4 focus:ring-[#8B1C1C]/10 transition-all"
+									/>
+									<div className="text-[11px] text-slate-400 font-medium mt-1">
+										Tip: use <span className="font-mono font-bold text-slate-700">{'{count}'}</span> to insert number of expiring items.
 									</div>
 								</div>
-							) : null}
 
-							<label className="block text-sm mt-4 mb-1 text-black">Email Subject</label>
-							<input
-								value={emailSubject}
-								onChange={(e) => setEmailSubject(e.target.value)}
-								placeholder="NOTICE: LICENSE EXPIRATION ALERT ({count})"
-								className="w-full rounded-xl border px-3 py-2 text-black"
-							/>
-							<div className="text-xs text-gray-500 mt-1">
-								Tip: use <span className="font-mono">{'{count}'}</span> to insert number of expiring items.
-							</div>
-
-							<label className="block text-sm mt-4 mb-1 text-black">Email Body</label>
-							<RichTextEditor value={emailBodyHtml} onChange={setEmailBodyHtml} />
-							<div className="text-xs text-gray-500 mt-1">
-								This content appears above the expiring licenses table.
+								<div>
+									<label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1.5">Email Body</label>
+									<RichTextEditor value={emailBodyHtml} onChange={setEmailBodyHtml} />
+									<div className="text-[11px] text-slate-400 font-medium mt-1">
+										This content appears above the expiring licenses table in sent emails.
+									</div>
+								</div>
 							</div>
 						</div>
 
-						<div className="glass-panel animate-scale-in rounded-2xl border-none p-4">
-							<div className="font-semibold mb-2 text-black">Expiring Licensure Preferences</div>
+						{/* Expiring Licensure Preferences */}
+						<div className="rounded-3xl border border-slate-200/80 bg-white/90 p-6 shadow-sm backdrop-blur-md transition-all duration-200 hover:shadow-md space-y-4">
+							<div className="font-extrabold text-slate-900 text-base pb-3 border-b border-slate-100">Expiring Licensure Preferences</div>
 
-							<div className="flex items-center gap-2 text-black">
+							<div className="flex items-center gap-2.5">
 								<input
 									id="enabled"
 									type="checkbox"
 									checked={enabled}
 									onChange={(e) => setEnabled(e.target.checked)}
+									className="h-4 w-4 rounded border-slate-300 text-[#8B1C1C] focus:ring-[#8B1C1C]"
 								/>
-								<label htmlFor="enabled" className="text-sm text-black">
-									Enable notifications
+								<label htmlFor="enabled" className="text-sm font-extrabold text-slate-900 select-none">
+									Enable Automatic Notification Engine
 								</label>
 							</div>
 
-							<div className="mt-3 rounded-xl border p-3">
+							<div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4">
 								<div className="flex items-center justify-between gap-3">
 									<div>
-										<div className="text-sm font-semibold text-black">Send Gmail to employees</div>
-										<div className="text-xs text-gray-500">Controls sending to employee email addresses (applicants.client_email) and the Expiring Licenses “Resend” button.</div>
+										<div className="text-sm font-bold text-slate-900">Send Gmail to Employees</div>
+										<div className="text-xs font-medium text-slate-500 mt-0.5">Controls sending to employee emails (<span className="font-mono">applicants.client_email</span>).</div>
 									</div>
 									<button
 										type="button"
 										onClick={() => setSendToEmployees((v) => !v)}
-										className={`relative inline-flex h-7 w-12 items-center rounded-full border ${sendToEmployees ? "bg-black" : "bg-gray-200"}`}
+										className={`relative inline-flex h-7 w-12 items-center rounded-full border transition-colors ${sendToEmployees ? "bg-slate-900 border-slate-900" : "bg-slate-300 border-slate-300"}`}
 										aria-label="Toggle send Gmail to employees"
 										aria-pressed={sendToEmployees}
 									>
 										<span
-											className={`inline-block h-5 w-5 transform rounded-full bg-white transition ${sendToEmployees ? "translate-x-6" : "translate-x-1"}`}
+											className={`inline-block h-5 w-5 transform rounded-full bg-white transition-transform shadow-sm ${sendToEmployees ? "translate-x-6" : "translate-x-1"}`}
 										/>
 									</button>
 								</div>
 
 								{!sendToEmployees ? (
-									<div className="text-xs text-gray-600 mt-2">
+									<div className="text-xs text-amber-800 font-medium mt-2 pt-2 border-t border-slate-200/80">
 										Employee sending is disabled. Notification Recipients will still receive the expiring list.
 									</div>
 								) : null}
 							</div>
 
-							<label className="block text-sm mt-3 mb-1 text-black">Days before expiry</label>
-							<input
-								type="text"
-								inputMode="numeric"
-								pattern="[0-9]*"
-								value={daysBeforeInput}
-								onChange={(e) => {
-									const next = e.target.value;
-									if (next === "" || /^\d+$/.test(next)) setDaysBeforeInput(next);
-								}}
-								onBlur={() => {
-									const trimmed = daysBeforeInput.trim();
-									if (!trimmed) {
-										setDaysBeforeInput("30");
-										return;
-									}
-									const n = Number(trimmed);
-									if (!Number.isFinite(n)) {
-										setDaysBeforeInput("30");
-										return;
-									}
-									const clamped = Math.min(365, Math.max(1, Math.trunc(n)));
-									setDaysBeforeInput(String(clamped));
-								}}
-								placeholder="30"
-								className="w-full rounded-xl border px-3 py-2 text-black"
-							/>
-
-							<div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
-								<label className="flex items-center gap-2 text-sm text-black">
-									<input
-										type="checkbox"
-										checked={includeDriver}
-										onChange={(e) => setIncludeDriver(e.target.checked)}
-									/>
-									Driver License
-								</label>
-								<label className="flex items-center gap-2 text-sm text-black">
-									<input
-										type="checkbox"
-										checked={includeSecurity}
-										onChange={(e) => setIncludeSecurity(e.target.checked)}
-									/>
-									Security License
-								</label>
-								<label className="flex items-center gap-2 text-sm text-black">
-									<input
-										type="checkbox"
-										checked={includeInsurance}
-										onChange={(e) => setIncludeInsurance(e.target.checked)}
-									/>
-									Insurance
-								</label>
-							</div>
-
-							<label className="flex items-center gap-2 text-sm text-black mt-3">
+							<div>
+								<label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1.5">Default Days Before Expiry</label>
 								<input
-									type="checkbox"
-									checked={useScheduledSend}
-									onChange={(e) => setUseScheduledSend(e.target.checked)}
+									type="text"
+									inputMode="numeric"
+									pattern="[0-9]*"
+									value={daysBeforeInput}
+									onChange={(e) => {
+										const next = e.target.value;
+										if (next === "" || /^\d+$/.test(next)) setDaysBeforeInput(next);
+									}}
+									onBlur={() => {
+										const trimmed = daysBeforeInput.trim();
+										if (!trimmed) {
+											setDaysBeforeInput("30");
+											return;
+										}
+										const n = Number(trimmed);
+										if (!Number.isFinite(n)) {
+											setDaysBeforeInput("30");
+											return;
+										}
+										const clamped = Math.min(365, Math.max(1, Math.trunc(n)));
+										setDaysBeforeInput(String(clamped));
+									}}
+									placeholder="30"
+									className="w-full rounded-xl border border-slate-200 px-3.5 py-2 text-sm text-slate-900 font-medium placeholder:text-slate-400 focus:border-[#8B1C1C] focus:outline-none focus:ring-4 focus:ring-[#8B1C1C]/10 transition-all"
 								/>
-								Use scheduled send time and timezone
-							</label>
-							<div className="text-xs text-gray-500 mt-1">
-								When disabled, reminders send instantly once due (no local send-time wait).
 							</div>
 
-							<label className="block text-sm mt-3 mb-1 text-black">Send time (local)</label>
-							<input
-								type="time"
-								value={sendTimeLocal}
-								onChange={(e) => setSendTimeLocal(e.target.value)}
-								disabled={!useScheduledSend}
-								className={`w-full rounded-xl border px-3 py-2 text-black ${!useScheduledSend ? "bg-white text-gray-500" : ""}`}
-							/>
-
-							<label className="block text-sm mt-3 mb-1 text-black">Timezone</label>
-							<input
-								value={timezone}
-								onChange={(e) => setTimezone(e.target.value)}
-								placeholder="Asia/Manila"
-								disabled={!useScheduledSend}
-								className={`w-full rounded-xl border px-3 py-2 text-black ${!useScheduledSend ? "bg-white text-gray-500" : ""}`}
-							/>
-
-							<div className="mt-4 rounded-xl border p-3">
-								<div className="font-semibold text-black text-sm mb-2">Expired licenses</div>
-								<div className="text-xs text-gray-500 mb-2">
-									If enabled, reminders will also include licenses that already expired (within the chosen window).
+							<div>
+								<label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-2">Include License Types</label>
+								<div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+									<label className="flex items-center gap-2 text-xs font-bold text-slate-800 bg-slate-50 p-2.5 rounded-xl border border-slate-200 select-none">
+										<input
+											type="checkbox"
+											checked={includeDriver}
+											onChange={(e) => setIncludeDriver(e.target.checked)}
+											className="h-4 w-4 rounded border-slate-300 text-[#8B1C1C]"
+										/>
+										Driver License
+									</label>
+									<label className="flex items-center gap-2 text-xs font-bold text-slate-800 bg-slate-50 p-2.5 rounded-xl border border-slate-200 select-none">
+										<input
+											type="checkbox"
+											checked={includeSecurity}
+											onChange={(e) => setIncludeSecurity(e.target.checked)}
+											className="h-4 w-4 rounded border-slate-300 text-[#8B1C1C]"
+										/>
+										Security License
+									</label>
+									<label className="flex items-center gap-2 text-xs font-bold text-slate-800 bg-slate-50 p-2.5 rounded-xl border border-slate-200 select-none">
+										<input
+											type="checkbox"
+											checked={includeInsurance}
+											onChange={(e) => setIncludeInsurance(e.target.checked)}
+											className="h-4 w-4 rounded border-slate-300 text-[#8B1C1C]"
+										/>
+										Insurance
+									</label>
 								</div>
+							</div>
+
+							<div className="space-y-3 pt-2 border-t border-slate-100">
+								<label className="flex items-center gap-2 text-sm font-bold text-slate-800 select-none">
+									<input
+										type="checkbox"
+										checked={useScheduledSend}
+										onChange={(e) => setUseScheduledSend(e.target.checked)}
+										className="h-4 w-4 rounded border-slate-300 text-[#8B1C1C]"
+									/>
+									Use Scheduled Send Time & Timezone
+								</label>
+
+								<div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+									<div>
+										<label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1">Send Time (Local)</label>
+										<input
+											type="time"
+											value={sendTimeLocal}
+											onChange={(e) => setSendTimeLocal(e.target.value)}
+											disabled={!useScheduledSend}
+											className={`w-full rounded-xl border border-slate-200 px-3.5 py-2 text-sm text-slate-900 font-medium ${!useScheduledSend ? "bg-slate-100 text-slate-400" : ""}`}
+										/>
+									</div>
+									<div>
+										<label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1">Timezone</label>
+										<input
+											value={timezone}
+											onChange={(e) => setTimezone(e.target.value)}
+											placeholder="Asia/Manila"
+											disabled={!useScheduledSend}
+											className={`w-full rounded-xl border border-slate-200 px-3.5 py-2 text-sm text-slate-900 font-medium ${!useScheduledSend ? "bg-slate-100 text-slate-400" : ""}`}
+										/>
+									</div>
+								</div>
+							</div>
+
+							<div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4 space-y-2">
+								<div className="font-bold text-slate-900 text-xs uppercase tracking-wider">Already Expired Records Window</div>
 								<div className="flex flex-wrap items-center gap-3">
-									<label className="flex items-center gap-2 text-sm text-black">
+									<label className="flex items-center gap-2 text-sm font-bold text-slate-800 select-none">
 										<input
 											type="checkbox"
 											checked={includeExpired}
 											onChange={(e) => setIncludeExpired(e.target.checked)}
+											className="h-4 w-4 rounded border-slate-300 text-[#8B1C1C]"
 										/>
-										Include expired
+										Include Expired
 									</label>
 									<div className="flex items-center gap-2">
-										<span className="text-sm text-black">Expired within</span>
+										<span className="text-xs font-bold text-slate-700">Expired within</span>
 										<input
 											type="number"
 											min={1}
 											max={365}
 											value={expiredWithinDays}
 											onChange={(e) => setExpiredWithinDays(Number(e.target.value))}
-											className="w-24 rounded-xl border px-3 py-2 text-black"
+											className="w-20 rounded-xl border border-slate-200 px-3 py-1.5 text-sm text-slate-900 font-bold"
 										/>
-										<span className="text-sm text-black">days</span>
+										<span className="text-xs font-bold text-slate-700">days</span>
 									</div>
 								</div>
-								{!isDesktop ? (
-									<div className="text-xs text-gray-500 mt-2">
-										This setting affects Preview on the web. Actual sending runs in the desktop app.
-									</div>
-								) : null}
 							</div>
 						</div>
 					</div>
 
-					<div className="flex flex-wrap items-center gap-2">
+					<div className="flex flex-wrap items-center gap-3 pt-2">
 						<button
 							onClick={() => void saveAll()}
 							disabled={saving}
-							className="animated-btn px-4 py-2 rounded-xl bg-black text-white disabled:opacity-50 hover:bg-gray-800"
+							className="animated-btn px-6 py-3 rounded-2xl bg-slate-900 text-white font-extrabold text-sm disabled:opacity-50 hover:bg-slate-800 shadow-md active:scale-95 transition-all"
 						>
-							{saving ? "Saving…" : "Save"}
+							{saving ? "Saving Preferences…" : "Save All Settings"}
 						</button>
 						<button
 							onClick={async () => {
@@ -2273,7 +2293,6 @@ export default function SettingsPage() {
 										: "";
 									setRunSummary(summary);
 									setSuccess(r?.message || "Resend all finished.");
-									// refresh logs after running
 									void (async () => {
 										try {
 											if (electronAPI?.notifications?.getLog) {
@@ -2292,20 +2311,23 @@ export default function SettingsPage() {
 								}
 							}}
 							disabled={runSending}
-							className="animated-btn px-4 py-2 rounded-xl bg-[#8B1C1C] text-white disabled:opacity-50 hover:bg-red-800"
+							className="animated-btn px-6 py-3 rounded-2xl bg-[#8B1C1C] text-white font-extrabold text-sm disabled:opacity-50 hover:bg-red-800 shadow-md active:scale-95 transition-all"
 						>
-							{runSending ? "Resending…" : "Resend all records"}
+							{runSending ? "Resending…" : "Resend All Records Now"}
 						</button>
-						{runSummary ? <div className="text-xs text-gray-600">Last run: {runSummary}</div> : null}
+						{runSummary ? <div className="text-xs font-bold text-slate-600 bg-slate-100 px-3 py-1.5 rounded-xl border">Last run: {runSummary}</div> : null}
 					</div>
 
-					<div className="grid grid-cols-1 gap-4">
-						<div className="glass-panel animate-scale-in rounded-2xl border-none p-4 space-y-3">
-							<div className="font-semibold text-black">Notification recipients</div>
-							<div className="text-xs text-gray-500">
-								Automatic sends include all expiring-license accounts to these emails. Other-expiration records are also sent automatically to these emails, and to each record-specific recipient email when provided.
-							</div>
-							<div className="flex items-center justify-end">
+					<div className="grid grid-cols-1 gap-6">
+						{/* Notification Recipients */}
+						<div className="rounded-3xl border border-slate-200/80 bg-white/90 p-6 shadow-sm backdrop-blur-md space-y-4">
+							<div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">
+								<div>
+									<div className="font-extrabold text-slate-900 text-base">Notification Recipients</div>
+									<div className="text-xs font-medium text-slate-500 mt-0.5">
+										Automatic notifications include all expiring licenses sent to these emails.
+									</div>
+								</div>
 								<button
 									type="button"
 									onClick={() => {
@@ -2313,41 +2335,42 @@ export default function SettingsPage() {
 										setError("");
 										setSuccess("");
 									}}
-									className="animated-btn rounded-xl bg-[#FFDA03] px-3 py-2 text-black font-medium hover:brightness-95"
+									className="animated-btn rounded-xl bg-[#FFDA03] px-4 py-2 text-black font-extrabold text-xs hover:brightness-95 shadow-sm active:scale-95 transition-all"
 								>
-									Add recipient
+									+ Add Recipient
 								</button>
 							</div>
-							<div className="overflow-auto rounded-xl border">
-								<table className="w-full text-sm text-black">
+							<div className="overflow-hidden rounded-2xl border border-slate-200">
+								<table className="w-full text-sm text-slate-900">
 									<thead>
-										<tr className="border-b text-left">
-											<th className="py-2 px-3">Email</th>
-											<th className="py-2 px-3">Active</th>
-											<th className="py-2 px-3">Action</th>
+										<tr className="bg-slate-50 border-b border-slate-200 text-left text-xs font-extrabold uppercase tracking-wider text-slate-600">
+											<th className="py-3 px-4">Email</th>
+											<th className="py-3 px-4">Active</th>
+											<th className="py-3 px-4">Action</th>
 										</tr>
 									</thead>
-									<tbody>
+									<tbody className="divide-y divide-slate-100">
 										{recipientRows.length ? (
 											recipientRows.map((row) => (
-												<tr key={row.id} className="animated-row border-b border-gray-100">
-													<td className="py-2 px-3">{row.email}</td>
-													<td className="py-2 px-3">
+												<tr key={row.id} className="hover:bg-slate-50/80 transition-colors">
+													<td className="py-3 px-4 font-semibold text-slate-800">{row.email}</td>
+													<td className="py-3 px-4">
 														<input
 															type="checkbox"
 															checked={row.is_active}
 															onChange={(e) => void toggleRecipient(row.id, e.target.checked)}
+															className="h-4 w-4 rounded border-slate-300 text-[#8B1C1C]"
 														/>
 													</td>
-													<td className="py-2 px-3">
+													<td className="py-3 px-4">
 														<div className="flex items-center gap-2">
 															<button
 																onClick={() => openRecipientEditor(row)}
-																className="animated-btn rounded-lg border bg-white px-2 py-1 hover:bg-white"
+																className="animated-btn rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-bold text-slate-700 hover:bg-slate-50 shadow-sm"
 															>
 																Edit
 															</button>
-															<button onClick={() => void removeRecipient(row.id)} className="animated-btn rounded-lg border bg-white px-2 py-1 hover:bg-white">
+															<button onClick={() => void removeRecipient(row.id)} className="animated-btn rounded-lg border border-red-200 bg-red-50 px-2.5 py-1 text-xs font-bold text-red-700 hover:bg-red-100 shadow-sm">
 																Remove
 															</button>
 														</div>
@@ -2356,7 +2379,7 @@ export default function SettingsPage() {
 											))
 										) : (
 											<tr>
-												<td colSpan={3} className="py-3 px-3 text-gray-500">No recipient emails configured.</td>
+												<td colSpan={3} className="py-4 px-4 text-center text-xs font-medium text-slate-400">No recipient emails configured yet.</td>
 											</tr>
 										)}
 									</tbody>
@@ -2364,10 +2387,13 @@ export default function SettingsPage() {
 							</div>
 						</div>
 
-						<div className="glass-panel animate-scale-in rounded-2xl border-none p-4 space-y-3">
-							<div className="font-semibold text-black">Other expiration records</div>
-							<div className="text-xs text-gray-500">Manage additional expiration items with custom type names and per-item lead days.</div>
-							<div className="flex items-center justify-end">
+						{/* Other Expiration Records */}
+						<div className="rounded-3xl border border-slate-200/80 bg-white/90 p-6 shadow-sm backdrop-blur-md space-y-4">
+							<div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">
+								<div>
+									<div className="font-extrabold text-slate-900 text-base">Other Expiration Records</div>
+									<div className="text-xs font-medium text-slate-500 mt-0.5">Manage additional custom expiration items with lead reminder days.</div>
+								</div>
 								<button
 									type="button"
 									onClick={() => {
@@ -2375,47 +2401,48 @@ export default function SettingsPage() {
 										setError("");
 										setSuccess("");
 									}}
-									className="animated-btn rounded-xl bg-[#FFDA03] px-3 py-2 text-black font-medium hover:brightness-95"
+									className="animated-btn rounded-xl bg-[#FFDA03] px-4 py-2 text-black font-extrabold text-xs hover:brightness-95 shadow-sm active:scale-95 transition-all"
 								>
-									Add item
+									+ Add Expiration Item
 								</button>
 							</div>
-							<div className="overflow-auto rounded-xl border">
-								<table className="w-full text-sm text-black">
+							<div className="overflow-hidden rounded-2xl border border-slate-200">
+								<table className="w-full text-sm text-slate-900">
 									<thead>
-										<tr className="border-b text-left">
-											<th className="py-2 px-3">Item</th>
-											<th className="py-2 px-3">Type</th>
-											<th className="py-2 px-3">Days Before</th>
-											<th className="py-2 px-3">Expires</th>
-											<th className="py-2 px-3">Active</th>
-											<th className="py-2 px-3">Action</th>
+										<tr className="bg-slate-50 border-b border-slate-200 text-left text-xs font-extrabold uppercase tracking-wider text-slate-600">
+											<th className="py-3 px-4">Item</th>
+											<th className="py-3 px-4">Type</th>
+											<th className="py-3 px-4">Days Before</th>
+											<th className="py-3 px-4">Expires</th>
+											<th className="py-3 px-4">Active</th>
+											<th className="py-3 px-4">Action</th>
 										</tr>
 									</thead>
-									<tbody>
+									<tbody className="divide-y divide-slate-100">
 										{otherRows.length ? (
 											otherRows.map((row) => (
-												<tr key={row.id} className="animated-row border-b border-gray-100">
-													<td className="py-2 px-3">{row.item_name}</td>
-													<td className="py-2 px-3">{row.expiration_type}</td>
-													<td className="py-2 px-3">{row.days_before_expiry ?? daysBeforeInput}</td>
-													<td className="py-2 px-3">{row.expires_on}</td>
-													<td className="py-2 px-3">
+												<tr key={row.id} className="hover:bg-slate-50/80 transition-colors">
+													<td className="py-3 px-4 font-bold text-slate-900">{row.item_name}</td>
+													<td className="py-3 px-4 font-semibold text-slate-700">{row.expiration_type}</td>
+													<td className="py-3 px-4 font-semibold text-slate-700">{row.days_before_expiry ?? daysBeforeInput}</td>
+													<td className="py-3 px-4 font-mono text-xs font-bold text-slate-800">{row.expires_on}</td>
+													<td className="py-3 px-4">
 														<input
 															type="checkbox"
 															checked={row.is_active}
 															onChange={(e) => void toggleOtherExpiration(row.id, e.target.checked)}
+															className="h-4 w-4 rounded border-slate-300 text-[#8B1C1C]"
 														/>
 													</td>
-													<td className="py-2 px-3">
+													<td className="py-3 px-4">
 														<div className="flex items-center gap-2">
 															<button
 																onClick={() => openOtherEditor(row)}
-																className="animated-btn rounded-lg border bg-white px-2 py-1 hover:bg-white"
+																className="animated-btn rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-bold text-slate-700 hover:bg-slate-50 shadow-sm"
 															>
 																Edit
 															</button>
-															<button onClick={() => void removeOtherExpiration(row.id)} className="animated-btn rounded-lg border bg-white px-2 py-1 hover:bg-white">
+															<button onClick={() => void removeOtherExpiration(row.id)} className="animated-btn rounded-lg border border-red-200 bg-red-50 px-2.5 py-1 text-xs font-bold text-red-700 hover:bg-red-100 shadow-sm">
 																Remove
 															</button>
 														</div>
@@ -2424,7 +2451,7 @@ export default function SettingsPage() {
 											))
 										) : (
 											<tr>
-												<td colSpan={6} className="py-3 px-3 text-gray-500">No additional expiration items yet.</td>
+												<td colSpan={6} className="py-4 px-4 text-center text-xs font-medium text-slate-400">No additional expiration items yet.</td>
 											</tr>
 										)}
 									</tbody>
@@ -2432,12 +2459,13 @@ export default function SettingsPage() {
 							</div>
 						</div>
 
-						<div className="glass-panel animate-scale-in rounded-2xl border-none p-4">
-							<div className="flex flex-wrap items-start justify-between gap-3">
+						{/* Sent Gmail Log */}
+						<div className="rounded-3xl border border-slate-200/80 bg-white/90 p-6 shadow-sm backdrop-blur-md space-y-4">
+							<div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-100 pb-3">
 								<div>
-									<div className="font-semibold mb-2 text-black">Sent Gmail log</div>
-									<div className="text-xs text-gray-500">
-										Shows recent emails sent for expiring licenses and other expiration records.
+									<div className="font-extrabold text-slate-900 text-base">Sent Gmail Log</div>
+									<div className="text-xs font-medium text-slate-500 mt-0.5">
+										Shows recent emails sent for expiring licenses and custom expiration records.
 									</div>
 								</div>
 								<div className="flex flex-wrap items-center gap-2">
@@ -2445,7 +2473,7 @@ export default function SettingsPage() {
 										value={logRetentionDays}
 										onChange={(e) => setLogRetentionDays(String(normalizeLogRetentionDays(e.target.value)))}
 										disabled={!isDesktop || logRetentionSaving || logClearing}
-										className="rounded-xl border px-3 py-2 text-sm text-black bg-white disabled:opacity-50"
+										className="rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-800 bg-white focus:outline-none"
 									>
 										{LOG_RETENTION_OPTIONS.map((option) => (
 											<option key={option.value} value={option.value} className="text-black">
@@ -2457,51 +2485,55 @@ export default function SettingsPage() {
 										type="button"
 										onClick={() => void saveNotificationLogRetention()}
 										disabled={!isDesktop || logRetentionSaving || logClearing}
-										className="animated-btn px-3 py-2 rounded-xl bg-white border disabled:opacity-50 text-black hover:bg-white"
+										className="animated-btn px-3 py-1.5 rounded-xl bg-white border border-slate-200 text-slate-700 font-bold text-xs hover:bg-slate-50 shadow-sm"
 									>
-										{logRetentionSaving ? "Saving..." : "Save retention"}
+										{logRetentionSaving ? "Saving..." : "Save Retention"}
 									</button>
 									<button
 										type="button"
 										onClick={() => void clearNotificationLog()}
 										disabled={!isDesktop || logsLoading || logRetentionSaving || logClearing}
-										className="animated-btn px-3 py-2 rounded-xl bg-white border disabled:opacity-50 text-black hover:bg-white"
+										className="animated-btn px-3 py-1.5 rounded-xl bg-white border border-slate-200 text-slate-700 font-bold text-xs hover:bg-slate-50 shadow-sm"
 									>
-										{logClearing ? "Clearing..." : "Clear log"}
+										{logClearing ? "Clearing..." : "Clear Log"}
 									</button>
 									<button
 										type="button"
 										onClick={() => void refreshLogs()}
 										disabled={!isDesktop || logsLoading || logRetentionSaving || logClearing}
-										className="animated-btn px-3 py-2 rounded-xl bg-white border disabled:opacity-50 text-black hover:bg-white"
+										className="animated-btn px-3 py-1.5 rounded-xl bg-slate-900 text-white font-bold text-xs hover:bg-slate-800 shadow-sm"
 									>
-										{logsLoading ? "Loading..." : "Refresh log"}
+										{logsLoading ? "Loading..." : "Refresh Log"}
 									</button>
 								</div>
 							</div>
-							<div className="mt-3 text-xs text-gray-500">
-								Current automatic clear schedule: {labelForLogRetentionDays(logRetentionDays)}.
+							<div className="text-xs font-semibold text-slate-500">
+								Current automatic clear schedule: <span className="font-extrabold text-slate-800">{labelForLogRetentionDays(logRetentionDays)}</span>.
 							</div>
-							<div className="mt-3 max-h-[420px] overflow-auto rounded-xl border">
+							<div className="max-h-[420px] overflow-auto rounded-2xl border border-slate-200">
 								{logs.length === 0 ? (
-									<div className="px-3 py-4 text-sm text-gray-600">No log entries loaded yet.</div>
+									<div className="px-4 py-6 text-center text-xs font-medium text-slate-400">No log entries loaded yet.</div>
 								) : (
-									<table className="w-full text-sm text-black">
-										<thead className="sticky top-0 bg-white">
-											<tr className="text-left border-b">
-												<th className="py-2 pr-3 text-black">When</th>
-												<th className="py-2 pr-3 text-black">Status</th>
-												<th className="py-2 pr-3 text-black">Type</th>
-												<th className="py-2 pr-3 text-black">To</th>
+									<table className="w-full text-sm text-slate-900">
+										<thead className="sticky top-0 bg-slate-50 border-b border-slate-200 text-xs font-extrabold uppercase tracking-wider text-slate-600">
+											<tr className="text-left">
+												<th className="py-2.5 px-4">When</th>
+												<th className="py-2.5 px-4">Status</th>
+												<th className="py-2.5 px-4">Type</th>
+												<th className="py-2.5 px-4">To</th>
 											</tr>
 										</thead>
-										<tbody>
+										<tbody className="divide-y divide-slate-100">
 											{logs.map((r) => (
-												<tr key={r.id} className="animated-row border-b border-gray-100">
-													<td className="py-2 pr-3 whitespace-nowrap text-black">{String(r.created_at).slice(0, 19)}</td>
-													<td className="py-2 pr-3 whitespace-nowrap text-black">{r.status}</td>
-													<td className="py-2 pr-3 whitespace-nowrap text-black">{r.license_type}</td>
-													<td className="py-2 pr-3 whitespace-nowrap text-black">{r.recipient_email ?? ""}</td>
+												<tr key={r.id} className="hover:bg-slate-50/80 transition-colors">
+													<td className="py-2.5 px-4 whitespace-nowrap font-mono text-xs font-semibold text-slate-700">{String(r.created_at).slice(0, 19)}</td>
+													<td className="py-2.5 px-4 whitespace-nowrap">
+														<span className={`px-2 py-0.5 rounded text-[11px] font-extrabold ${r.status === "SENT" ? "bg-emerald-100 text-emerald-800" : r.status === "FAILED" ? "bg-red-100 text-red-800" : "bg-slate-100 text-slate-800"}`}>
+															{r.status}
+														</span>
+													</td>
+													<td className="py-2.5 px-4 whitespace-nowrap font-bold text-slate-800">{r.license_type}</td>
+													<td className="py-2.5 px-4 whitespace-nowrap font-semibold text-slate-700">{r.recipient_email ?? ""}</td>
 												</tr>
 											))}
 										</tbody>
@@ -2510,47 +2542,54 @@ export default function SettingsPage() {
 							</div>
 						</div>
 
+						{/* Modal Portal: Add Recipient */}
 						{addRecipientOpen && canUsePortal
 							? createPortal(
 									<div className={centeredModalOverlayClass} onClick={() => setAddRecipientOpen(false)}>
 										<div className={`${floatingModalCardClass} max-w-lg`} onClick={(e) => e.stopPropagation()}>
-									<div className="flex items-center justify-between gap-3 mb-4">
+									<div className="flex items-center justify-between gap-3 mb-4 pb-3 border-b border-slate-100">
 										<div>
-											<div className="text-lg font-semibold text-black">Add recipient</div>
-											<div className="text-sm text-gray-500">Receives all expiring-license and other-expiration notifications.</div>
+											<div className="text-lg font-extrabold text-slate-900">Add Recipient Email</div>
+											<div className="text-xs font-medium text-slate-500">Receives all expiring-license and custom expiration alerts.</div>
 										</div>
-										<button type="button" className="animated-btn px-3 py-2 rounded-xl border bg-white text-sm hover:bg-white" onClick={() => setAddRecipientOpen(false)}>
+										<button type="button" className="animated-btn px-3 py-1.5 rounded-xl border border-slate-200 text-slate-700 font-bold text-xs hover:bg-slate-50" onClick={() => setAddRecipientOpen(false)}>
 											Cancel
 										</button>
 									</div>
 
-									<label className="block text-sm mb-1 text-black">Email</label>
-									<input
-										value={recipientEmail}
-										onChange={(e) => setRecipientEmail(e.target.value)}
-										placeholder="notify-team@example.com"
-										className="w-full rounded-xl border px-3 py-2 text-black"
-									/>
+									<div className="space-y-3">
+										<div>
+											<label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1">Email Address</label>
+											<input
+												value={recipientEmail}
+												onChange={(e) => setRecipientEmail(e.target.value)}
+												placeholder="notify-team@example.com"
+												className="w-full rounded-xl border border-slate-200 px-3.5 py-2 text-sm text-slate-900 font-medium"
+											/>
+										</div>
 
-									<label className="block text-sm mt-3 mb-1 text-black">Notes (optional)</label>
-									<input
-										value={recipientNotes}
-										onChange={(e) => setRecipientNotes(e.target.value)}
-										placeholder="Department / purpose"
-										className="w-full rounded-xl border px-3 py-2 text-black"
-									/>
+										<div>
+											<label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1">Notes (Optional)</label>
+											<input
+												value={recipientNotes}
+												onChange={(e) => setRecipientNotes(e.target.value)}
+												placeholder="Department / purpose"
+												className="w-full rounded-xl border border-slate-200 px-3.5 py-2 text-sm text-slate-900 font-medium"
+											/>
+										</div>
+									</div>
 
-									<div className="mt-4 flex items-center justify-end gap-2">
-										<button type="button" className="animated-btn px-4 py-2 rounded-xl border bg-white text-black hover:bg-white" onClick={() => setAddRecipientOpen(false)}>
+									<div className="mt-5 flex items-center justify-end gap-2">
+										<button type="button" className="animated-btn px-4 py-2 rounded-xl border border-slate-200 text-slate-700 font-bold text-xs hover:bg-slate-50" onClick={() => setAddRecipientOpen(false)}>
 											Close
 										</button>
 										<button
 											type="button"
 											onClick={() => void addRecipient()}
 											disabled={recipientSaving}
-											className="animated-btn px-4 py-2 rounded-xl bg-black text-white disabled:opacity-50 hover:bg-gray-800"
+											className="animated-btn px-5 py-2 rounded-xl bg-slate-900 text-white font-extrabold text-xs disabled:opacity-50 hover:bg-slate-800 shadow-sm"
 										>
-											{recipientSaving ? "Adding…" : "Add"}
+											{recipientSaving ? "Adding…" : "Add Recipient"}
 										</button>
 									</div>
 										</div>
@@ -2559,56 +2598,64 @@ export default function SettingsPage() {
 								)
 							: null}
 
+						{/* Modal Portal: Edit Recipient */}
 						{editingRecipientId !== null && canUsePortal
 							? createPortal(
 									<div className={centeredModalOverlayClass} onClick={() => setEditingRecipientId(null)}>
 										<div className={`${floatingModalCardClass} max-w-lg`} onClick={(e) => e.stopPropagation()}>
-									<div className="flex items-center justify-between gap-3 mb-4">
+									<div className="flex items-center justify-between gap-3 mb-4 pb-3 border-b border-slate-100">
 										<div>
-											<div className="text-lg font-semibold text-black">Edit recipient</div>
-											<div className="text-sm text-gray-500">Update recipient email and notification note.</div>
+											<div className="text-lg font-extrabold text-slate-900">Edit Recipient</div>
+											<div className="text-xs font-medium text-slate-500">Update recipient email and notification settings.</div>
 										</div>
-										<button type="button" className="animated-btn px-3 py-2 rounded-xl border bg-white text-sm hover:bg-white" onClick={() => setEditingRecipientId(null)}>
+										<button type="button" className="animated-btn px-3 py-1.5 rounded-xl border border-slate-200 text-slate-700 font-bold text-xs hover:bg-slate-50" onClick={() => setEditingRecipientId(null)}>
 											Cancel
 										</button>
 									</div>
 
-									<label className="block text-sm mb-1 text-black">Email</label>
-									<input
-										value={editRecipientEmail}
-										onChange={(e) => setEditRecipientEmail(e.target.value)}
-										placeholder="notify-team@example.com"
-										className="w-full rounded-xl border px-3 py-2 text-black"
-									/>
+									<div className="space-y-3">
+										<div>
+											<label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1">Email Address</label>
+											<input
+												value={editRecipientEmail}
+												onChange={(e) => setEditRecipientEmail(e.target.value)}
+												placeholder="notify-team@example.com"
+												className="w-full rounded-xl border border-slate-200 px-3.5 py-2 text-sm text-slate-900 font-medium"
+											/>
+										</div>
 
-									<label className="block text-sm mt-3 mb-1 text-black">Notes (optional)</label>
-									<input
-										value={editRecipientNotes}
-										onChange={(e) => setEditRecipientNotes(e.target.value)}
-										placeholder="Department / purpose"
-										className="w-full rounded-xl border px-3 py-2 text-black"
-									/>
+										<div>
+											<label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1">Notes (Optional)</label>
+											<input
+												value={editRecipientNotes}
+												onChange={(e) => setEditRecipientNotes(e.target.value)}
+												placeholder="Department / purpose"
+												className="w-full rounded-xl border border-slate-200 px-3.5 py-2 text-sm text-slate-900 font-medium"
+											/>
+										</div>
 
-									<label className="mt-3 inline-flex items-center gap-2 text-sm text-black">
-										<input
-											type="checkbox"
-											checked={editRecipientActive}
-											onChange={(e) => setEditRecipientActive(e.target.checked)}
-										/>
-										Active
-									</label>
+										<label className="inline-flex items-center gap-2 text-sm font-bold text-slate-800 pt-1">
+											<input
+												type="checkbox"
+												checked={editRecipientActive}
+												onChange={(e) => setEditRecipientActive(e.target.checked)}
+												className="h-4 w-4 rounded border-slate-300 text-[#8B1C1C]"
+											/>
+											Active
+										</label>
+									</div>
 
-									<div className="mt-4 flex items-center justify-end gap-2">
-										<button type="button" className="animated-btn px-4 py-2 rounded-xl border bg-white text-black hover:bg-white" onClick={() => setEditingRecipientId(null)}>
+									<div className="mt-5 flex items-center justify-end gap-2">
+										<button type="button" className="animated-btn px-4 py-2 rounded-xl border border-slate-200 text-slate-700 font-bold text-xs hover:bg-slate-50" onClick={() => setEditingRecipientId(null)}>
 											Close
 										</button>
 										<button
 											type="button"
 											onClick={() => void saveRecipientEdit()}
 											disabled={recipientSaving}
-											className="animated-btn px-4 py-2 rounded-xl bg-black text-white disabled:opacity-50 hover:bg-gray-800"
+											className="animated-btn px-5 py-2 rounded-xl bg-slate-900 text-white font-extrabold text-xs disabled:opacity-50 hover:bg-slate-800 shadow-sm"
 										>
-											{recipientSaving ? "Saving..." : "Save"}
+											{recipientSaving ? "Saving..." : "Save Changes"}
 										</button>
 									</div>
 										</div>
@@ -2617,38 +2664,39 @@ export default function SettingsPage() {
 								)
 							: null}
 
+						{/* Modal Portal: Add Other Expiration */}
 						{addOtherOpen && canUsePortal
 							? createPortal(
 									<div className={centeredModalOverlayClass} onClick={() => setAddOtherOpen(false)}>
 										<div className={`${floatingModalCardClass} max-w-2xl`} onClick={(e) => e.stopPropagation()}>
-									<div className="flex items-center justify-between gap-3 mb-4">
+									<div className="flex items-center justify-between gap-3 mb-4 pb-3 border-b border-slate-100">
 										<div>
-											<div className="text-lg font-semibold text-black">Add expiration item</div>
-											<div className="text-sm text-gray-500">Tracks additional expiring records like OCR and registration.</div>
+											<div className="text-lg font-extrabold text-slate-900">Add Custom Expiration Item</div>
+											<div className="text-xs font-medium text-slate-500">Tracks additional expiring records like OCR, contracts, and registration.</div>
 										</div>
-										<button type="button" className="animated-btn px-3 py-2 rounded-xl border bg-white text-sm hover:bg-white" onClick={() => setAddOtherOpen(false)}>
+										<button type="button" className="animated-btn px-3 py-1.5 rounded-xl border border-slate-200 text-slate-700 font-bold text-xs hover:bg-slate-50" onClick={() => setAddOtherOpen(false)}>
 											Cancel
 									</button>
 									</div>
 
 									<div className="grid grid-cols-1 md:grid-cols-2 gap-3">
 										<div>
-											<label className="block text-sm mb-1 text-black">Item name</label>
-											<input value={otherItemName} onChange={(e) => setOtherItemName(e.target.value)} placeholder="Item name" className="w-full rounded-xl border px-3 py-2 text-black" />
+											<label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1">Item Name</label>
+											<input value={otherItemName} onChange={(e) => setOtherItemName(e.target.value)} placeholder="Item name" className="w-full rounded-xl border border-slate-200 px-3.5 py-2 text-sm text-slate-900 font-medium" />
 										</div>
 										<div>
-											<label className="block text-sm mb-1 text-black">Type</label>
+											<label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1">Type</label>
 											<input
 												value={otherType}
 												onChange={(e) => setOtherType(e.target.value)}
 												placeholder="Enter a custom type"
 												autoComplete="off"
 												spellCheck={false}
-												className="w-full rounded-xl border px-3 py-2 text-black"
+												className="w-full rounded-xl border border-slate-200 px-3.5 py-2 text-sm text-slate-900 font-medium"
 											/>
 										</div>
 										<div>
-											<label className="block text-sm mb-1 text-black">Days before expiry</label>
+											<label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1">Days Before Expiry</label>
 											<input
 												type="text"
 												inputMode="numeric"
@@ -2673,35 +2721,35 @@ export default function SettingsPage() {
 													setOtherDaysBeforeInput(String(clamped));
 												}}
 												placeholder="30"
-												className="w-full rounded-xl border px-3 py-2 text-black"
+												className="w-full rounded-xl border border-slate-200 px-3.5 py-2 text-sm text-slate-900 font-medium"
 											/>
 										</div>
 										<div>
-											<label className="block text-sm mb-1 text-black">Expiration date</label>
-											<input type="date" value={otherExpiresOn} onChange={(e) => setOtherExpiresOn(e.target.value)} className="w-full rounded-xl border px-3 py-2 text-black" />
+											<label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1">Expiration Date</label>
+											<input type="date" value={otherExpiresOn} onChange={(e) => setOtherExpiresOn(e.target.value)} className="w-full rounded-xl border border-slate-200 px-3.5 py-2 text-sm text-slate-900 font-medium" />
 										</div>
-										<div>
-											<label className="block text-sm mb-1 text-black">Recipient email (optional)</label>
-											<input value={otherRecipientEmail} onChange={(e) => setOtherRecipientEmail(e.target.value)} placeholder="recipient@example.com" className="w-full rounded-xl border px-3 py-2 text-black" />
+										<div className="md:col-span-2">
+											<label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1">Recipient Email (Optional)</label>
+											<input value={otherRecipientEmail} onChange={(e) => setOtherRecipientEmail(e.target.value)} placeholder="recipient@example.com" className="w-full rounded-xl border border-slate-200 px-3.5 py-2 text-sm text-slate-900 font-medium" />
 										</div>
 									</div>
 
 									<div className="mt-3">
-										<label className="block text-sm mb-1 text-black">Notes (optional)</label>
-										<input value={otherNotes} onChange={(e) => setOtherNotes(e.target.value)} placeholder="Notes" className="w-full rounded-xl border px-3 py-2 text-black" />
+										<label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1">Notes (Optional)</label>
+										<input value={otherNotes} onChange={(e) => setOtherNotes(e.target.value)} placeholder="Notes" className="w-full rounded-xl border border-slate-200 px-3.5 py-2 text-sm text-slate-900 font-medium" />
 									</div>
 
-									<div className="mt-4 flex items-center justify-end gap-2">
-										<button type="button" className="animated-btn px-4 py-2 rounded-xl border bg-white text-black hover:bg-white" onClick={() => setAddOtherOpen(false)}>
+									<div className="mt-5 flex items-center justify-end gap-2">
+										<button type="button" className="animated-btn px-4 py-2 rounded-xl border border-slate-200 text-slate-700 font-bold text-xs hover:bg-slate-50" onClick={() => setAddOtherOpen(false)}>
 											Close
 										</button>
 										<button
 											type="button"
 											onClick={() => void addOtherExpiration()}
 											disabled={otherSaving}
-											className="animated-btn px-4 py-2 rounded-xl bg-black text-white disabled:opacity-50 hover:bg-gray-800"
+											className="animated-btn px-5 py-2 rounded-xl bg-slate-900 text-white font-extrabold text-xs disabled:opacity-50 hover:bg-slate-800 shadow-sm"
 										>
-											{otherSaving ? "Adding…" : "Add"}
+											{otherSaving ? "Adding…" : "Add Expiration Item"}
 										</button>
 									</div>
 										</div>
@@ -2710,43 +2758,44 @@ export default function SettingsPage() {
 								)
 							: null}
 
+						{/* Modal Portal: Edit Other Expiration */}
 						{editingOtherId !== null && canUsePortal
 							? createPortal(
 									<div className={centeredModalOverlayClass} onClick={() => setEditingOtherId(null)}>
 										<div className={`${floatingModalCardClass} max-w-2xl`} onClick={(e) => e.stopPropagation()}>
-									<div className="flex items-center justify-between gap-3 mb-4">
+									<div className="flex items-center justify-between gap-3 mb-4 pb-3 border-b border-slate-100">
 										<div>
-											<div className="text-lg font-semibold text-black">Edit expiration item</div>
-											<div className="text-sm text-gray-500">Update item details, reminder lead days, and recipient.</div>
+											<div className="text-lg font-extrabold text-slate-900">Edit Expiration Item</div>
+											<div className="text-xs font-medium text-slate-500">Update item details, reminder lead days, and recipient.</div>
 										</div>
-										<button type="button" className="animated-btn px-3 py-2 rounded-xl border bg-white text-sm hover:bg-white" onClick={() => setEditingOtherId(null)}>
+										<button type="button" className="animated-btn px-3 py-1.5 rounded-xl border border-slate-200 text-slate-700 font-bold text-xs hover:bg-slate-50" onClick={() => setEditingOtherId(null)}>
 											Cancel
 										</button>
 									</div>
 
 									<div className="grid grid-cols-1 md:grid-cols-2 gap-3">
 										<div>
-											<label className="block text-sm mb-1 text-black">Item name</label>
+											<label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1">Item Name</label>
 											<input
 												value={editOtherItemName}
 												onChange={(e) => setEditOtherItemName(e.target.value)}
 												placeholder="Item name"
-												className="w-full rounded-xl border px-3 py-2 text-black"
+												className="w-full rounded-xl border border-slate-200 px-3.5 py-2 text-sm text-slate-900 font-medium"
 											/>
 										</div>
 										<div>
-											<label className="block text-sm mb-1 text-black">Type</label>
+											<label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1">Type</label>
 											<input
 												value={editOtherType}
 												onChange={(e) => setEditOtherType(e.target.value)}
 												placeholder="Enter a custom type"
 												autoComplete="off"
 												spellCheck={false}
-												className="w-full rounded-xl border px-3 py-2 text-black"
+												className="w-full rounded-xl border border-slate-200 px-3.5 py-2 text-sm text-slate-900 font-medium"
 											/>
 										</div>
 										<div>
-											<label className="block text-sm mb-1 text-black">Days before expiry</label>
+											<label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1">Days Before Expiry</label>
 											<input
 												type="text"
 												inputMode="numeric"
@@ -2771,59 +2820,60 @@ export default function SettingsPage() {
 													setEditOtherDaysBeforeInput(String(clamped));
 												}}
 												placeholder="30"
-												className="w-full rounded-xl border px-3 py-2 text-black"
+												className="w-full rounded-xl border border-slate-200 px-3.5 py-2 text-sm text-slate-900 font-medium"
 											/>
 										</div>
 										<div>
-											<label className="block text-sm mb-1 text-black">Expiration date</label>
+											<label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1">Expiration Date</label>
 											<input
 												type="date"
 												value={editOtherExpiresOn}
 												onChange={(e) => setEditOtherExpiresOn(e.target.value)}
-												className="w-full rounded-xl border px-3 py-2 text-black"
+												className="w-full rounded-xl border border-slate-200 px-3.5 py-2 text-sm text-slate-900 font-medium"
 											/>
 										</div>
-										<div>
-											<label className="block text-sm mb-1 text-black">Recipient email (optional)</label>
+										<div className="md:col-span-2">
+											<label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1">Recipient Email (Optional)</label>
 											<input
 												value={editOtherRecipientEmail}
 												onChange={(e) => setEditOtherRecipientEmail(e.target.value)}
 												placeholder="recipient@example.com"
-												className="w-full rounded-xl border px-3 py-2 text-black"
+												className="w-full rounded-xl border border-slate-200 px-3.5 py-2 text-sm text-slate-900 font-medium"
 											/>
 										</div>
 									</div>
 
 									<div className="mt-3">
-										<label className="block text-sm mb-1 text-black">Notes (optional)</label>
+										<label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1">Notes (Optional)</label>
 										<input
 											value={editOtherNotes}
 											onChange={(e) => setEditOtherNotes(e.target.value)}
 											placeholder="Notes"
-											className="w-full rounded-xl border px-3 py-2 text-black"
+											className="w-full rounded-xl border border-slate-200 px-3.5 py-2 text-sm text-slate-900 font-medium"
 										/>
 									</div>
 
-									<label className="mt-3 inline-flex items-center gap-2 text-sm text-black">
+									<label className="inline-flex items-center gap-2 text-sm font-bold text-slate-800 pt-2">
 										<input
 											type="checkbox"
 											checked={editOtherActive}
 											onChange={(e) => setEditOtherActive(e.target.checked)}
+											className="h-4 w-4 rounded border-slate-300 text-[#8B1C1C]"
 										/>
 										Active
 									</label>
 
-									<div className="mt-4 flex items-center justify-end gap-2">
-										<button type="button" className="animated-btn px-4 py-2 rounded-xl border bg-white text-black hover:bg-white" onClick={() => setEditingOtherId(null)}>
+									<div className="mt-5 flex items-center justify-end gap-2">
+										<button type="button" className="animated-btn px-4 py-2 rounded-xl border border-slate-200 text-slate-700 font-bold text-xs hover:bg-slate-50" onClick={() => setEditingOtherId(null)}>
 											Close
 										</button>
 										<button
 											type="button"
 											onClick={() => void saveOtherEdit()}
 											disabled={otherSaving}
-											className="animated-btn px-4 py-2 rounded-xl bg-black text-white disabled:opacity-50 hover:bg-gray-800"
+											className="animated-btn px-5 py-2 rounded-xl bg-slate-900 text-white font-extrabold text-xs disabled:opacity-50 hover:bg-slate-800 shadow-sm"
 										>
-											{otherSaving ? "Saving..." : "Save"}
+											{otherSaving ? "Saving..." : "Save Changes"}
 										</button>
 									</div>
 										</div>

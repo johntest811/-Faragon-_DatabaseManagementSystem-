@@ -20,8 +20,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.on('app:updateDownloaded', subscription);
       return () => ipcRenderer.off('app:updateDownloaded', subscription);
     },
+    onUpdateError: (callback) => {
+      const subscription = (_event, value) => callback(value);
+      ipcRenderer.on('app:updateError', subscription);
+      return () => ipcRenderer.off('app:updateError', subscription);
+    },
     checkForUpdates: () => ipcRenderer.invoke('app:checkForUpdates'),
     downloadUpdate: () => ipcRenderer.invoke('app:downloadUpdate'),
+    cancelDownload: () => ipcRenderer.invoke('app:cancelDownload'),
     installUpdate: () => ipcRenderer.invoke('app:installUpdate'),
     getVersion: () => ipcRenderer.invoke('app:getVersion'),
   },

@@ -1,7 +1,7 @@
 {
   "name": "database-management-app",
   "productName": "Faragon Database",
-  "version": "0.1.2",
+  "version": "0.1.5",
   "description": "Database management desktop app",
   "author": "JOHN",
   "private": true,
@@ -13,6 +13,8 @@
     "dist": "npm run build && cross-env NODE_ENV=production electron-builder"
   },
   "dependencies": {
+    "@capacitor/android": "^8.5.0",
+    "@capacitor/core": "^8.5.0",
     "@supabase/supabase-js": "^2.90.1",
     "dotenv": "^16.4.5",
     "electron-updater": "^6.8.9",
@@ -29,6 +31,7 @@
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
+    "@capacitor/cli": "^8.5.0",
     "@electron/rebuild": "^4.0.3",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
@@ -89,12 +92,14 @@
     ],
     "win": {
       "target": "nsis",
-      "icon": "public/Logo.png"
+      "icon": "public/Logo.png",
+      "artifactName": "Faragon.Database.Setup.${version}.${ext}"
     },
     "nsis": {
-      "oneClick": false,
+      "oneClick": true,
       "perMachine": false,
-      "allowToChangeInstallationDirectory": true,
+      "allowToChangeInstallationDirectory": false,
+      "deleteAppDataOnUninstall": false,
       "installerIcon": "public/Logo.ico",
       "uninstallerIcon": "public/Logo.ico",
       "installerHeaderIcon": "public/Logo.ico"

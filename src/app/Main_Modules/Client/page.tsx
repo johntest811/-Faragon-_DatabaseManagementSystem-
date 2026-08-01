@@ -2,7 +2,7 @@
 
 import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { Download, FileDown, FileText, PencilLine, Plus, Search, Trash2, Upload } from "lucide-react";
+import { Download, FileDown, FileText, PencilLine, Plus, Search, Trash2, Upload, X } from "lucide-react";
 import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -931,27 +931,103 @@ export default function ClientsPage() {
       return;
     }
 
-    const ok = confirm("Delete this contract? This cannot be undone.");
+    const targetRow = rows.find((r) => r.contract_id === id);
+    const clientName = targetRow?.client_name?.trim() || null;
+    const specificArea = targetRow?.specific_area?.trim() || null;
+
+    const ok = confirm("Delete this contract and all associated detachment information (including Paraphernalia and employee assignments)? This cannot be undone.");
     if (!ok) return;
 
     setError("");
     setSaveState({ type: "", message: "" });
     setSavingKey("delete-contract");
     try {
-      // Best-effort cleanup: the join table has ON DELETE CASCADE in the migration,
-      // but some DBs may not have it yet.
+      // 1. Fetch related paraphernalia IDs to clean up restock and inventory references
+      let pIds: string[] = [];
+      const { data: pData } = await supabase
+        .from("paraphernalia")
+        .select("id_paraphernalia")
+        .eq("contract_id", id);
+      if (pData?.length) {
+        pIds = pData.map((x) => String(x.id_paraphernalia)).filter(Boolean);
+      }
+      if (clientName && specificArea) {
+        const { data: pDataByArea } = await supabase
+          .from("paraphernalia")
+          .select("id_paraphernalia")
+          .eq("client_name", clientName)
+          .eq("specific_area", specificArea);
+        if (pDataByArea?.length) {
+          const extraPIds = pDataByArea.map((x) => String(x.id_paraphernalia)).filter(Boolean);
+          pIds = Array.from(new Set([...pIds, ...extraPIds]));
+        }
+      }
+
+      // 2. Fetch related paraphernalia_inventory IDs
+      let invIds: string[] = [];
+      const { data: invData } = await supabase
+        .from("paraphernalia_inventory")
+        .select("id_paraphernalia_inventory")
+        .eq("contract_id", id);
+      if (invData?.length) {
+        invIds = invData.map((x) => String(x.id_paraphernalia_inventory)).filter(Boolean);
+      }
+      if (clientName && specificArea) {
+        const { data: invDataByArea } = await supabase
+          .from("paraphernalia_inventory")
+          .select("id_paraphernalia_inventory")
+          .eq("client_name", clientName)
+          .eq("specific_area", specificArea);
+        if (invDataByArea?.length) {
+          const extraInvIds = invDataByArea.map((x) => String(x.id_paraphernalia_inventory)).filter(Boolean);
+          invIds = Array.from(new Set([...invIds, ...extraInvIds]));
+        }
+      }
+
+      // 3. Delete from restock table
+      await supabase.from("restock").delete().eq("contract_id", id);
+      if (clientName && specificArea) {
+        await supabase.from("restock").delete().eq("client_name", clientName).eq("detachment", specificArea);
+      }
+      if (pIds.length > 0) {
+        await supabase.from("restock").delete().in("id_paraphernalia", pIds);
+      }
+      if (invIds.length > 0) {
+        await supabase.from("restock").delete().in("id_paraphernalia_inventory", invIds);
+      }
+
+      // 4. Delete from paraphernalia_inventory table
+      await supabase.from("paraphernalia_inventory").delete().eq("contract_id", id);
+      if (clientName && specificArea) {
+        await supabase.from("paraphernalia_inventory").delete().eq("client_name", clientName).eq("specific_area", specificArea);
+      }
+      if (pIds.length > 0) {
+        await supabase.from("paraphernalia_inventory").delete().in("id_paraphernalia", pIds);
+      }
+
+      // 5. Delete from paraphernalia table
+      await supabase.from("paraphernalia").delete().eq("contract_id", id);
+      if (clientName && specificArea) {
+        await supabase.from("paraphernalia").delete().eq("client_name", clientName).eq("specific_area", specificArea);
+      }
+
+      // 6. Delete from contract_employees table
       await supabase.from("contract_employees").delete().eq("contract_id", id);
 
+      // 7. Delete contract from contracts table
       const delRes = await supabase.from("contracts").delete().eq("contract_id", id);
       if (delRes.error) {
         setSaveState({ type: "error", message: `Contract delete failed: ${delRes.error.message}` });
         return;
       }
 
-      setSaveState({ type: "success", message: "Contract deleted." });
+      setSaveState({ type: "success", message: "Contract and detachment information deleted." });
       setEditorOpen(false);
       setDetailsRow(null);
       await loadConnectedData();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setSaveState({ type: "error", message: `Contract delete failed: ${msg}` });
     } finally {
       setSavingKey(null);
     }
@@ -1378,18 +1454,32 @@ export default function ClientsPage() {
   return (
     <div className="space-y-5">
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-        <div className="flex items-center gap-3 text-black">
-          <div className="relative w-full md:w-[360px]">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
+        <div className="flex items-center gap-3 text-black w-full md:w-auto">
+          <div className="relative w-full md:w-[420px]">
+            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
             <input
+              type="text"
               value={search}
               onChange={(e) => {
                 setSearch(e.target.value);
                 setPage(1);
               }}
-              placeholder="Search client contracts"
-              className="bg-white border rounded-full pl-10 pr-4 py-2 shadow-sm w-full"
+              placeholder="Search by contract series, client, area, project..."
+              className="bg-white border-2 border-slate-200 focus:border-[#FFDA03] focus:ring-2 focus:ring-[#FFDA03]/30 rounded-full pl-10 pr-10 py-2 text-sm font-medium shadow-sm w-full outline-none transition-all"
             />
+            {search ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setSearch("");
+                  setPage(1);
+                }}
+                className="absolute right-3 top-1/2 -translate-y-1/2 p-1 rounded-full text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors"
+                title="Clear search"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            ) : null}
           </div>
         </div>
 
@@ -1897,8 +1987,46 @@ export default function ClientsPage() {
       </ModalShell>
 
       <TableZoomWrapper storageKey="client">
-      <div className="relative overflow-x-auto rounded-2xl glass-panel animate-slide-up">
-        <table className="w-full text-sm text-black border-separate border-spacing-y-2">
+      <div className="relative rounded-2xl glass-panel animate-slide-up space-y-3 p-4">
+        {/* Table Search & Filter Toolbar */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-2 border-b border-gray-200/60">
+          <div className="relative w-full sm:w-[380px]">
+            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => {
+                setSearch(e.target.value);
+                setPage(1);
+              }}
+              placeholder="Search contract series, client, area..."
+              className="bg-white border-2 border-slate-200 focus:border-[#FFDA03] focus:ring-2 focus:ring-[#FFDA03]/30 rounded-xl pl-10 pr-10 py-2 text-xs font-semibold shadow-sm w-full outline-none transition-all"
+            />
+            {search ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setSearch("");
+                  setPage(1);
+                }}
+                className="absolute right-3 top-1/2 -translate-y-1/2 p-1 rounded-full text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors"
+                title="Clear search"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            ) : null}
+          </div>
+          <div className="text-xs font-semibold text-gray-600">
+            {search.trim() ? (
+              <span>Found <strong className="text-black font-extrabold">{filtered.length}</strong> matching contract{filtered.length === 1 ? "" : "s"}</span>
+            ) : (
+              <span>Total <strong className="text-black font-extrabold">{rows.length}</strong> contract{rows.length === 1 ? "" : "s"}</span>
+            )}
+          </div>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm text-black border-separate border-spacing-y-2">
           <thead className="sticky top-0 z-10">
             <tr className="bg-[#FFDA03]">
               {[
@@ -1958,6 +2086,7 @@ export default function ClientsPage() {
             )}
           </tbody>
         </table>
+        </div>
       </div>
 
       <div className="mt-4 flex justify-between items-center text-sm">

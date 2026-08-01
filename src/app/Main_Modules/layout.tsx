@@ -31,6 +31,7 @@ import {
   KeyRound,
   Sparkles,
   Download,
+  Menu,
 } from "lucide-react";
 
 type LayoutProps = Readonly<{ children: React.ReactNode }>;
@@ -602,6 +603,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
   const [updateDownloaded, setUpdateDownloaded] = useState(false);
   const [updateProgress, setUpdateProgress] = useState<{ percent: number } | null>(null);
   const [updateInfo, setUpdateInfo] = useState<{ updateAvailable: boolean; version?: string | null; currentVersion?: string | null } | null>(null);
+  const [updateError, setUpdateError] = useState<string | null>(null);
   const [currentAppVersion, setCurrentAppVersion] = useState<string>("0.1.1");
   const [, setAdminAlertOpen] = useState(false);
 
@@ -615,18 +617,43 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
 
     const unsubProgress = electronAPI.app.onUpdateProgress?.((p: { percent: number }) => {
       setUpdateDownloading(true);
+      setUpdateError(null);
       setUpdateProgress(p);
     });
 
     const unsubDownloaded = electronAPI.app.onUpdateDownloaded?.((info: { version: string }) => {
       setUpdateDownloading(false);
       setUpdateDownloaded(true);
+      setUpdateError(null);
       setUpdateInfo((prev) => ({ ...prev, updateAvailable: true, version: info?.version }));
     });
+
+    const unsubError = electronAPI.app.onUpdateError?.((err: { error: string }) => {
+      setUpdateDownloading(false);
+      setUpdateProgress(null);
+      setUpdateError(err?.error || "Download error occurred.");
+    });
+
+    // Automatically check GitHub for latest updates on login / app load
+    if (electronAPI?.app?.checkForUpdates) {
+      setUpdateChecking(true);
+      electronAPI.app.checkForUpdates().then((res: any) => {
+        if (res && res.success) {
+          setUpdateInfo({
+            updateAvailable: Boolean(res.updateAvailable),
+            version: res.version,
+            currentVersion: res.currentVersion,
+          });
+        }
+      }).catch(() => {}).finally(() => {
+        setUpdateChecking(false);
+      });
+    }
 
     return () => {
       unsubProgress?.();
       unsubDownloaded?.();
+      unsubError?.();
     };
   }, []);
 
@@ -634,6 +661,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
     const electronAPI = (globalThis as any).electronAPI;
     if (!electronAPI?.app?.checkForUpdates) return;
     setUpdateChecking(true);
+    setUpdateError(null);
     try {
       const res = await electronAPI.app.checkForUpdates();
       if (res && res.success) {
@@ -654,11 +682,30 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
     const electronAPI = (globalThis as any).electronAPI;
     if (!electronAPI?.app?.downloadUpdate) return;
     setUpdateDownloading(true);
+    setUpdateError(null);
     try {
-      await electronAPI.app.downloadUpdate();
-    } catch {
+      const res = await electronAPI.app.downloadUpdate();
+      if (res && !res.success && res.error) {
+        setUpdateDownloading(false);
+        setUpdateError(res.error);
+      }
+    } catch (e: any) {
       setUpdateDownloading(false);
+      setUpdateError(e?.message || String(e));
     }
+  }, []);
+
+  const handleCancelDownload = useCallback(async () => {
+    const electronAPI = (globalThis as any).electronAPI;
+    if (electronAPI?.app?.cancelDownload) {
+      try {
+        await electronAPI.app.cancelDownload();
+      } catch {
+        // ignore
+      }
+    }
+    setUpdateDownloading(false);
+    setUpdateProgress(null);
   }, []);
 
   const handleInstallUpdate = useCallback(async () => {
@@ -1529,6 +1576,49 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
     setAccessFlyoutOpen(false);
   }, [pathname]);
 
+  const closeAllTopDropdowns = useCallback(() => {
+    setUpdateOpen(false);
+    setActivityOpen(false);
+    setPreviewOpen(false);
+    setExpiringOpen(false);
+    setCarInsuranceExpiringOpen(false);
+    setContractExpiringOpen(false);
+    setAdminAlertOpen(false);
+  }, []);
+
+  useEffect(() => {
+    function onDocClick(e: PointerEvent | MouseEvent) {
+      const target = e.target as Node | null;
+      if (!target) return;
+
+      const isInsideDropdown =
+        Boolean(document.querySelector("[data-update-menu]")?.contains(target)) ||
+        Boolean(document.querySelector("[data-activity-menu]")?.contains(target)) ||
+        Boolean(document.querySelector("[data-preview-menu]")?.contains(target)) ||
+        Boolean(document.querySelector("[data-expiring-menu]")?.contains(target)) ||
+        Boolean(document.querySelector("[data-car-insurance-expiring-menu]")?.contains(target)) ||
+        Boolean(document.querySelector("[data-contract-expiring-menu]")?.contains(target)) ||
+        Boolean(document.querySelector("[data-admin-alert-menu]")?.contains(target));
+
+      if (!isInsideDropdown) {
+        closeAllTopDropdowns();
+      }
+    }
+
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        closeAllTopDropdowns();
+      }
+    }
+
+    document.addEventListener("pointerdown", onDocClick);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onDocClick);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [closeAllTopDropdowns]);
+
   useEffect(() => {
     if (!collapsed) return;
 
@@ -1668,12 +1758,28 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
 
   const canUsePortal = typeof document !== "undefined";
 
+  useEffect(() => {
+    if (typeof window !== "undefined" && window.innerWidth < 768) {
+      setCollapsed(true);
+    }
+  }, []);
+
   return (
-    <div className="h-screen bg-white flex overflow-hidden">
+    <div className="flex h-screen overflow-hidden bg-gray-50 text-gray-900 font-sans">
+      {/* Mobile Sidebar Backdrop */}
+      {!collapsed ? (
+        <div
+          onClick={() => setCollapsed(true)}
+          className="fixed inset-0 z-40 bg-slate-900/50 backdrop-blur-xs md:hidden animate-fade-in"
+        />
+      ) : null}
+
+      {/* Sidebar */}
       <aside
-        className={`bg-white border-r flex flex-col min-h-0
-          transition-[width] duration-500 ease-in-out
-          ${collapsed ? "w-20" : "w-72"}`}
+        className={`bg-white border-r flex flex-col min-h-0 z-50
+          transition-all duration-300 ease-in-out
+          fixed inset-y-0 left-0 md:static
+          ${collapsed ? "-translate-x-full md:translate-x-0 md:w-20" : "translate-x-0 w-72"}`}
       >
         <div className="px-5 pt-6 pb-4">
           <div className={`flex items-center gap-3 ${collapsed ? "justify-center" : ""}`}>
@@ -1912,12 +2018,22 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
       <div className="flex-1 min-w-0 flex flex-col min-h-0">
         {/* Top Navigation */}
         <header className="bg-white sticky top-0 z-40">
-          <div className="px-6 pt-6">
-            <div className="flex items-center justify-between gap-4">
-              <div>
-                <div className="text-2xl font-semibold text-gray-900">{pageTitle}</div>
-                <div className="text-xs text-gray-500">
-                  Dashboard / {pageTitle}
+          <div className="px-4 sm:px-6 pt-4 sm:pt-6">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => setCollapsed((v) => !v)}
+                  className="md:hidden p-2 rounded-xl border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 active:scale-95 transition-all shadow-sm"
+                  aria-label="Toggle navigation menu"
+                >
+                  <Menu className="w-5 h-5" />
+                </button>
+                <div>
+                  <div className="text-xl sm:text-2xl font-semibold text-gray-900">{pageTitle}</div>
+                  <div className="text-xs text-gray-500">
+                    Dashboard / {pageTitle}
+                  </div>
                 </div>
               </div>
 
@@ -1928,14 +2044,12 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
                     <button
                       type="button"
                       onClick={() => {
-                        setUpdateOpen((v) => !v);
-                        setActivityOpen(false);
-                        setPreviewOpen(false);
-                        setExpiringOpen(false);
-                        setCarInsuranceExpiringOpen(false);
-                        setContractExpiringOpen(false);
-                        setAdminAlertOpen(false);
-                        void handleCheckForUpdates();
+                        const next = !updateOpen;
+                        closeAllTopDropdowns();
+                        if (next) {
+                          setUpdateOpen(true);
+                          void handleCheckForUpdates();
+                        }
                       }}
                       className="relative h-10 w-10 rounded-xl bg-[#FFDA03] text-black flex items-center justify-center hover:bg-[#ffe552] active:scale-95 transition-all duration-200 shadow-sm"
                       aria-label="Application Updates"
@@ -1944,10 +2058,10 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
                       <Download className="w-5 h-5" />
                       {updateInfo?.updateAvailable || updateDownloaded ? (
                         <span
-                          className="absolute -top-1.5 -right-1.5 min-w-[20px] h-[20px] px-1 rounded-full bg-red-600 text-white text-[10px] font-black leading-[20px] text-center shadow-md animate-pulse border-2 border-white"
+                          className="absolute -top-1.5 -right-1.5 min-w-[20px] h-[20px] px-1 rounded-full bg-red-600 text-white text-[10px] font-black inline-flex items-center justify-center shadow-md animate-pulse border-2 border-white leading-none select-none"
                           aria-label="Update available"
                         >
-                          !
+                          1
                         </span>
                       ) : null}
                     </button>
@@ -1978,18 +2092,45 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
                                 Restart & Install Now
                               </button>
                             </div>
-                          ) : updateDownloading ? (
-                            <div className="space-y-2">
+                           ) : updateDownloading ? (
+                            <div className="space-y-3">
                               <div className="flex justify-between text-xs font-bold text-slate-700">
-                                <span>Downloading update...</span>
-                                <span>{Math.round(updateProgress?.percent ?? 0)}%</span>
+                                <span className="flex items-center gap-2">
+                                  <span className="h-2 w-2 rounded-full bg-amber-500 animate-ping" />
+                                  Downloading update...
+                                </span>
+                                <span className="font-extrabold text-amber-700">{Math.round(updateProgress?.percent ?? 0)}%</span>
                               </div>
-                              <div className="w-full bg-slate-200 h-2.5 rounded-full overflow-hidden">
+                              <div className="w-full bg-slate-100 h-3 rounded-full overflow-hidden border border-slate-200 p-0.5">
                                 <div
-                                  className="bg-amber-500 h-full transition-all duration-200"
-                                  style={{ width: `${Math.min(100, Math.max(0, updateProgress?.percent ?? 0))}%` }}
+                                  className="bg-gradient-to-r from-amber-400 to-amber-600 h-full rounded-full transition-all duration-300 shadow-sm"
+                                  style={{ width: `${Math.min(100, Math.max(2, updateProgress?.percent ?? 0))}%` }}
                                 />
                               </div>
+                              <div className="pt-1 flex items-center justify-between text-xs">
+                                <span className="text-slate-400 text-[11px]">Please keep the app open</span>
+                                <button
+                                  type="button"
+                                  onClick={handleCancelDownload}
+                                  className="text-red-600 hover:text-red-800 font-extrabold text-xs underline transition-all"
+                                >
+                                  Cancel Download
+                                </button>
+                              </div>
+                            </div>
+                          ) : updateError ? (
+                            <div className="space-y-3">
+                              <div className="text-xs font-semibold text-red-700 bg-red-50 p-3 rounded-xl border border-red-200 leading-snug">
+                                <div className="font-bold text-red-800 mb-1">Download Error</div>
+                                {updateError}
+                              </div>
+                              <button
+                                type="button"
+                                onClick={handleDownloadUpdate}
+                                className="w-full py-2.5 px-4 rounded-xl bg-[#8B1C1C] text-white font-bold text-sm hover:bg-[#a62323] active:scale-95 transition-all shadow-md"
+                              >
+                                Try Again
+                              </button>
                             </div>
                           ) : updateInfo?.updateAvailable ? (
                             <div className="space-y-3">
@@ -2027,13 +2168,12 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
                   <button
                     type="button"
                     onClick={() => {
-                      setActivityOpen((v) => !v);
-                      setPreviewOpen(false);
-                      setExpiringOpen(false);
-                      setCarInsuranceExpiringOpen(false);
-                      setContractExpiringOpen(false);
-                      setAdminAlertOpen(false);
-                      refreshActivity();
+                      const next = !activityOpen;
+                      closeAllTopDropdowns();
+                      if (next) {
+                        setActivityOpen(true);
+                        refreshActivity();
+                      }
                     }}
                     className="relative h-10 w-10 rounded-xl bg-[#FFDA03] text-black flex items-center justify-center hover:bg-[#ffe552] active:scale-95 transition-all duration-200 shadow-sm"
                     aria-label="Recent Activities"
@@ -2042,7 +2182,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
                     <Activity className="w-5 h-5" />
                     {activityCount > 0 ? (
                       <span
-                        className="absolute -top-1.5 -right-1.5 min-w-[20px] h-[20px] px-1 rounded-full bg-red-600 text-white text-[10px] font-black leading-[20px] text-center shadow-md animate-pulse border-2 border-white"
+                        className="absolute -top-1.5 -right-1.5 min-w-[20px] h-[20px] px-1 rounded-full bg-red-600 text-white text-[10px] font-black inline-flex items-center justify-center shadow-md animate-pulse border-2 border-white leading-none select-none"
                         aria-label={`Activity count ${activityCount}`}
                       >
                         {badgeText(activityCount)}
@@ -2115,13 +2255,12 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
                   <button
                     type="button"
                     onClick={() => {
-                      setExpiringOpen((v) => !v);
-                      setCarInsuranceExpiringOpen(false);
-                      setContractExpiringOpen(false);
-                      setActivityOpen(false);
-                      setPreviewOpen(false);
-                      setAdminAlertOpen(false);
-                      refreshExpiring();
+                      const next = !expiringOpen;
+                      closeAllTopDropdowns();
+                      if (next) {
+                        setExpiringOpen(true);
+                        refreshExpiring();
+                      }
                     }}
                     className="relative h-10 w-10 rounded-xl bg-[#FFDA03] text-black flex items-center justify-center hover:bg-[#ffe552] active:scale-95 transition-all duration-200 shadow-sm"
                     aria-label="Expiring Licenses and Records"
@@ -2130,7 +2269,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
                     <CreditCard className="w-5 h-5" />
                     {expiringCount > 0 ? (
                       <span
-                        className="absolute -top-1.5 -right-1.5 min-w-[20px] h-[20px] px-1 rounded-full bg-red-600 text-white text-[10px] font-black leading-[20px] text-center shadow-md animate-pulse border-2 border-white"
+                        className="absolute -top-1.5 -right-1.5 min-w-[20px] h-[20px] px-1 rounded-full bg-red-600 text-white text-[10px] font-black inline-flex items-center justify-center shadow-md animate-pulse border-2 border-white leading-none select-none"
                         aria-label={`Expiring licenses and records count ${expiringCount}`}
                       >
                         {badgeText(expiringCount)}
@@ -2281,13 +2420,12 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
                   <button
                     type="button"
                     onClick={() => {
-                      setCarInsuranceExpiringOpen((v) => !v);
-                      setExpiringOpen(false);
-                      setContractExpiringOpen(false);
-                      setActivityOpen(false);
-                      setPreviewOpen(false);
-                      setAdminAlertOpen(false);
-                      refreshExpiring();
+                      const next = !carInsuranceExpiringOpen;
+                      closeAllTopDropdowns();
+                      if (next) {
+                        setCarInsuranceExpiringOpen(true);
+                        refreshExpiring();
+                      }
                     }}
                     className="relative h-10 w-10 rounded-xl bg-[#FFDA03] text-black flex items-center justify-center hover:bg-[#ffe552] active:scale-95 transition-all duration-200 shadow-sm"
                     aria-label="Car Insurance Expiration"
@@ -2296,7 +2434,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
                     <Truck className="w-5 h-5" />
                     {carInsuranceExpiringCount > 0 ? (
                       <span
-                        className="absolute -top-1.5 -right-1.5 min-w-[20px] h-[20px] px-1 rounded-full bg-red-600 text-white text-[10px] font-black leading-[20px] text-center shadow-md animate-pulse border-2 border-white"
+                        className="absolute -top-1.5 -right-1.5 min-w-[20px] h-[20px] px-1 rounded-full bg-red-600 text-white text-[10px] font-black inline-flex items-center justify-center shadow-md animate-pulse border-2 border-white leading-none select-none"
                         aria-label={`Car insurance expiration count ${carInsuranceExpiringCount}`}
                       >
                         {badgeText(carInsuranceExpiringCount)}
@@ -2402,13 +2540,12 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
                   <button
                     type="button"
                     onClick={() => {
-                      setContractExpiringOpen((v) => !v);
-                      setExpiringOpen(false);
-                      setCarInsuranceExpiringOpen(false);
-                      setActivityOpen(false);
-                      setPreviewOpen(false);
-                      setAdminAlertOpen(false);
-                      refreshExpiring();
+                      const next = !contractExpiringOpen;
+                      closeAllTopDropdowns();
+                      if (next) {
+                        setContractExpiringOpen(true);
+                        refreshExpiring();
+                      }
                     }}
                     className="relative h-10 w-10 rounded-xl bg-[#FFDA03] text-black flex items-center justify-center hover:bg-[#ffe552] active:scale-95 transition-all duration-200 shadow-sm"
                     aria-label="Expiring Contracts"
@@ -2417,7 +2554,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
                     <ClipboardCheck className="w-5 h-5" />
                     {contractExpiringCount > 0 ? (
                       <span
-                        className="absolute -top-1.5 -right-1.5 min-w-[20px] h-[20px] px-1 rounded-full bg-red-600 text-white text-[10px] font-black leading-[20px] text-center shadow-md animate-pulse border-2 border-white"
+                        className="absolute -top-1.5 -right-1.5 min-w-[20px] h-[20px] px-1 rounded-full bg-red-600 text-white text-[10px] font-black inline-flex items-center justify-center shadow-md animate-pulse border-2 border-white leading-none select-none"
                         aria-label={`Expiring contracts count ${contractExpiringCount}`}
                       >
                         {badgeText(contractExpiringCount)}
@@ -2530,13 +2667,12 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
                   <button
                     type="button"
                     onClick={() => {
-                      setPreviewOpen((v) => !v);
-                      setActivityOpen(false);
-                      setExpiringOpen(false);
-                      setCarInsuranceExpiringOpen(false);
-                      setContractExpiringOpen(false);
-                      setAdminAlertOpen(false);
-                      refreshPreview();
+                      const next = !previewOpen;
+                      closeAllTopDropdowns();
+                      if (next) {
+                        setPreviewOpen(true);
+                        refreshPreview();
+                      }
                     }}
                     className="relative h-10 w-10 rounded-xl bg-[#FFDA03] text-black flex items-center justify-center hover:bg-[#ffe552] active:scale-95 transition-all duration-200 shadow-sm"
                     aria-label="Preview (1+ year of service)"
@@ -2545,7 +2681,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
                     <Users className="w-5 h-5" />
                     {previewCount > 0 ? (
                       <span
-                        className="absolute -top-1.5 -right-1.5 min-w-[20px] h-[20px] px-1 rounded-full bg-red-600 text-white text-[10px] font-black leading-[20px] text-center shadow-md animate-pulse border-2 border-white"
+                        className="absolute -top-1.5 -right-1.5 min-w-[20px] h-[20px] px-1 rounded-full bg-red-600 text-white text-[10px] font-black inline-flex items-center justify-center shadow-md animate-pulse border-2 border-white leading-none select-none"
                         aria-label={`Preview employees count ${previewCount}`}
                       >
                         {badgeTextWide(previewCount)}
