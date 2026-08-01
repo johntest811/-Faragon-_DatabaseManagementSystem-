@@ -323,7 +323,7 @@ CREATE TABLE public.contracts (
   contracted_manpower integer,
   deployed_guards integer,
   remarks text,
-  notification_recipient_email text CHECK (notification_recipient_email IS NULL OR notification_recipient_email ~* '^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$'::text),
+  notification_recipient_email text CHECK (notification_recipient_email IS NULL OR NULLIF(btrim(notification_recipient_email), ''::text) IS NULL OR notification_recipient_email ~* '^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$'::text),
   CONSTRAINT contracts_pkey PRIMARY KEY (contract_id),
   CONSTRAINT contracts_applicant_id_fkey FOREIGN KEY (applicant_id) REFERENCES public.applicants(applicant_id)
 );

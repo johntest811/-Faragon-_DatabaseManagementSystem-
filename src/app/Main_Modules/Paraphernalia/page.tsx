@@ -793,22 +793,38 @@ export default function ParaphernaliaPage() {
   });
 
   const displayItemOptions = useMemo<ItemOption[]>(() => {
-    const fromDb = itemOptions.filter((item) => safeText(item.item_name, "") !== "");
-    let baseItems: ItemOption[] = [];
-    if (fromDb.length) {
-      baseItems = fromDb.slice().sort((a, b) => (a.display_order ?? 9999) - (b.display_order ?? 9999) || a.item_name.localeCompare(b.item_name));
-    } else {
-      baseItems = ITEM_CATALOG.map((item) => ({
-        item_id: null,
-        item_name: item.item,
-        item_category: item.category,
-        item_group: equipmentGroupForName(item.item),
-        display_order: item.no,
-        unit_price: 0,
-      }));
+    const map = new Map<string, ItemOption>();
+
+    for (const catItem of ITEM_CATALOG) {
+      const norm = normalizeItem(catItem.item);
+      if (!removedItemNames.has(norm)) {
+        map.set(norm, {
+          item_id: null,
+          item_name: catItem.item,
+          item_category: catItem.category,
+          item_group: equipmentGroupForName(catItem.item),
+          display_order: catItem.no,
+          unit_price: 0,
+        });
+      }
     }
 
-    return baseItems.filter((item) => !removedItemNames.has(normalizeItem(item.item_name)));
+    for (const item of itemOptions) {
+      const norm = normalizeItem(item.item_name);
+      if (!norm || removedItemNames.has(norm)) continue;
+      map.set(norm, {
+        item_id: item.item_id,
+        item_name: item.item_name,
+        item_category: item.item_category,
+        item_group: item.item_group,
+        display_order: item.display_order ?? 9999,
+        unit_price: item.unit_price,
+      });
+    }
+
+    return Array.from(map.values()).sort(
+      (a, b) => (a.display_order ?? 9999) - (b.display_order ?? 9999) || a.item_name.localeCompare(b.item_name)
+    );
   }, [itemOptions, removedItemNames]);
 
   const itemCategoryByName = useMemo(() => {
@@ -1157,6 +1173,7 @@ export default function ParaphernaliaPage() {
 
     function ensureRow(item: string, clientName: string, specificArea: string) {
       const normalizedItem = normalizeItem(item);
+      if (!normalizedItem || removedItemNames.has(normalizedItem)) return null;
       const key = `${normalizeKey(clientName)}|${normalizeKey(specificArea)}|${normalizedItem}`;
       const existing = rows.get(key);
       if (existing) return existing;
@@ -1176,31 +1193,33 @@ export default function ParaphernaliaPage() {
 
     for (const row of stockInRows) {
       const item = normalizeItem(row.item);
-      if (!item) continue;
+      if (!item || removedItemNames.has(item)) continue;
       const clientName = resolveClientName(row.contract_id, row.detachment, row.client_name);
       const area = resolveSpecificArea(row.contract_id, row.detachment);
-      ensureRow(item, clientName, area).stockIn += row.quantity ?? 0;
+      const r = ensureRow(item, clientName, area);
+      if (r) r.stockIn += row.quantity ?? 0;
     }
 
     for (const row of stockOutRows) {
       const item = normalizeItem(row.item);
-      if (!item) continue;
+      if (!item || removedItemNames.has(item)) continue;
       const clientName = resolveClientName(row.contract_id, row.specific_area, row.client_name);
       const area = resolveSpecificArea(row.contract_id, row.specific_area);
-      ensureRow(item, clientName, area).stockOut += row.quantity ?? 0;
+      const r = ensureRow(item, clientName, area);
+      if (r) r.stockOut += row.quantity ?? 0;
     }
 
     return Array.from(rows.values())
       .map((row) => ({ ...row, stockBalance: row.stockIn - row.stockOut }))
       .sort((a, b) => a.clientName.localeCompare(b.clientName) || a.item.localeCompare(b.item));
-  }, [stockInRows, stockOutRows, resolveClientName, resolveItemCategory, resolveSpecificArea]);
+  }, [stockInRows, stockOutRows, resolveClientName, resolveItemCategory, resolveSpecificArea, removedItemNames]);
 
   const mainInventoryRows = useMemo<MainInventoryRow[]>(() => {
     const rows = new Map<string, MainInventoryRow>();
 
     function ensureRow(itemName: unknown) {
       const item = normalizeItem(itemName);
-      if (!item) return null;
+      if (!item || removedItemNames.has(item)) return null;
       const existing = rows.get(item);
       if (existing) return existing;
       const unitPrice = itemPriceByName.get(item) ?? 0;
@@ -1242,7 +1261,7 @@ export default function ParaphernaliaPage() {
         return { ...row, stockBalance, inventoryValue: stockBalance * row.unitPrice };
       })
       .sort((a, b) => a.category.localeCompare(b.category) || a.item.localeCompare(b.item));
-  }, [displayItemOptions, itemGroupByName, itemPriceByName, resolveItemCategory, resolveSpecificArea, stockInRows, stockOutRows]);
+  }, [displayItemOptions, itemGroupByName, itemPriceByName, resolveItemCategory, resolveSpecificArea, stockInRows, stockOutRows, removedItemNames]);
 
   const q = search.trim().toLowerCase();
   const selectedDetachmentKey = normalizeKey(selectedDetachment);
@@ -1850,8 +1869,10 @@ export default function ParaphernaliaPage() {
           await supabase.from("paraphernalia_items").delete().eq("item_id", item.item_id);
         }
       }
-      await supabase.from("paraphernalia_items").update({ is_active: false }).eq("item_name", normalizedName);
-      await supabase.from("paraphernalia_items").delete().eq("item_name", normalizedName);
+      await supabase.from("paraphernalia_items").update({ is_active: false }).ilike("item_name", normalizedName);
+      await supabase.from("paraphernalia_items").delete().ilike("item_name", normalizedName);
+      await supabase.from("paraphernalia_items").update({ is_active: false }).eq("item_name", item.item_name);
+      await supabase.from("paraphernalia_items").delete().eq("item_name", item.item_name);
 
       setItemOptions((prev) => prev.filter((row) => normalizeItem(row.item_name) !== normalizedName && row.item_id !== item.item_id));
 

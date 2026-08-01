@@ -585,6 +585,16 @@ export default function LogisticsInventoryPage() {
     EQUIPMENT_CATALOG.map((item) => ({ name: item.name, group: item.group, unitPrice: 0 }))
   );
 
+  const [removedItemNames, setRemovedItemNames] = useState<Set<string>>(() => {
+    if (typeof window === "undefined") return new Set();
+    try {
+      const stored = localStorage.getItem("removed_paraphernalia_items");
+      return stored ? new Set(JSON.parse(stored)) : new Set();
+    } catch {
+      return new Set();
+    }
+  });
+
   const managedItemOptions = useMemo(() => {
     const query = itemManagerSearch.trim().toLowerCase();
     return inventoryEquipmentOptions.filter((item) => {
@@ -599,10 +609,16 @@ export default function LogisticsInventoryPage() {
 
   const equipmentDropdownNames = useMemo(() => {
     const names = new Map<string, string>();
-    for (const name of EQUIPMENT_NAMES) names.set(normalizeEquipmentCatalogName(name), name);
-    for (const option of inventoryEquipmentOptions) names.set(normalizeEquipmentCatalogName(option.name), option.name);
+    for (const name of EQUIPMENT_NAMES) {
+      const norm = normalizeEquipmentCatalogName(name);
+      if (!removedItemNames.has(norm)) names.set(norm, name);
+    }
+    for (const option of inventoryEquipmentOptions) {
+      const norm = normalizeEquipmentCatalogName(option.name);
+      if (!removedItemNames.has(norm)) names.set(norm, option.name);
+    }
     return Array.from(names.values());
-  }, [inventoryEquipmentOptions]);
+  }, [inventoryEquipmentOptions, removedItemNames]);
 
   const equipmentPriceByName = useMemo(() => {
     const prices = new Map<string, number>();
@@ -666,16 +682,6 @@ export default function LogisticsInventoryPage() {
     const nextOptions = Array.from(names).sort((a, b) => a.localeCompare(b));
     setClientNameOptions(nextOptions);
   }, []);
-
-  const [removedItemNames, setRemovedItemNames] = useState<Set<string>>(() => {
-    if (typeof window === "undefined") return new Set();
-    try {
-      const stored = localStorage.getItem("removed_paraphernalia_items");
-      return stored ? new Set(JSON.parse(stored)) : new Set();
-    } catch {
-      return new Set();
-    }
-  });
 
   const loadInventoryEquipmentOptions = useCallback(async () => {
     let removed = new Set<string>();
@@ -789,6 +795,8 @@ export default function LogisticsInventoryPage() {
 
     const norm = normalizeEquipmentCatalogName(item.name);
 
+    await supabase.from("paraphernalia_items").update({ is_active: false }).ilike("item_name", norm);
+    await supabase.from("paraphernalia_items").delete().ilike("item_name", norm);
     await supabase.from("paraphernalia_items").update({ is_active: false }).eq("item_name", item.name);
     await supabase.from("paraphernalia_items").delete().eq("item_name", item.name);
 
@@ -802,6 +810,8 @@ export default function LogisticsInventoryPage() {
       }
       return next;
     });
+
+    setInventoryEquipmentOptions((prev) => prev.filter((r) => normalizeEquipmentCatalogName(r.name) !== norm));
 
     setItemBusy(false);
     setItemManagerMessage(`Item "${item.name}" removed.`);
@@ -1301,7 +1311,7 @@ function downloadInventoryTemplateXlsx() {
 
     const addQty = (equipName: string, detachment: string, qty: number) => {
       const normEquip = normalizeEquipmentName(equipName);
-      if (!normEquip) return;
+      if (!normEquip || removedItemNames.has(normalizeEquipmentCatalogName(equipName))) return;
       const normDet = String(detachment || "Unassigned Detachment").trim();
       let detMap = equipmentMap.get(normEquip);
       if (!detMap) {
