@@ -1525,9 +1525,9 @@ export default function CarInsuranceExpirationPage() {
         </section>
 
         {formOpen ? (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 overflow-y-auto" onClick={clearForm}>
-            <div className="w-full max-w-5xl rounded-3xl border border-white/60 bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
-              <div className="flex flex-wrap items-start justify-between gap-3 border-b px-6 py-4">
+          <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 p-4 sm:p-6 backdrop-blur-sm animate-fade-in" onClick={clearForm}>
+            <div className="relative flex max-h-[90vh] w-full max-w-5xl flex-col rounded-3xl border border-white/60 bg-white shadow-2xl animate-scale-in" onClick={(e) => e.stopPropagation()}>
+              <div className="flex shrink-0 flex-wrap items-start justify-between gap-3 border-b px-6 py-4">
                 <div>
                   <div className="text-lg font-semibold text-black">{formTitle}</div>
                   <div className="text-sm text-gray-500">Fill both date groups, then save to queue expiration reminders.</div>
@@ -1542,7 +1542,7 @@ export default function CarInsuranceExpirationPage() {
                       setError("");
                       setSuccess("");
                     }}
-                    className="rounded-xl border bg-white px-4 py-2 text-sm font-medium text-black hover:bg-white"
+                    className="rounded-xl border bg-white px-4 py-2 text-sm font-medium text-black hover:bg-gray-50"
                   >
                     Reset form
                   </button>
@@ -1550,7 +1550,7 @@ export default function CarInsuranceExpirationPage() {
                   <button
                     type="button"
                     onClick={clearForm}
-                    className="rounded-xl border bg-white px-4 py-2 text-sm font-medium text-black hover:bg-white"
+                    className="rounded-xl border bg-white px-4 py-2 text-sm font-medium text-black hover:bg-gray-50"
                   >
                     Close
                   </button>
@@ -1558,62 +1558,64 @@ export default function CarInsuranceExpirationPage() {
               </div>
 
               <form
-                className="grid grid-cols-1 gap-4 px-6 py-6 md:grid-cols-2 xl:grid-cols-3"
+                className="flex flex-1 flex-col overflow-hidden"
                 onSubmit={(e) => {
                   e.preventDefault();
                   void saveRecord();
                 }}
               >
-                {FORM_FIELDS.map((field) => {
-                  const commonInputClass = "w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-black placeholder:text-gray-400 disabled:bg-gray-100 disabled:text-gray-500";
-                  const value = form[field.key];
+                <div className="flex-1 overflow-y-auto px-6 py-6 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+                  {FORM_FIELDS.map((field) => {
+                    const commonInputClass = "w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-black placeholder:text-gray-400 disabled:bg-gray-100 disabled:text-gray-500";
+                    const value = form[field.key];
 
-                  return (
-                    <label key={String(field.key)} className={`space-y-1 ${field.spanClassName ?? ""}`}>
-                      <span className="block text-sm font-medium text-black">{field.label}</span>
-                      {field.key === "postDistributions" ? (
-                        <>
-                          <SearchDropdownInput
+                    return (
+                      <label key={String(field.key)} className={`space-y-1 ${field.spanClassName ?? ""}`}>
+                        <span className="block text-sm font-medium text-black">{field.label}</span>
+                        {field.key === "postDistributions" ? (
+                          <>
+                            <SearchDropdownInput
+                              value={String(value)}
+                              onChange={(nextValue) => setForm((current) => ({ ...current, postDistributions: nextValue }))}
+                              options={specificAreaOptions}
+                              placeholder="Type or select a Client Specific Area"
+                              emptyLabel={specificAreasLoading ? "Loading Client Specific Areas..." : "No matching Client Specific Area found."}
+                              required
+                              className={commonInputClass}
+                            />
+                            {specificAreasError ? (
+                              <span className="block text-xs text-red-600">{specificAreasError}</span>
+                            ) : (
+                              <span className="block text-xs text-gray-500">Options come from the Client page Specific Area column.</span>
+                            )}
+                          </>
+                        ) : field.type === "textarea" ? (
+                          <textarea
+                            rows={3}
                             value={String(value)}
-                            onChange={(nextValue) => setForm((current) => ({ ...current, postDistributions: nextValue }))}
-                            options={specificAreaOptions}
-                            placeholder="Type or select a Client Specific Area"
-                            emptyLabel={specificAreasLoading ? "Loading Client Specific Areas..." : "No matching Client Specific Area found."}
-                            required
+                            onChange={(e) => setForm((current) => ({ ...current, [field.key]: e.target.value }))}
+                            placeholder={field.placeholder}
+                            disabled={!editable}
+                            className={`${commonInputClass} min-h-[92px] resize-y`}
+                          />
+                        ) : (
+                          <input
+                            type={field.type}
+                            value={String(value)}
+                            onChange={(e) => setForm((current) => ({ ...current, [field.key]: e.target.value }))}
+                            placeholder={field.placeholder}
+                            min={field.min}
+                            max={field.max}
+                            disabled={!editable}
                             className={commonInputClass}
                           />
-                          {specificAreasError ? (
-                            <span className="block text-xs text-red-600">{specificAreasError}</span>
-                          ) : (
-                            <span className="block text-xs text-gray-500">Options come from the Client page Specific Area column.</span>
-                          )}
-                        </>
-                      ) : field.type === "textarea" ? (
-                        <textarea
-                          rows={3}
-                          value={String(value)}
-                          onChange={(e) => setForm((current) => ({ ...current, [field.key]: e.target.value }))}
-                          placeholder={field.placeholder}
-                          disabled={!editable}
-                          className={`${commonInputClass} min-h-[92px] resize-y`}
-                        />
-                      ) : (
-                        <input
-                          type={field.type}
-                          value={String(value)}
-                          onChange={(e) => setForm((current) => ({ ...current, [field.key]: e.target.value }))}
-                          placeholder={field.placeholder}
-                          min={field.min}
-                          max={field.max}
-                          disabled={!editable}
-                          className={commonInputClass}
-                        />
-                      )}
-                    </label>
-                  );
-                })}
+                        )}
+                      </label>
+                    );
+                  })}
+                </div>
 
-                <div className="md:col-span-2 xl:col-span-3 flex flex-wrap items-center justify-between gap-3 pt-2">
+                <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t bg-gray-50 px-6 py-4">
                   <div className="text-xs text-gray-500">
                     {canEditRecords
                       ? "Create and update actions are controlled by the module edit permission."
@@ -1623,7 +1625,7 @@ export default function CarInsuranceExpirationPage() {
                   <button
                     type="submit"
                     disabled={!canEditRecords || saving}
-                    className="inline-flex items-center gap-2 rounded-xl bg-[#FFDA03] px-4 py-2 text-sm font-semibold text-black disabled:cursor-not-allowed disabled:opacity-50 hover:brightness-95"
+                    className="inline-flex items-center gap-2 rounded-xl bg-[#FFDA03] px-5 py-2.5 text-sm font-semibold text-black disabled:cursor-not-allowed disabled:opacity-50 hover:brightness-95"
                   >
                     {editingId === null ? <Plus className="h-4 w-4" /> : <PencilLine className="h-4 w-4" />}
                     {saving ? "Saving..." : saveLabel}
@@ -1659,19 +1661,19 @@ export default function CarInsuranceExpirationPage() {
         />
 
         {addRecipientOpen ? (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={resetRecipientForm}>
-            <div className="w-full max-w-lg rounded-3xl border border-white/60 bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
-              <div className="flex items-start justify-between gap-3 border-b px-6 py-4">
+          <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm animate-fade-in" onClick={resetRecipientForm}>
+            <div className="relative flex max-h-[90vh] w-full max-w-lg flex-col rounded-3xl border border-white/60 bg-white shadow-2xl animate-scale-in" onClick={(e) => e.stopPropagation()}>
+              <div className="flex shrink-0 items-start justify-between gap-3 border-b px-6 py-4">
                 <div>
                   <div className="text-lg font-semibold text-black">Add recipient</div>
                   <div className="text-sm text-gray-500">Add an inbox that should receive Car Insurance reminders.</div>
                 </div>
-                <button type="button" onClick={resetRecipientForm} className="rounded-xl border bg-white px-4 py-2 text-sm font-medium text-black hover:bg-white">
+                <button type="button" onClick={resetRecipientForm} className="rounded-xl border bg-white px-4 py-2 text-sm font-medium text-black hover:bg-gray-50">
                   Close
                 </button>
               </div>
 
-              <div className="space-y-4 px-6 py-6">
+              <div className="flex-1 overflow-y-auto space-y-4 px-6 py-6">
                 <label className="block space-y-1">
                   <span className="text-sm font-medium text-black">Recipient email</span>
                   <input
@@ -1692,37 +1694,37 @@ export default function CarInsuranceExpirationPage() {
                     className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-black"
                   />
                 </label>
+              </div>
 
-                <div className="flex items-center justify-between gap-3">
-                  <div className="text-xs text-gray-500">This recipient list is separate from Settings.</div>
-                  <button
-                    type="button"
-                    onClick={() => void addRecipient()}
-                    disabled={recipientSaving}
-                    className="inline-flex items-center gap-2 rounded-xl bg-[#FFDA03] px-4 py-2 text-sm font-semibold text-black disabled:opacity-50 hover:brightness-95"
-                  >
-                    {recipientSaving ? "Saving..." : "Add recipient"}
-                  </button>
-                </div>
+              <div className="flex shrink-0 items-center justify-between gap-3 border-t bg-gray-50 px-6 py-4">
+                <div className="text-xs text-gray-500">This recipient list is separate from Settings.</div>
+                <button
+                  type="button"
+                  onClick={() => void addRecipient()}
+                  disabled={recipientSaving}
+                  className="inline-flex items-center gap-2 rounded-xl bg-[#FFDA03] px-4 py-2 text-sm font-semibold text-black disabled:opacity-50 hover:brightness-95"
+                >
+                  {recipientSaving ? "Saving..." : "Add recipient"}
+                </button>
               </div>
             </div>
           </div>
         ) : null}
 
         {editingRecipientId !== null ? (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={closeRecipientEditor}>
-            <div className="w-full max-w-lg rounded-3xl border border-white/60 bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
-              <div className="flex items-start justify-between gap-3 border-b px-6 py-4">
+          <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm animate-fade-in" onClick={closeRecipientEditor}>
+            <div className="relative flex max-h-[90vh] w-full max-w-lg flex-col rounded-3xl border border-white/60 bg-white shadow-2xl animate-scale-in" onClick={(e) => e.stopPropagation()}>
+              <div className="flex shrink-0 items-start justify-between gap-3 border-b px-6 py-4">
                 <div>
                   <div className="text-lg font-semibold text-black">Edit recipient</div>
                   <div className="text-sm text-gray-500">Update this Car Insurance notification inbox.</div>
                 </div>
-                <button type="button" onClick={closeRecipientEditor} className="rounded-xl border bg-white px-4 py-2 text-sm font-medium text-black hover:bg-white">
+                <button type="button" onClick={closeRecipientEditor} className="rounded-xl border bg-white px-4 py-2 text-sm font-medium text-black hover:bg-gray-50">
                   Close
                 </button>
               </div>
 
-              <div className="space-y-4 px-6 py-6">
+              <div className="flex-1 overflow-y-auto space-y-4 px-6 py-6">
                 <label className="block space-y-1">
                   <span className="text-sm font-medium text-black">Recipient email</span>
                   <input
@@ -1752,18 +1754,18 @@ export default function CarInsuranceExpirationPage() {
                   />
                   Active
                 </label>
+              </div>
 
-                <div className="flex items-center justify-between gap-3">
-                  <div className="text-xs text-gray-500">Only active recipients receive Car Insurance reminders.</div>
-                  <button
-                    type="button"
-                    onClick={() => void saveRecipientEdit()}
-                    disabled={recipientSaving}
-                    className="inline-flex items-center gap-2 rounded-xl bg-[#FFDA03] px-4 py-2 text-sm font-semibold text-black disabled:opacity-50 hover:brightness-95"
-                  >
-                    {recipientSaving ? "Saving..." : "Save recipient"}
-                  </button>
-                </div>
+              <div className="flex shrink-0 items-center justify-between gap-3 border-t bg-gray-50 px-6 py-4">
+                <div className="text-xs text-gray-500">Only active recipients receive Car Insurance reminders.</div>
+                <button
+                  type="button"
+                  onClick={() => void saveRecipientEdit()}
+                  disabled={recipientSaving}
+                  className="inline-flex items-center gap-2 rounded-xl bg-[#FFDA03] px-4 py-2 text-sm font-semibold text-black disabled:opacity-50 hover:brightness-95"
+                >
+                  {recipientSaving ? "Saving..." : "Save recipient"}
+                </button>
               </div>
             </div>
           </div>

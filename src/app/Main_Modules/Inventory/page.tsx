@@ -667,7 +667,25 @@ export default function LogisticsInventoryPage() {
     setClientNameOptions(nextOptions);
   }, []);
 
+  const [removedItemNames, setRemovedItemNames] = useState<Set<string>>(() => {
+    if (typeof window === "undefined") return new Set();
+    try {
+      const stored = localStorage.getItem("removed_paraphernalia_items");
+      return stored ? new Set(JSON.parse(stored)) : new Set();
+    } catch {
+      return new Set();
+    }
+  });
+
   const loadInventoryEquipmentOptions = useCallback(async () => {
+    let removed = new Set<string>();
+    try {
+      const stored = localStorage.getItem("removed_paraphernalia_items");
+      if (stored) removed = new Set(JSON.parse(stored));
+    } catch {
+      // ignore
+    }
+
     const wide = await supabase
       .from("paraphernalia_items")
       .select("item_name, item_group, unit_price, is_active")
@@ -690,11 +708,14 @@ export default function LogisticsInventoryPage() {
 
     const merged = new Map<string, InventoryEquipmentOption>();
     for (const item of EQUIPMENT_CATALOG) {
-      merged.set(item.name, { name: item.name, group: item.group, unitPrice: 0 });
+      const norm = normalizeEquipmentCatalogName(item.name);
+      if (!removed.has(norm)) {
+        merged.set(item.name, { name: item.name, group: item.group, unitPrice: 0 });
+      }
     }
     for (const row of sourceRows) {
       const name = normalizeEquipmentCatalogName(row.item_name);
-      if (!name) continue;
+      if (!name || removed.has(name)) continue;
       const rawGroup = String(row.item_group ?? "").trim() as EquipmentGroup;
       const group = EQUIPMENT_GROUPS.includes(rawGroup) ? rawGroup : equipmentGroupForName(name);
       merged.set(name, { name, group, unitPrice: numberValue(row.unit_price) });
@@ -766,17 +787,23 @@ export default function LogisticsInventoryPage() {
     setItemManagerError("");
     setItemManagerMessage("");
 
-    const res = await supabase
-      .from("paraphernalia_items")
-      .update({ is_active: false })
-      .eq("item_name", item.name);
+    const norm = normalizeEquipmentCatalogName(item.name);
+
+    await supabase.from("paraphernalia_items").update({ is_active: false }).eq("item_name", item.name);
+    await supabase.from("paraphernalia_items").delete().eq("item_name", item.name);
+
+    setRemovedItemNames((prev) => {
+      const next = new Set(prev);
+      next.add(norm);
+      try {
+        localStorage.setItem("removed_paraphernalia_items", JSON.stringify(Array.from(next)));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
 
     setItemBusy(false);
-    if (res.error) {
-      setItemManagerError(res.error.message || "Failed to remove item.");
-      return;
-    }
-
     setItemManagerMessage(`Item "${item.name}" removed.`);
     await loadInventoryEquipmentOptions();
   }
@@ -1254,8 +1281,16 @@ function downloadInventoryTemplateXlsx() {
 
     // Seed equipmentMap with all catalog items from EQUIPMENT_NAMES & inventoryEquipmentOptions
     const allKnownItems = new Set<string>();
-    for (const name of EQUIPMENT_NAMES) allKnownItems.add(name);
-    for (const opt of inventoryEquipmentOptions) if (opt.name) allKnownItems.add(opt.name);
+    for (const name of EQUIPMENT_NAMES) {
+      if (!removedItemNames.has(normalizeEquipmentCatalogName(name))) {
+        allKnownItems.add(name);
+      }
+    }
+    for (const opt of inventoryEquipmentOptions) {
+      if (opt.name && !removedItemNames.has(normalizeEquipmentCatalogName(opt.name))) {
+        allKnownItems.add(opt.name);
+      }
+    }
 
     for (const name of allKnownItems) {
       const norm = normalizeEquipmentName(name);

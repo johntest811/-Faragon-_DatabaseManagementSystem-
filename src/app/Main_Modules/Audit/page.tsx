@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, ClipboardList, RefreshCw, Clock3, Save, Search } from "lucide-react";
 import LoadingCircle from "../../Components/LoadingCircle";
+import { supabase } from "@/app/Client/SupabaseClients";
 
 type AuditRetentionResponse = {
   retentionDays?: number | null;
@@ -59,6 +60,101 @@ function errorMessage(e: unknown) {
     return safeText((e as { message?: unknown }).message) || "Failed to load audit log";
   }
   return safeText(e) || "Failed to load audit log";
+}
+
+async function fetchAuditPageDirectly({ page, pageSize, search }: { page: number; pageSize: number; search?: string }): Promise<AuditPageResponse> {
+  try {
+    const s = safeText(search).toLowerCase();
+    if (s) {
+      const res = await supabase
+        .from("audit_log")
+        .select("*")
+        .order("created_at", { ascending: false })
+        .limit(1000);
+
+      if (res.error) {
+        const msg = String(res.error.message || "").toLowerCase();
+        if (res.error.code === "42P01" || msg.includes("does not exist")) {
+          return { missingTable: true, rows: [], count: 0 };
+        }
+        throw res.error;
+      }
+
+      const all = (res.data ?? []) as AuditRow[];
+      const filtered = all.filter((r) => {
+        const text = [r.actor_name, r.actor_email, r.actor_user_id, r.action, r.page, r.entity, JSON.stringify(r.details)]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+        return text.includes(s);
+      });
+      const from = (page - 1) * pageSize;
+      return { rows: filtered.slice(from, from + pageSize), count: filtered.length, missingTable: false };
+    } else {
+      const from = (page - 1) * pageSize;
+      const to = from + pageSize - 1;
+      const res = await supabase
+        .from("audit_log")
+        .select("*", { count: "exact" })
+        .order("created_at", { ascending: false })
+        .range(from, to);
+
+      if (res.error) {
+        const msg = String(res.error.message || "").toLowerCase();
+        if (res.error.code === "42P01" || msg.includes("does not exist")) {
+          return { missingTable: true, rows: [], count: 0 };
+        }
+        throw res.error;
+      }
+
+      return { rows: (res.data ?? []) as AuditRow[], count: res.count ?? 0, missingTable: false };
+    }
+  } catch (e: unknown) {
+    return { unavailable: true, error: errorMessage(e), rows: [], count: 0 };
+  }
+}
+
+async function loadRetentionDirectly(): Promise<AuditRetentionResponse> {
+  try {
+    const res = await supabase
+      .from("audit_log_retention_settings")
+      .select("retention_days")
+      .eq("id", "default")
+      .maybeSingle();
+
+    if (res.error) {
+      const msg = String(res.error.message || "").toLowerCase();
+      if (res.error.code === "42P01" || msg.includes("does not exist")) {
+        return { missingTable: true, retentionDays: 30 };
+      }
+    }
+
+    return { retentionDays: res.data?.retention_days ?? 30, missingTable: false };
+  } catch {
+    return { retentionDays: 30, missingTable: false };
+  }
+}
+
+async function saveRetentionDirectly(retentionDays: number): Promise<AuditRetentionResponse & { success?: boolean | null }> {
+  try {
+    const res = await supabase
+      .from("audit_log_retention_settings")
+      .upsert({ id: "default", retention_days: retentionDays }, { onConflict: "id" })
+      .select("retention_days")
+      .maybeSingle();
+
+    if (res.error) {
+      const msg = String(res.error.message || "").toLowerCase();
+      if (res.error.code === "42P01" || msg.includes("does not exist")) {
+        return { missingTable: true, success: false, retentionDays };
+      }
+      throw res.error;
+    }
+
+    return { success: true, retentionDays: res.data?.retention_days ?? retentionDays, missingTable: false };
+  } catch (e: unknown) {
+    return { success: false, error: errorMessage(e), retentionDays };
+  }
 }
 
 const RETENTION_OPTIONS = [
@@ -124,14 +220,8 @@ export default function AuditPage() {
       setError("");
 
       try {
-        if (!api?.audit?.getPage) {
-          setError("Audit is available in the desktop app only.");
-          setRows([]);
-          setCount(0);
-          return;
-        }
-
-        const res = await api.audit.getPage({ page, pageSize, search });
+        const fetcher = api?.audit?.getPage ?? fetchAuditPageDirectly;
+        const res = await fetcher({ page, pageSize, search });
         if (cancelled) return;
 
         if (Boolean(res?.unavailable)) {
@@ -164,11 +254,8 @@ export default function AuditPage() {
 
     async function loadRetention() {
       try {
-        if (!api?.audit?.loadRetentionConfig) {
-          return;
-        }
-
-        const res = await api.audit.loadRetentionConfig();
+        const fetcher = api?.audit?.loadRetentionConfig ?? loadRetentionDirectly;
+        const res = await fetcher();
         if (cancelled) return;
 
         setRetentionDays(normalizeRetentionDays(res?.retentionDays));
@@ -214,13 +301,8 @@ export default function AuditPage() {
     setLoading(true);
     setError("");
     try {
-      if (!api?.audit?.getPage) {
-        setError("Audit is available in the desktop app only.");
-        setRows([]);
-        setCount(0);
-        return;
-      }
-      const res = await api.audit.getPage({ page, pageSize, search });
+      const fetcher = api?.audit?.getPage ?? fetchAuditPageDirectly;
+      const res = await fetcher({ page, pageSize, search });
       if (Boolean(res?.unavailable)) {
         setError(safeText(res?.error) || "Supabase is temporarily unreachable. Try again shortly.");
       }
@@ -239,12 +321,8 @@ export default function AuditPage() {
     setRetentionMessage("");
 
     try {
-      if (!api?.audit?.saveRetentionConfig) {
-        setRetentionMessage("Audit retention is available in the desktop app only.");
-        return;
-      }
-
-      const res = await api.audit.saveRetentionConfig({ retentionDays: normalizeRetentionDays(retentionDays) });
+      const saver = api?.audit?.saveRetentionConfig ?? (({ retentionDays }: { retentionDays: number }) => saveRetentionDirectly(retentionDays));
+      const res = await saver({ retentionDays: normalizeRetentionDays(retentionDays) });
       if (res?.missingTable) {
         setRetentionMissingTable(true);
         setRetentionMessage("Audit retention settings table is not installed yet. Run SQL/supabase_audit_log_retention.sql.");

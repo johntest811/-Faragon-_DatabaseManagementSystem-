@@ -782,21 +782,34 @@ export default function ParaphernaliaPage() {
       .sort((a, b) => safeText(a.specific_area).localeCompare(safeText(b.specific_area)));
   }, [contracts]);
 
+  const [removedItemNames, setRemovedItemNames] = useState<Set<string>>(() => {
+    if (typeof window === "undefined") return new Set();
+    try {
+      const stored = localStorage.getItem("removed_paraphernalia_items");
+      return stored ? new Set(JSON.parse(stored)) : new Set();
+    } catch {
+      return new Set();
+    }
+  });
+
   const displayItemOptions = useMemo<ItemOption[]>(() => {
     const fromDb = itemOptions.filter((item) => safeText(item.item_name, "") !== "");
+    let baseItems: ItemOption[] = [];
     if (fromDb.length) {
-      return fromDb.slice().sort((a, b) => (a.display_order ?? 9999) - (b.display_order ?? 9999) || a.item_name.localeCompare(b.item_name));
+      baseItems = fromDb.slice().sort((a, b) => (a.display_order ?? 9999) - (b.display_order ?? 9999) || a.item_name.localeCompare(b.item_name));
+    } else {
+      baseItems = ITEM_CATALOG.map((item) => ({
+        item_id: null,
+        item_name: item.item,
+        item_category: item.category,
+        item_group: equipmentGroupForName(item.item),
+        display_order: item.no,
+        unit_price: 0,
+      }));
     }
 
-    return ITEM_CATALOG.map((item) => ({
-      item_id: null,
-      item_name: item.item,
-      item_category: item.category,
-      item_group: equipmentGroupForName(item.item),
-      display_order: item.no,
-      unit_price: 0,
-    }));
-  }, [itemOptions]);
+    return baseItems.filter((item) => !removedItemNames.has(normalizeItem(item.item_name)));
+  }, [itemOptions, removedItemNames]);
 
   const itemCategoryByName = useMemo(() => {
     const map = new Map<string, InventoryKind>();
@@ -1825,22 +1838,34 @@ export default function ParaphernaliaPage() {
   }
 
   async function removeItemOption(item: ItemOption) {
-    if (!item.item_id) {
-      setItemOptions((prev) => prev.filter((row) => normalizeItem(row.item_name) !== normalizeItem(item.item_name)));
-      return;
-    }
-
     setItemBusy(true);
     setItemManagerError("");
     setItemManagerMessage("");
     try {
-      const softDelete = await supabase.from("paraphernalia_items").update({ is_active: false }).eq("item_id", item.item_id);
-      if (softDelete.error) {
-        const hardDelete = await supabase.from("paraphernalia_items").delete().eq("item_id", item.item_id);
-        if (hardDelete.error) throw hardDelete.error;
-      }
+      const normalizedName = normalizeItem(item.item_name);
 
-      setItemOptions((prev) => prev.filter((row) => row.item_id !== item.item_id));
+      if (item.item_id) {
+        const softDelete = await supabase.from("paraphernalia_items").update({ is_active: false }).eq("item_id", item.item_id);
+        if (softDelete.error) {
+          await supabase.from("paraphernalia_items").delete().eq("item_id", item.item_id);
+        }
+      }
+      await supabase.from("paraphernalia_items").update({ is_active: false }).eq("item_name", normalizedName);
+      await supabase.from("paraphernalia_items").delete().eq("item_name", normalizedName);
+
+      setItemOptions((prev) => prev.filter((row) => normalizeItem(row.item_name) !== normalizedName && row.item_id !== item.item_id));
+
+      setRemovedItemNames((prev) => {
+        const next = new Set(prev);
+        next.add(normalizedName);
+        try {
+          localStorage.setItem("removed_paraphernalia_items", JSON.stringify(Array.from(next)));
+        } catch {
+          // ignore
+        }
+        return next;
+      });
+
       setItemManagerMessage(`${item.item_name} was removed from future selections.`);
     } catch (e: unknown) {
       setItemManagerError(getErrorMessage(e, "Unable to remove item."));
