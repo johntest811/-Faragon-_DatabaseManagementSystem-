@@ -1169,11 +1169,12 @@ export default function ParaphernaliaPage() {
   }, []);
 
   const inventoryRows = useMemo<InventorySummaryRow[]>(() => {
+    const validItemNames = new Set(displayItemOptions.map((item) => normalizeItem(item.item_name)));
     const rows = new Map<string, InventorySummaryRow>();
 
     function ensureRow(item: string, clientName: string, specificArea: string) {
       const normalizedItem = normalizeItem(item);
-      if (!normalizedItem || removedItemNames.has(normalizedItem)) return null;
+      if (!normalizedItem || !validItemNames.has(normalizedItem) || removedItemNames.has(normalizedItem)) return null;
       const key = `${normalizeKey(clientName)}|${normalizeKey(specificArea)}|${normalizedItem}`;
       const existing = rows.get(key);
       if (existing) return existing;
@@ -1193,7 +1194,7 @@ export default function ParaphernaliaPage() {
 
     for (const row of stockInRows) {
       const item = normalizeItem(row.item);
-      if (!item || removedItemNames.has(item)) continue;
+      if (!item || !validItemNames.has(item) || removedItemNames.has(item)) continue;
       const clientName = resolveClientName(row.contract_id, row.detachment, row.client_name);
       const area = resolveSpecificArea(row.contract_id, row.detachment);
       const r = ensureRow(item, clientName, area);
@@ -1202,7 +1203,7 @@ export default function ParaphernaliaPage() {
 
     for (const row of stockOutRows) {
       const item = normalizeItem(row.item);
-      if (!item || removedItemNames.has(item)) continue;
+      if (!item || !validItemNames.has(item) || removedItemNames.has(item)) continue;
       const clientName = resolveClientName(row.contract_id, row.specific_area, row.client_name);
       const area = resolveSpecificArea(row.contract_id, row.specific_area);
       const r = ensureRow(item, clientName, area);
@@ -1212,47 +1213,49 @@ export default function ParaphernaliaPage() {
     return Array.from(rows.values())
       .map((row) => ({ ...row, stockBalance: row.stockIn - row.stockOut }))
       .sort((a, b) => a.clientName.localeCompare(b.clientName) || a.item.localeCompare(b.item));
-  }, [stockInRows, stockOutRows, resolveClientName, resolveItemCategory, resolveSpecificArea, removedItemNames]);
+  }, [displayItemOptions, stockInRows, stockOutRows, resolveClientName, resolveItemCategory, resolveSpecificArea, removedItemNames]);
 
   const mainInventoryRows = useMemo<MainInventoryRow[]>(() => {
+    const validItemNames = new Set(displayItemOptions.map((item) => normalizeItem(item.item_name)));
     const rows = new Map<string, MainInventoryRow>();
 
-    function ensureRow(itemName: unknown) {
-      const item = normalizeItem(itemName);
-      if (!item || removedItemNames.has(item)) return null;
-      const existing = rows.get(item);
-      if (existing) return existing;
-      const unitPrice = itemPriceByName.get(item) ?? 0;
-      const next: MainInventoryRow = {
-        id: item,
-        item,
-        category: resolveItemCategory(item),
-        group: itemGroupByName.get(item) ?? equipmentGroupForName(item),
+    for (const item of displayItemOptions) {
+      const norm = normalizeItem(item.item_name);
+      if (!norm || removedItemNames.has(norm)) continue;
+      const unitPrice = itemPriceByName.get(norm) ?? 0;
+      rows.set(norm, {
+        id: norm,
+        item: norm,
+        category: resolveItemCategory(norm),
+        group: itemGroupByName.get(norm) ?? equipmentGroupForName(norm),
         unitPrice,
         stockIn: 0,
         stockOut: 0,
         stockBalance: 0,
         inventoryValue: 0,
-      };
-      rows.set(item, next);
-      return next;
+      });
     }
 
-    for (const item of displayItemOptions) ensureRow(item.item_name);
     for (const row of stockInRows) {
-      const target = ensureRow(row.item);
+      const norm = normalizeItem(row.item);
+      if (!norm || !validItemNames.has(norm) || removedItemNames.has(norm)) continue;
+      const target = rows.get(norm);
       if (!target) continue;
       const detachment = resolveSpecificArea(row.contract_id, row.detachment);
       const isUnassignedLegacyReceipt = !normalizeKey(row.detachment) && !row.contract_id;
       if (isUnassignedLegacyReceipt || isFaragonDetachment(detachment)) target.stockIn += row.quantity ?? 0;
       else target.stockOut += row.quantity ?? 0;
     }
+
     for (const row of stockOutRows) {
+      const norm = normalizeItem(row.item);
+      if (!norm || !validItemNames.has(norm) || removedItemNames.has(norm)) continue;
+      const target = rows.get(norm);
+      if (!target) continue;
       const detachment = resolveSpecificArea(row.contract_id, row.specific_area);
       const isUnassignedLegacyIssue = !normalizeKey(row.specific_area) && !row.contract_id;
       if (!isUnassignedLegacyIssue && !isFaragonDetachment(detachment)) continue;
-      const target = ensureRow(row.item);
-      if (target) target.stockOut += row.quantity ?? 0;
+      target.stockOut += row.quantity ?? 0;
     }
 
     return Array.from(rows.values())
