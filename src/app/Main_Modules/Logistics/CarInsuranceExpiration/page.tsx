@@ -574,28 +574,45 @@ export default function CarInsuranceExpirationPage() {
     setSpecificAreasLoading(true);
     setSpecificAreasError("");
     try {
-      const result = await supabase
-        .from("contracts")
-        .select("specific_area")
-        .not("specific_area", "is", null)
-        .order("specific_area", { ascending: true })
-        .limit(5000);
-
-      if (result.error) throw result.error;
+      const [contractsRes, itemsRes] = await Promise.all([
+        supabase
+          .from("contracts")
+          .select("specific_area")
+          .not("specific_area", "is", null)
+          .order("specific_area", { ascending: true })
+          .limit(5000),
+        supabase
+          .from("other_expiration_items")
+          .select("post_distributions")
+          .eq("expiration_type", EXPIRATION_TYPE)
+          .not("post_distributions", "is", null)
+          .limit(5000),
+      ]);
 
       const uniqueAreas = new Map<string, string>();
-      for (const row of result.data ?? []) {
-        const area = cleanText((row as { specific_area?: unknown }).specific_area);
-        if (!area) continue;
-        const key = area.replace(/\s+/g, " ").toLowerCase();
-        if (!uniqueAreas.has(key)) uniqueAreas.set(key, area);
+
+      if (!contractsRes.error) {
+        for (const row of contractsRes.data ?? []) {
+          const area = cleanText((row as { specific_area?: unknown }).specific_area);
+          if (!area) continue;
+          const key = area.replace(/\s+/g, " ").toLowerCase();
+          if (!uniqueAreas.has(key)) uniqueAreas.set(key, area);
+        }
+      }
+
+      if (!itemsRes.error) {
+        for (const row of itemsRes.data ?? []) {
+          const area = cleanText((row as { post_distributions?: unknown }).post_distributions);
+          if (!area) continue;
+          const key = area.replace(/\s+/g, " ").toLowerCase();
+          if (!uniqueAreas.has(key)) uniqueAreas.set(key, area);
+        }
       }
 
       setSpecificAreaOptions(
         Array.from(uniqueAreas.values()).sort((left, right) => left.localeCompare(right, undefined, { sensitivity: "base" }))
       );
     } catch (loadError: unknown) {
-      setSpecificAreaOptions([]);
       setSpecificAreasError(getErrorMessage(loadError, "Failed to load Client Specific Areas."));
     } finally {
       setSpecificAreasLoading(false);
@@ -801,9 +818,11 @@ export default function CarInsuranceExpirationPage() {
     const carRegistrationFromDate = cleanText(form.carRegistrationFromDate);
     const carRegistrationToDate = cleanText(form.carRegistrationToDate);
     const plateNumber = cleanText(form.plateNumber);
-    const selectedSpecificArea = specificAreaOptions.find(
-      (area) => area.replace(/\s+/g, " ").toLowerCase() === cleanText(form.postDistributions).replace(/\s+/g, " ").toLowerCase()
+    const userPostDistributions = cleanText(form.postDistributions);
+    const matchedSpecificArea = specificAreaOptions.find(
+      (area) => area.replace(/\s+/g, " ").toLowerCase() === userPostDistributions.replace(/\s+/g, " ").toLowerCase()
     );
+    const postDistributionsValue = matchedSpecificArea || userPostDistributions;
 
     if (!Number.isFinite(recordNo) || recordNo <= 0) {
       setError("No. is required and must be a positive number.");
@@ -813,12 +832,8 @@ export default function CarInsuranceExpirationPage() {
       setError("Patrol is required.");
       return;
     }
-    if (!selectedSpecificArea) {
-      setError(
-        specificAreasError
-          ? `Client Specific Areas could not be loaded: ${specificAreasError}`
-          : "Select an existing Client Specific Area for Post/s Distributions."
-      );
+    if (!postDistributionsValue) {
+      setError("Post/s Distributions is required.");
       return;
     }
     if (!cleanText(form.make)) {
@@ -873,7 +888,7 @@ export default function CarInsuranceExpirationPage() {
         expiration_type: EXPIRATION_TYPE,
         record_no: Math.trunc(recordNo),
         patrol: cleanText(form.patrol),
-        post_distributions: selectedSpecificArea,
+        post_distributions: postDistributionsValue,
         make: cleanText(form.make),
         model: cleanText(form.model),
         color: cleanText(form.color),
