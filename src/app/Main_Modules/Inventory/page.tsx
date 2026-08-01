@@ -692,6 +692,16 @@ export default function LogisticsInventoryPage() {
       // ignore
     }
 
+    const removedRes = await supabase.from("removed_paraphernalia_items").select("item_name");
+    if (!removedRes.error && removedRes.data) {
+      const dbRemoved = new Set(removedRes.data.map((r: { item_name: string }) => normalizeEquipmentCatalogName(r.item_name)).filter(Boolean));
+      removed = dbRemoved;
+      setRemovedItemNames(dbRemoved);
+      try {
+        localStorage.setItem("removed_paraphernalia_items", JSON.stringify(Array.from(dbRemoved)));
+      } catch {}
+    }
+
     const wide = await supabase
       .from("paraphernalia_items")
       .select("item_name, item_group, unit_price, is_active")
@@ -750,6 +760,17 @@ export default function LogisticsInventoryPage() {
       is_active: true,
     });
 
+    await supabase.from("removed_paraphernalia_items").delete().ilike("item_name", name);
+    await supabase.from("removed_paraphernalia_items").delete().eq("item_name", name);
+    setRemovedItemNames((prev) => {
+      const next = new Set(prev);
+      next.delete(name);
+      try {
+        localStorage.setItem("removed_paraphernalia_items", JSON.stringify(Array.from(next)));
+      } catch {}
+      return next;
+    });
+
     setItemBusy(false);
     if (res.error) {
       setItemManagerError(res.error.message || "Failed to add item option.");
@@ -799,6 +820,7 @@ export default function LogisticsInventoryPage() {
     await supabase.from("paraphernalia_items").delete().ilike("item_name", norm);
     await supabase.from("paraphernalia_items").update({ is_active: false }).eq("item_name", item.name);
     await supabase.from("paraphernalia_items").delete().eq("item_name", item.name);
+    await supabase.from("removed_paraphernalia_items").upsert({ item_name: norm }, { onConflict: "item_name" });
 
     setRemovedItemNames((prev) => {
       const next = new Set(prev);
@@ -1161,6 +1183,9 @@ function downloadInventoryTemplateXlsx() {
         void loadClientNameOptions();
       })
       .on("postgres_changes", { event: "*", schema: "public", table: "paraphernalia_items" }, () => {
+        void Promise.all([loadInventoryEquipmentOptions(), loadParaphernaliaBalances()]);
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "removed_paraphernalia_items" }, () => {
         void Promise.all([loadInventoryEquipmentOptions(), loadParaphernaliaBalances()]);
       })
       .on("postgres_changes", { event: "*", schema: "public", table: "restock" }, () => {

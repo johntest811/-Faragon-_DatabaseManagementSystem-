@@ -1147,6 +1147,15 @@ export default function ParaphernaliaPage() {
       setStockInRows([]);
       setStockOutRows([]);
     } finally {
+      const removedRes = await supabase.from("removed_paraphernalia_items").select("item_name");
+      if (!removedRes.error && removedRes.data) {
+        const dbSet = new Set(removedRes.data.map((r: { item_name: string }) => normalizeItem(r.item_name)).filter(Boolean));
+        setRemovedItemNames(dbSet);
+        try {
+          localStorage.setItem("removed_paraphernalia_items", JSON.stringify(Array.from(dbSet)));
+        } catch {}
+      }
+
       setLoading(false);
     }
   }
@@ -1158,6 +1167,7 @@ export default function ParaphernaliaPage() {
       .on("postgres_changes", { event: "*", schema: "public", table: "contracts" }, () => void loadAll())
       .on("postgres_changes", { event: "*", schema: "public", table: "applicants" }, () => void loadAll())
       .on("postgres_changes", { event: "*", schema: "public", table: "paraphernalia_items" }, () => void loadAll())
+      .on("postgres_changes", { event: "*", schema: "public", table: "removed_paraphernalia_items" }, () => void loadAll())
       .on("postgres_changes", { event: "*", schema: "public", table: "paraphernalia_detachment_tables" }, () => void loadAll())
       .on("postgres_changes", { event: "*", schema: "public", table: "paraphernalia" }, () => void loadAll())
       .on("postgres_changes", { event: "*", schema: "public", table: "restock" }, () => void loadAll())
@@ -1809,6 +1819,17 @@ export default function ParaphernaliaPage() {
         unit_price: toNumberOrNull(data?.unit_price) ?? unitPrice,
       };
 
+      await supabase.from("removed_paraphernalia_items").delete().ilike("item_name", nextItem.item_name);
+      await supabase.from("removed_paraphernalia_items").delete().eq("item_name", nextItem.item_name);
+      setRemovedItemNames((prev) => {
+        const next = new Set(prev);
+        next.delete(nextItem.item_name);
+        try {
+          localStorage.setItem("removed_paraphernalia_items", JSON.stringify(Array.from(next)));
+        } catch {}
+        return next;
+      });
+
       setItemOptions((prev) => {
         const withoutExisting = prev.filter((item) => normalizeItem(item.item_name) !== normalizeItem(nextItem.item_name));
         return [...withoutExisting, nextItem];
@@ -1876,6 +1897,7 @@ export default function ParaphernaliaPage() {
       await supabase.from("paraphernalia_items").delete().ilike("item_name", normalizedName);
       await supabase.from("paraphernalia_items").update({ is_active: false }).eq("item_name", item.item_name);
       await supabase.from("paraphernalia_items").delete().eq("item_name", item.item_name);
+      await supabase.from("removed_paraphernalia_items").upsert({ item_name: normalizedName }, { onConflict: "item_name" });
 
       setItemOptions((prev) => prev.filter((row) => normalizeItem(row.item_name) !== normalizedName && row.item_id !== item.item_id));
 
@@ -1927,6 +1949,17 @@ export default function ParaphernaliaPage() {
       },
       { onConflict: "item_name" }
     );
+
+    await supabase.from("removed_paraphernalia_items").delete().ilike("item_name", normalized);
+    await supabase.from("removed_paraphernalia_items").delete().eq("item_name", normalized);
+    setRemovedItemNames((prev) => {
+      const next = new Set(prev);
+      next.delete(normalized);
+      try {
+        localStorage.setItem("removed_paraphernalia_items", JSON.stringify(Array.from(next)));
+      } catch {}
+      return next;
+    });
 
     if (upsertError) {
       setSchemaWarning("Run SQL/supabase_paraphernalia_stock_in_out.sql so typed items can be saved into the dropdown list.");

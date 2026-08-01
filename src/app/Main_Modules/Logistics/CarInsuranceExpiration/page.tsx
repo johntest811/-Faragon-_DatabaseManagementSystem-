@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { Download, FileText, PencilLine, Plus, RefreshCw, Search, Trash2, Upload } from "lucide-react";
 import jsPDF from "jspdf";
@@ -462,7 +463,12 @@ export default function CarInsuranceExpirationPage() {
   const { canDelete: canDeleteRecords, loading: deleteLoading, error: deleteError } = useMyModuleDeleteAccess(MODULE_KEY);
   const { loading: columnLoading, error: columnError } = useMyColumnAccess(MODULE_KEY);
 
+  const [mounted, setMounted] = useState(false);
   const [rows, setRows] = useState<CarInsuranceRow[]>([]);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
   const [loadingRows, setLoadingRows] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -1551,135 +1557,138 @@ export default function CarInsuranceExpirationPage() {
           </div>
         </section>
 
-        {formOpen ? (
-          <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 p-4 sm:p-6 backdrop-blur-sm animate-fade-in" onClick={clearForm}>
-            <div className="relative flex max-h-[90vh] w-full max-w-5xl flex-col rounded-3xl border border-white/60 bg-white shadow-2xl animate-scale-in" onClick={(e) => e.stopPropagation()}>
-              <div className="flex shrink-0 flex-wrap items-start justify-between gap-3 border-b px-6 py-4">
-                <div>
-                  <div className="text-lg font-semibold text-black">{formTitle}</div>
-                  <div className="text-sm text-gray-500">Fill both date groups, then save to queue expiration reminders.</div>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setEditingId(null);
-                      setForm(emptyForm(String(nextRecordNo)));
-                      setError("");
-                      setSuccess("");
-                    }}
-                    className="rounded-xl border bg-white px-4 py-2 text-sm font-medium text-black hover:bg-gray-50"
-                  >
-                    Reset form
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={clearForm}
-                    className="rounded-xl border bg-white px-4 py-2 text-sm font-medium text-black hover:bg-gray-50"
-                  >
-                    Close
-                  </button>
-                </div>
-              </div>
-
-              <form
-                className="flex flex-1 flex-col overflow-hidden"
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  void saveRecord();
-                }}
-              >
-                {error ? (
-                  <div className="mx-6 mt-4 flex items-start justify-between gap-3 rounded-2xl border-2 border-red-300 bg-red-50 p-4 text-red-900 shadow-md animate-fade-in">
-                    <div className="flex items-start gap-3">
-                      <span className="mt-0.5 text-xl">⚠️</span>
-                      <div>
-                        <div className="text-sm font-bold uppercase tracking-wider text-red-900">Why action cannot proceed</div>
-                        <div className="mt-1 text-sm font-medium text-red-800">{error}</div>
-                      </div>
+        {mounted && formOpen
+          ? createPortal(
+              <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 p-4 sm:p-6 backdrop-blur-sm animate-fade-in" onClick={clearForm}>
+                <div className="relative flex max-h-[90vh] w-full max-w-5xl flex-col rounded-3xl border border-white/60 bg-white shadow-2xl animate-scale-in" onClick={(e) => e.stopPropagation()}>
+                  <div className="flex shrink-0 flex-wrap items-start justify-between gap-3 border-b px-6 py-4">
+                    <div>
+                      <div className="text-lg font-semibold text-black">{formTitle}</div>
+                      <div className="text-sm text-gray-500">Fill both date groups, then save to queue expiration reminders.</div>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => setError("")}
-                      className="rounded-lg border border-red-300 bg-red-100 px-2.5 py-1 text-xs font-semibold text-red-900 hover:bg-red-200"
-                    >
-                      Dismiss
-                    </button>
-                  </div>
-                ) : null}
-                <div className="flex-1 overflow-y-auto px-6 py-6 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-                  {FORM_FIELDS.map((field) => {
-                    const commonInputClass = "w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-black placeholder:text-gray-400 disabled:bg-gray-100 disabled:text-gray-500";
-                    const value = form[field.key];
 
-                    return (
-                      <label key={String(field.key)} className={`space-y-1 ${field.spanClassName ?? ""}`}>
-                        <span className="block text-sm font-medium text-black">{field.label}</span>
-                        {field.key === "postDistributions" ? (
-                          <>
-                            <SearchDropdownInput
-                              value={String(value)}
-                              onChange={(nextValue) => setForm((current) => ({ ...current, postDistributions: nextValue }))}
-                              options={specificAreaOptions}
-                              placeholder="Type or select a Client Specific Area"
-                              emptyLabel={specificAreasLoading ? "Loading Client Specific Areas..." : "No matching Client Specific Area found."}
-                              required
-                              className={commonInputClass}
-                            />
-                            {specificAreasError ? (
-                              <span className="block text-xs text-red-600">{specificAreasError}</span>
-                            ) : (
-                              <span className="block text-xs text-gray-500">Options come from the Client page Specific Area column.</span>
-                            )}
-                          </>
-                        ) : field.type === "textarea" ? (
-                          <textarea
-                            rows={3}
-                            value={String(value)}
-                            onChange={(e) => setForm((current) => ({ ...current, [field.key]: e.target.value }))}
-                            placeholder={field.placeholder}
-                            disabled={!editable}
-                            className={`${commonInputClass} min-h-[92px] resize-y`}
-                          />
-                        ) : (
-                          <input
-                            type={field.type}
-                            value={String(value)}
-                            onChange={(e) => setForm((current) => ({ ...current, [field.key]: e.target.value }))}
-                            placeholder={field.placeholder}
-                            min={field.min}
-                            max={field.max}
-                            disabled={!editable}
-                            className={commonInputClass}
-                          />
-                        )}
-                      </label>
-                    );
-                  })}
-                </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingId(null);
+                          setForm(emptyForm(String(nextRecordNo)));
+                          setError("");
+                          setSuccess("");
+                        }}
+                        className="rounded-xl border bg-white px-4 py-2 text-sm font-medium text-black hover:bg-gray-50"
+                      >
+                        Reset form
+                      </button>
 
-                <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t bg-gray-50 px-6 py-4">
-                  <div className="text-xs text-gray-500">
-                    {canEditRecords
-                      ? "Create and update actions are controlled by the module edit permission."
-                      : "View-only access. Request edit access to add or update records."}
+                      <button
+                        type="button"
+                        onClick={clearForm}
+                        className="rounded-xl border bg-white px-4 py-2 text-sm font-medium text-black hover:bg-gray-50"
+                      >
+                        Close
+                      </button>
+                    </div>
                   </div>
 
-                  <button
-                    type="submit"
-                    disabled={!canEditRecords || saving}
-                    className="inline-flex items-center gap-2 rounded-xl bg-[#FFDA03] px-5 py-2.5 text-sm font-semibold text-black disabled:cursor-not-allowed disabled:opacity-50 hover:brightness-95"
+                  <form
+                    className="flex flex-1 flex-col overflow-hidden"
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      void saveRecord();
+                    }}
                   >
-                    {editingId === null ? <Plus className="h-4 w-4" /> : <PencilLine className="h-4 w-4" />}
-                    {saving ? "Saving..." : saveLabel}
-                  </button>
+                    {error ? (
+                      <div className="mx-6 mt-4 flex items-start justify-between gap-3 rounded-2xl border-2 border-red-300 bg-red-50 p-4 text-red-900 shadow-md animate-fade-in">
+                        <div className="flex items-start gap-3">
+                          <span className="mt-0.5 text-xl">⚠️</span>
+                          <div>
+                            <div className="text-sm font-bold uppercase tracking-wider text-red-900">Why action cannot proceed</div>
+                            <div className="mt-1 text-sm font-medium text-red-800">{error}</div>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setError("")}
+                          className="rounded-lg border border-red-300 bg-red-100 px-2.5 py-1 text-xs font-semibold text-red-900 hover:bg-red-200"
+                        >
+                          Dismiss
+                        </button>
+                      </div>
+                    ) : null}
+                    <div className="flex-1 overflow-y-auto px-6 py-6 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+                      {FORM_FIELDS.map((field) => {
+                        const commonInputClass = "w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-black placeholder:text-gray-400 disabled:bg-gray-100 disabled:text-gray-500";
+                        const value = form[field.key];
+
+                        return (
+                          <label key={String(field.key)} className={`space-y-1 ${field.spanClassName ?? ""}`}>
+                            <span className="block text-sm font-medium text-black">{field.label}</span>
+                            {field.key === "postDistributions" ? (
+                              <>
+                                <SearchDropdownInput
+                                  value={String(value)}
+                                  onChange={(nextValue) => setForm((current) => ({ ...current, postDistributions: nextValue }))}
+                                  options={specificAreaOptions}
+                                  placeholder="Type or select a Client Specific Area"
+                                  emptyLabel={specificAreasLoading ? "Loading Client Specific Areas..." : "No matching Client Specific Area found."}
+                                  required
+                                  className={commonInputClass}
+                                />
+                                {specificAreasError ? (
+                                  <span className="block text-xs text-red-600">{specificAreasError}</span>
+                                ) : (
+                                  <span className="block text-xs text-gray-500">Options come from the Client page Specific Area column.</span>
+                                )}
+                              </>
+                            ) : field.type === "textarea" ? (
+                              <textarea
+                                rows={3}
+                                value={String(value)}
+                                onChange={(e) => setForm((current) => ({ ...current, [field.key]: e.target.value }))}
+                                placeholder={field.placeholder}
+                                disabled={!editable}
+                                className={`${commonInputClass} min-h-[92px] resize-y`}
+                              />
+                            ) : (
+                              <input
+                                type={field.type}
+                                value={String(value)}
+                                onChange={(e) => setForm((current) => ({ ...current, [field.key]: e.target.value }))}
+                                placeholder={field.placeholder}
+                                min={field.min}
+                                max={field.max}
+                                disabled={!editable}
+                                className={commonInputClass}
+                              />
+                            )}
+                          </label>
+                        );
+                      })}
+                    </div>
+
+                    <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t bg-gray-50 px-6 py-4">
+                      <div className="text-xs text-gray-500">
+                        {canEditRecords
+                          ? "Create and update actions are controlled by the module edit permission."
+                          : "View-only access. Request edit access to add or update records."}
+                      </div>
+
+                      <button
+                        type="submit"
+                        disabled={!canEditRecords || saving}
+                        className="inline-flex items-center gap-2 rounded-xl bg-[#FFDA03] px-5 py-2.5 text-sm font-semibold text-black disabled:cursor-not-allowed disabled:opacity-50 hover:brightness-95"
+                      >
+                        {editingId === null ? <Plus className="h-4 w-4" /> : <PencilLine className="h-4 w-4" />}
+                        {saving ? "Saving..." : saveLabel}
+                      </button>
+                    </div>
+                  </form>
                 </div>
-              </form>
-            </div>
-          </div>
-        ) : null}
+              </div>,
+              document.body
+            )
+          : null}
 
         <SpreadsheetImportModal
           open={importOpen}
@@ -1705,116 +1714,122 @@ export default function CarInsuranceExpirationPage() {
           ]}
         />
 
-        {addRecipientOpen ? (
-          <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm animate-fade-in" onClick={resetRecipientForm}>
-            <div className="relative flex max-h-[90vh] w-full max-w-lg flex-col rounded-3xl border border-white/60 bg-white shadow-2xl animate-scale-in" onClick={(e) => e.stopPropagation()}>
-              <div className="flex shrink-0 items-start justify-between gap-3 border-b px-6 py-4">
-                <div>
-                  <div className="text-lg font-semibold text-black">Add recipient</div>
-                  <div className="text-sm text-gray-500">Add an inbox that should receive Car Insurance reminders.</div>
+        {mounted && addRecipientOpen
+          ? createPortal(
+              <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm animate-fade-in" onClick={resetRecipientForm}>
+                <div className="relative flex max-h-[90vh] w-full max-w-lg flex-col rounded-3xl border border-white/60 bg-white shadow-2xl animate-scale-in" onClick={(e) => e.stopPropagation()}>
+                  <div className="flex shrink-0 items-start justify-between gap-3 border-b px-6 py-4">
+                    <div>
+                      <div className="text-lg font-semibold text-black">Add recipient</div>
+                      <div className="text-sm text-gray-500">Add an inbox that should receive Car Insurance reminders.</div>
+                    </div>
+                    <button type="button" onClick={resetRecipientForm} className="rounded-xl border bg-white px-4 py-2 text-sm font-medium text-black hover:bg-gray-50">
+                      Close
+                    </button>
+                  </div>
+
+                  <div className="flex-1 overflow-y-auto space-y-4 px-6 py-6">
+                    <label className="block space-y-1">
+                      <span className="text-sm font-medium text-black">Recipient email</span>
+                      <input
+                        value={recipientEmail}
+                        onChange={(e) => setRecipientEmail(e.target.value)}
+                        placeholder="name@example.com"
+                        className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-black"
+                      />
+                    </label>
+
+                    <label className="block space-y-1">
+                      <span className="text-sm font-medium text-black">Notes</span>
+                      <textarea
+                        rows={3}
+                        value={recipientNotes}
+                        onChange={(e) => setRecipientNotes(e.target.value)}
+                        placeholder="Optional notes"
+                        className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-black"
+                      />
+                    </label>
+                  </div>
+
+                  <div className="flex shrink-0 items-center justify-between gap-3 border-t bg-gray-50 px-6 py-4">
+                    <div className="text-xs text-gray-500">This recipient list is separate from Settings.</div>
+                    <button
+                      type="button"
+                      onClick={() => void addRecipient()}
+                      disabled={recipientSaving}
+                      className="inline-flex items-center gap-2 rounded-xl bg-[#FFDA03] px-4 py-2 text-sm font-semibold text-black disabled:opacity-50 hover:brightness-95"
+                    >
+                      {recipientSaving ? "Saving..." : "Add recipient"}
+                    </button>
+                  </div>
                 </div>
-                <button type="button" onClick={resetRecipientForm} className="rounded-xl border bg-white px-4 py-2 text-sm font-medium text-black hover:bg-gray-50">
-                  Close
-                </button>
-              </div>
+              </div>,
+              document.body
+            )
+          : null}
 
-              <div className="flex-1 overflow-y-auto space-y-4 px-6 py-6">
-                <label className="block space-y-1">
-                  <span className="text-sm font-medium text-black">Recipient email</span>
-                  <input
-                    value={recipientEmail}
-                    onChange={(e) => setRecipientEmail(e.target.value)}
-                    placeholder="name@example.com"
-                    className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-black"
-                  />
-                </label>
+        {mounted && editingRecipientId !== null
+          ? createPortal(
+              <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm animate-fade-in" onClick={closeRecipientEditor}>
+                <div className="relative flex max-h-[90vh] w-full max-w-lg flex-col rounded-3xl border border-white/60 bg-white shadow-2xl animate-scale-in" onClick={(e) => e.stopPropagation()}>
+                  <div className="flex shrink-0 items-start justify-between gap-3 border-b px-6 py-4">
+                    <div>
+                      <div className="text-lg font-semibold text-black">Edit recipient</div>
+                      <div className="text-sm text-gray-500">Update this Car Insurance notification inbox.</div>
+                    </div>
+                    <button type="button" onClick={closeRecipientEditor} className="rounded-xl border bg-white px-4 py-2 text-sm font-medium text-black hover:bg-gray-50">
+                      Close
+                    </button>
+                  </div>
 
-                <label className="block space-y-1">
-                  <span className="text-sm font-medium text-black">Notes</span>
-                  <textarea
-                    rows={3}
-                    value={recipientNotes}
-                    onChange={(e) => setRecipientNotes(e.target.value)}
-                    placeholder="Optional notes"
-                    className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-black"
-                  />
-                </label>
-              </div>
+                  <div className="flex-1 overflow-y-auto space-y-4 px-6 py-6">
+                    <label className="block space-y-1">
+                      <span className="text-sm font-medium text-black">Recipient email</span>
+                      <input
+                        value={editRecipientEmail}
+                        onChange={(e) => setEditRecipientEmail(e.target.value)}
+                        placeholder="name@example.com"
+                        className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-black"
+                      />
+                    </label>
 
-              <div className="flex shrink-0 items-center justify-between gap-3 border-t bg-gray-50 px-6 py-4">
-                <div className="text-xs text-gray-500">This recipient list is separate from Settings.</div>
-                <button
-                  type="button"
-                  onClick={() => void addRecipient()}
-                  disabled={recipientSaving}
-                  className="inline-flex items-center gap-2 rounded-xl bg-[#FFDA03] px-4 py-2 text-sm font-semibold text-black disabled:opacity-50 hover:brightness-95"
-                >
-                  {recipientSaving ? "Saving..." : "Add recipient"}
-                </button>
-              </div>
-            </div>
-          </div>
-        ) : null}
+                    <label className="block space-y-1">
+                      <span className="text-sm font-medium text-black">Notes</span>
+                      <textarea
+                        rows={3}
+                        value={editRecipientNotes}
+                        onChange={(e) => setEditRecipientNotes(e.target.value)}
+                        placeholder="Optional notes"
+                        className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-black"
+                      />
+                    </label>
 
-        {editingRecipientId !== null ? (
-          <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm animate-fade-in" onClick={closeRecipientEditor}>
-            <div className="relative flex max-h-[90vh] w-full max-w-lg flex-col rounded-3xl border border-white/60 bg-white shadow-2xl animate-scale-in" onClick={(e) => e.stopPropagation()}>
-              <div className="flex shrink-0 items-start justify-between gap-3 border-b px-6 py-4">
-                <div>
-                  <div className="text-lg font-semibold text-black">Edit recipient</div>
-                  <div className="text-sm text-gray-500">Update this Car Insurance notification inbox.</div>
+                    <label className="inline-flex items-center gap-2 text-sm text-black">
+                      <input
+                        type="checkbox"
+                        checked={editRecipientActive}
+                        onChange={(e) => setEditRecipientActive(e.target.checked)}
+                      />
+                      Active
+                    </label>
+                  </div>
+
+                  <div className="flex shrink-0 items-center justify-between gap-3 border-t bg-gray-50 px-6 py-4">
+                    <div className="text-xs text-gray-500">Only active recipients receive Car Insurance reminders.</div>
+                    <button
+                      type="button"
+                      onClick={() => void saveRecipientEdit()}
+                      disabled={recipientSaving}
+                      className="inline-flex items-center gap-2 rounded-xl bg-[#FFDA03] px-4 py-2 text-sm font-semibold text-black disabled:opacity-50 hover:brightness-95"
+                    >
+                      {recipientSaving ? "Saving..." : "Save changes"}
+                    </button>
+                  </div>
                 </div>
-                <button type="button" onClick={closeRecipientEditor} className="rounded-xl border bg-white px-4 py-2 text-sm font-medium text-black hover:bg-gray-50">
-                  Close
-                </button>
-              </div>
-
-              <div className="flex-1 overflow-y-auto space-y-4 px-6 py-6">
-                <label className="block space-y-1">
-                  <span className="text-sm font-medium text-black">Recipient email</span>
-                  <input
-                    value={editRecipientEmail}
-                    onChange={(e) => setEditRecipientEmail(e.target.value)}
-                    placeholder="name@example.com"
-                    className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-black"
-                  />
-                </label>
-
-                <label className="block space-y-1">
-                  <span className="text-sm font-medium text-black">Notes</span>
-                  <textarea
-                    rows={3}
-                    value={editRecipientNotes}
-                    onChange={(e) => setEditRecipientNotes(e.target.value)}
-                    placeholder="Optional notes"
-                    className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-black"
-                  />
-                </label>
-
-                <label className="inline-flex items-center gap-2 text-sm text-black">
-                  <input
-                    type="checkbox"
-                    checked={editRecipientActive}
-                    onChange={(e) => setEditRecipientActive(e.target.checked)}
-                  />
-                  Active
-                </label>
-              </div>
-
-              <div className="flex shrink-0 items-center justify-between gap-3 border-t bg-gray-50 px-6 py-4">
-                <div className="text-xs text-gray-500">Only active recipients receive Car Insurance reminders.</div>
-                <button
-                  type="button"
-                  onClick={() => void saveRecipientEdit()}
-                  disabled={recipientSaving}
-                  className="inline-flex items-center gap-2 rounded-xl bg-[#FFDA03] px-4 py-2 text-sm font-semibold text-black disabled:opacity-50 hover:brightness-95"
-                >
-                  {recipientSaving ? "Saving..." : "Save recipient"}
-                </button>
-              </div>
-            </div>
-          </div>
-        ) : null}
+              </div>,
+              document.body
+            )
+          : null}
       </section>
     </TableZoomWrapper>
   );

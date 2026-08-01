@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import * as XLSX from "xlsx";
 import { readSpreadsheetRows } from "./spreadsheetImportUtils";
 
@@ -52,11 +53,17 @@ export default function SpreadsheetImportModal({
   onImport,
   previewColumns = ["Name"],
 }: SpreadsheetImportModalProps) {
+  const [mounted, setMounted] = useState(false);
   const [fileName, setFileName] = useState<string>("");
   const [rows, setRows] = useState<RowObject[]>([]);
   const [parsingError, setParsingError] = useState<string>("");
   const [importing, setImporting] = useState(false);
   const [resultMsg, setResultMsg] = useState<string>("");
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
   const canDownloadTemplate =
     allowTemplateDownloads &&
     (Boolean(onDownloadTemplateCsv) || Boolean(onDownloadTemplateXlsx) || Boolean(templateSampleData));
@@ -148,10 +155,10 @@ export default function SpreadsheetImportModal({
     onClose();
   }
 
-  if (!open) return null;
+  if (!open || !mounted || typeof document === "undefined") return null;
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+  return createPortal(
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm animate-fade-in">
       <div className="w-full max-w-3xl bg-white rounded-3xl border shadow-xl overflow-hidden">
         <div className="px-6 py-4 border-b flex items-center justify-between gap-3">
           <div className="min-w-0">
@@ -282,6 +289,7 @@ export default function SpreadsheetImportModal({
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
