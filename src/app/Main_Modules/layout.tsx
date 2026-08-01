@@ -991,20 +991,25 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
   }, []);
 
   useEffect(() => {
-    // Log navigation events to audit (desktop only).
+    // Log navigation events to audit (desktop and web/vercel).
     let cancelled = false;
     async function logNav() {
-      if (!api?.audit?.logEvent) return;
       try {
         const session = await supabase.auth.getSession();
         if (cancelled) return;
-        await api.audit.logEvent({
+        const payload = {
           actor_user_id: session.data.session?.user?.id ?? null,
           actor_email: session.data.session?.user?.email ?? null,
           actor_name: adminDisplayName,
           action: "NAVIGATE",
           page: pathname,
-        });
+        };
+
+        if (api?.audit?.logEvent) {
+          await api.audit.logEvent(payload);
+        } else {
+          await supabase.from("audit_log").insert(payload);
+        }
       } catch {
         // ignore
       }
@@ -1117,7 +1122,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
       setActivityCount(0);
       return;
     }
-    if (!api?.audit?.getRecent) return;
+
     try {
       const key = "auditLastSeenAt";
       const sinceIso = (() => {
@@ -1128,12 +1133,52 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
         }
       })();
 
-      const res = await api.audit.getRecent({ limit: 8, sinceIso });
-      setActivityMissingTable(Boolean(res?.missingTable));
-      setActivityCount(Number(res?.count ?? 0));
+      if (api?.audit?.getRecent) {
+        const res = await api.audit.getRecent({ limit: 8, sinceIso });
+        setActivityMissingTable(Boolean(res?.missingTable));
+        setActivityCount(Number(res?.count ?? 0));
 
-      const recentRes = await api.audit.getRecent({ limit: 8 });
-      setRecentActivity(recentRes?.rows ?? []);
+        const recentRes = await api.audit.getRecent({ limit: 8 });
+        setRecentActivity(recentRes?.rows ?? []);
+        return;
+      }
+
+      // Web/Vercel Fallback (Direct Supabase query)
+      let countQuery = supabase.from("audit_log").select("*", { count: "exact", head: true });
+      if (sinceIso) {
+        countQuery = countQuery.gt("created_at", sinceIso);
+      }
+      const countRes = await countQuery;
+      if (countRes.error) {
+        const isMissing = countRes.error.code === "42P01" || countRes.error.message.includes("relation \"audit_log\" does not exist");
+        setActivityMissingTable(isMissing);
+        setActivityCount(0);
+      } else {
+        setActivityMissingTable(false);
+        setActivityCount(Number(countRes.count ?? 0));
+      }
+
+      const { data, error } = await supabase
+        .from("audit_log")
+        .select("id, created_at, actor_user_id, actor_email, actor_name, action, page")
+        .order("created_at", { ascending: false })
+        .limit(8);
+
+      if (!error && data) {
+        setRecentActivity(
+          (data as Array<Record<string, unknown>>).map((r) => ({
+            id: String(r.id ?? ""),
+            created_at: String(r.created_at ?? new Date().toISOString()),
+            actor_user_id: r.actor_user_id == null ? null : String(r.actor_user_id),
+            actor_email: r.actor_email == null ? null : String(r.actor_email),
+            actor_name: r.actor_name == null ? null : String(r.actor_name),
+            action: String(r.action ?? "ACTIVITY"),
+            page: r.page == null ? null : String(r.page),
+          }))
+        );
+      } else {
+        setRecentActivity([]);
+      }
     } catch {
       // ignore
     }
@@ -1146,7 +1191,112 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
       return;
     }
 
-    if (!api?.notifications?.getExpiringSummary) return;
+    if (!api?.notifications?.getExpiringSummary) {
+      try {
+        await refreshNotificationPrefs();
+        const rows: ExpiringSummaryRow[] = [];
+        const now = new Date();
+
+        if (canViewExpiringWidget) {
+          const { data: licData } = await supabase
+            .from("licensure")
+            .select("applicant_id, license_name, expiration_date, created_at, updated_at")
+            .not("expiration_date", "is", null)
+            .limit(100);
+
+          if (licData) {
+            for (const r of licData as Array<Record<string, unknown>>) {
+              if (!r.expiration_date) continue;
+              const expDate = new Date(String(r.expiration_date));
+              const diffDays = Math.ceil((expDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+              if (diffDays <= 90) {
+                rows.push({
+                  applicant_id: String(r.applicant_id ?? ""),
+                  first_name: null,
+                  last_name: null,
+                  license_type: String(r.license_name ?? "License"),
+                  expires_on: String(r.expiration_date),
+                  days_until_expiry: diffDays,
+                  source_kind: "licensure",
+                  created_at: r.created_at ? String(r.created_at) : null,
+                  updated_at: r.updated_at ? String(r.updated_at) : null,
+                });
+              }
+            }
+          }
+        }
+
+        if (canViewCarInsuranceWidget) {
+          const { data: othData } = await supabase
+            .from("other_expiration_items")
+            .select("id, expiration_type, make, model, plate_number, recipient_email, policy_expiration, registration_expiration, created_at, updated_at")
+            .limit(100);
+
+          if (othData) {
+            for (const r of othData as Array<Record<string, unknown>>) {
+              const expStr = String(r.policy_expiration || r.registration_expiration || "");
+              if (!expStr) continue;
+              const expDate = new Date(expStr);
+              const diffDays = Math.ceil((expDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+              if (diffDays <= 90) {
+                const title = [r.make, r.model, r.plate_number ? `(${r.plate_number})` : ""].filter(Boolean).join(" ") || "Vehicle Policy";
+                rows.push({
+                  applicant_id: `other:${r.id}`,
+                  first_name: null,
+                  last_name: null,
+                  record_name: title,
+                  recipient_email: r.recipient_email ? String(r.recipient_email) : null,
+                  license_type: title,
+                  expires_on: expStr,
+                  days_until_expiry: diffDays,
+                  source_kind: "other",
+                  created_at: r.created_at ? String(r.created_at) : null,
+                  updated_at: r.updated_at ? String(r.updated_at) : null,
+                });
+              }
+            }
+          }
+        }
+
+        if (canViewContractExpiringWidget) {
+          const { data: conData } = await supabase
+            .from("contracts")
+            .select("id, client_name, contract_end, created_at, updated_at")
+            .not("contract_end", "is", null)
+            .limit(100);
+
+          if (conData) {
+            for (const r of conData as Array<Record<string, unknown>>) {
+              if (!r.contract_end) continue;
+              const expDate = new Date(String(r.contract_end));
+              const diffDays = Math.ceil((expDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+              if (diffDays <= 90) {
+                rows.push({
+                  applicant_id: `contract:${r.id}`,
+                  first_name: null,
+                  last_name: null,
+                  record_name: String(r.client_name ?? "Contract"),
+                  license_type: String(r.client_name ?? "Contract Expiration"),
+                  expires_on: String(r.contract_end),
+                  days_until_expiry: diffDays,
+                  source_kind: "contract",
+                  created_at: r.created_at ? String(r.created_at) : null,
+                  updated_at: r.updated_at ? String(r.updated_at) : null,
+                });
+              }
+            }
+          }
+        }
+
+        const sortedRows = rows.sort((a, b) => a.days_until_expiry - b.days_until_expiry);
+        const dismissedKeys = readDismissedExpiringSummaryKeys();
+        const visibleRows = sortedRows.filter((row) => !dismissedKeys.has(getExpiringSummaryRowKey(row)));
+        applyVisibleExpiringRows(visibleRows);
+      } catch {
+        applyVisibleExpiringRows([]);
+      }
+      return;
+    }
     try {
       await refreshNotificationPrefs();
       const res = await api.notifications.getExpiringSummary({ limit: 100 });
