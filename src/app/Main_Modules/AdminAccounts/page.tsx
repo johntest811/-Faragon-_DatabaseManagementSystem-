@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../Client/SupabaseClients";
 import { useAuthRole } from "../../Client/useRbac";
@@ -799,13 +800,14 @@ export default function AdminAccountsPage() {
 				</div>
 			</div>
 
-			{createAccountOpen && canUsePortal ? (
-						<div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/45 p-4" onClick={() => setCreateAccountOpen(false)}>
+			{createAccountOpen && canUsePortal
+				? createPortal(
+						<div className="fixed inset-0 z-[190] flex items-center justify-center overflow-hidden bg-black/45 p-4" onClick={() => setCreateAccountOpen(false)}>
 							<div
-								className="w-full max-w-2xl overflow-hidden rounded-[28px] border border-white/70 bg-white shadow-2xl"
+								className="flex max-h-[calc(100dvh-2rem)] w-full max-w-2xl flex-col overflow-hidden rounded-[28px] border border-white/70 bg-white shadow-2xl"
 								onClick={(e) => e.stopPropagation()}
 							>
-								<div className="bg-gradient-to-r from-[#111827] via-[#8B1C1C] to-[#611313] px-6 py-5 text-white">
+								<div className="shrink-0 bg-gradient-to-r from-[#111827] via-[#8B1C1C] to-[#611313] px-6 py-5 text-white">
 									<div className="flex items-start justify-between gap-4">
 										<div>
 											<div className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.25em] text-white/75">
@@ -825,7 +827,7 @@ export default function AdminAccountsPage() {
 									</div>
 								</div>
 
-								<div className="p-6">
+								<div className="min-h-0 overflow-y-auto overscroll-contain p-6">
 									<div className="grid grid-cols-1 gap-4 md:grid-cols-2">
 										<div>
 											<div className="mb-1 text-xs font-semibold uppercase tracking-wide text-black">Username</div>
@@ -914,21 +916,24 @@ export default function AdminAccountsPage() {
 									</div>
 								</div>
 							</div>
-						</div>
-						) : null}
+						</div>,
+						document.body
+					)
+				: null}
 
-			{employeeAccountOpen && canUsePortal ? (
+			{employeeAccountOpen && canUsePortal
+				? createPortal(
 				<div
-					className="fixed inset-0 z-[95] flex items-center justify-center bg-black/45 p-4"
+					className="fixed inset-0 z-[195] flex items-center justify-center overflow-hidden bg-black/45 p-4"
 					onClick={() => {
 						if (!creatingEmployeeAccount) setEmployeeAccountOpen(false);
 					}}
 				>
 					<div
-						className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-[28px] border border-white/70 bg-white shadow-2xl"
+						className="flex max-h-[calc(100dvh-2rem)] w-full max-w-2xl flex-col overflow-hidden rounded-[28px] border border-white/70 bg-white shadow-2xl"
 						onClick={(event) => event.stopPropagation()}
 					>
-						<div className="bg-gradient-to-r from-slate-950 via-slate-800 to-[#8B1C1C] px-6 py-5 text-white">
+						<div className="shrink-0 bg-gradient-to-r from-slate-950 via-slate-800 to-[#8B1C1C] px-6 py-5 text-white">
 							<div className="flex items-start justify-between gap-4">
 								<div>
 									<div className="text-xs font-semibold uppercase tracking-[0.2em] text-[#FFDA03]">Security Personnel Directory</div>
@@ -946,7 +951,7 @@ export default function AdminAccountsPage() {
 							</div>
 						</div>
 
-						<div className="space-y-4 p-6">
+						<div className="min-h-0 space-y-4 overflow-y-auto overscroll-contain p-6">
 							{error ? <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
 							<label className="block">
 								<span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600">Active Employee</span>
@@ -1011,8 +1016,10 @@ export default function AdminAccountsPage() {
 							</div>
 						</div>
 					</div>
-				</div>
-			) : null}
+				</div>,
+				document.body
+				)
+				: null}
 
 			{editingAccount && canUsePortal ? (
 				<div

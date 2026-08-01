@@ -1713,9 +1713,29 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
   const ACCESS_ITEMS = useMemo(
     () =>
       [
-        { key: "access_accounts", name: "Admin Accounts", href: "/Main_Modules/AdminAccounts/", icon: Shield },
+        { key: "access_accounts", moduleKey: "access" as const, name: "Admin Accounts", href: "/Main_Modules/AdminAccounts/", icon: Shield },
+        {
+          key: "access_reviewer_queue",
+          moduleKey: "access_reviewer_queue" as const,
+          name: "Reviewer Queue",
+          href: "/Main_Modules/Requests/Queue/",
+          icon: ClipboardCheck,
+        },
       ] as const,
     []
+  );
+
+  const accessItemsVisible = useMemo(
+    () =>
+      sessionRole === "superadmin"
+        ? ACCESS_ITEMS
+        : ACCESS_ITEMS.filter((item) => item.moduleKey === "access_reviewer_queue" && allowedKeys.has(item.moduleKey)),
+    [ACCESS_ITEMS, allowedKeys, sessionRole]
+  );
+
+  const firstAccessKey = useMemo(
+    () => menu.find((item) => item.key === "access" || item.key === "access_reviewer_queue")?.key ?? null,
+    [menu]
   );
 
   const workforceItems = useMemo(
@@ -1916,14 +1936,15 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
   }, [collapsed, logisticsActive]);
 
   const accessActive = useMemo(() => {
-    if (sessionRole !== "superadmin") return false;
-    return [
-      "/Main_Modules/AdminAccounts/",
-      "/Main_Modules/Roles/",
-      "/Main_Modules/Permissions/",
-      "/Main_Modules/Requests/Queue/",
-    ].some((prefix) => pathname === prefix || pathname.startsWith(prefix));
-  }, [pathname, sessionRole]);
+    if (!accessItemsVisible.length) return false;
+    const childRouteActive = accessItemsVisible.some((item) => pathname === item.href || pathname.startsWith(item.href));
+    const accountToolsActive =
+      accessItemsVisible.some((item) => item.key === "access_accounts") &&
+      ["/Main_Modules/Roles/", "/Main_Modules/Permissions/"].some(
+        (prefix) => pathname === prefix || pathname.startsWith(prefix)
+      );
+    return childRouteActive || accountToolsActive;
+  }, [accessItemsVisible, pathname]);
 
   useEffect(() => {
     if (!collapsed && accessActive) setAccessOpen(true);
@@ -2093,7 +2114,10 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
               );
             }
 
-            if (item.key === "access" && sessionRole === "superadmin") {
+            const isFirstAccess = firstAccessKey && item.key === firstAccessKey;
+            if (isFirstAccess) {
+              if (!accessItemsVisible.length) return null;
+
               return (
                 <div key="access" ref={accessGroupRef} className="relative mb-1">
                   <button
@@ -2127,7 +2151,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
 
                   {!collapsed && accessOpen ? (
                     <div className="mt-1 ml-4 pl-3 border-l border-gray-200 space-y-1">
-                      {ACCESS_ITEMS.map((a) => {
+                      {accessItemsVisible.map((a) => {
                         const active = pathname === a.href || pathname.startsWith(a.href);
                         return (
                           <Link
@@ -2145,6 +2169,8 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
                 </div>
               );
             }
+
+            if (item.key === "access" || item.key === "access_reviewer_queue") return null;
 
             const active =
               (menuActivePath === item.href || menuActivePath.startsWith(item.href)) &&
@@ -3082,7 +3108,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
           )
         : null}
 
-      {sessionRole === "superadmin" && collapsed && accessFlyoutOpen && accessFlyoutPosition && canUsePortal
+      {accessItemsVisible.length > 0 && collapsed && accessFlyoutOpen && accessFlyoutPosition && canUsePortal
         ? createPortal(
             <div
               ref={accessFlyoutRef}
@@ -3091,7 +3117,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
             >
               <div className="px-2 py-1 text-xs font-semibold uppercase tracking-wide text-gray-500">Admin Accounts</div>
               <div className="mt-1 space-y-1 max-h-[62vh] overflow-y-auto">
-                {ACCESS_ITEMS.map((a) => {
+                {accessItemsVisible.map((a) => {
                   const active = pathname === a.href || pathname.startsWith(a.href);
                   return (
                     <Link
