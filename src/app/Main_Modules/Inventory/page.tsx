@@ -14,13 +14,13 @@ import SpreadsheetImportModal from "@/app/Components/SpreadsheetImportModal";
 import { readSpreadsheetRows } from "@/app/Components/spreadsheetImportUtils";
 import { addBrandedPdfHeader, buildBrandedAoa, buildBrandedWorkbookBuffer } from "../Components/exportBranding";
 import SearchDropdownInput from "@/app/Components/SearchDropdownInput";
+import AssignmentHistoryPopover from "../Components/AssignmentHistoryPopover";
 import {
   EQUIPMENT_CATALOG,
   EQUIPMENT_GROUPS,
   EQUIPMENT_NAMES,
   EquipmentGroup,
   equipmentGroupForName,
-  equipmentNamesForGroup,
   normalizeEquipmentCatalogName,
 } from "../Components/equipmentCatalog";
 
@@ -141,6 +141,14 @@ type ParaphernaliaBalanceRow = {
   item: string | null;
   stock_balance: number | null;
 };
+
+const INVENTORY_DETACHMENT_HISTORY = {
+  table: "inventory_detachment_history",
+  recordColumn: "inventory_id",
+  previousColumn: "previous_detachment",
+  newColumn: "new_detachment",
+  legacyColumn: "detachment",
+} as const;
 
 const EMPTY_FORM: InventoryForm = {
   equipment: "",
@@ -588,7 +596,7 @@ export default function LogisticsInventoryPage() {
   const [removedItemNames, setRemovedItemNames] = useState<Set<string>>(() => {
     if (typeof window === "undefined") return new Set();
     try {
-      const stored = localStorage.getItem("removed_paraphernalia_items");
+      const stored = localStorage.getItem("removed_inventory_equipment_items");
       return stored ? new Set(JSON.parse(stored)) : new Set();
     } catch {
       return new Set();
@@ -675,24 +683,24 @@ export default function LogisticsInventoryPage() {
   const loadInventoryEquipmentOptions = useCallback(async () => {
     let removed = new Set<string>();
     try {
-      const stored = localStorage.getItem("removed_paraphernalia_items");
+      const stored = localStorage.getItem("removed_inventory_equipment_items");
       if (stored) removed = new Set(JSON.parse(stored));
     } catch {
       // ignore
     }
 
-    const removedRes = await supabase.from("removed_paraphernalia_items").select("item_name");
+    const removedRes = await supabase.from("removed_inventory_equipment_items").select("item_name");
     if (!removedRes.error && removedRes.data) {
       const dbRemoved = new Set(removedRes.data.map((r: { item_name: string }) => normalizeEquipmentCatalogName(r.item_name)).filter(Boolean));
       removed = dbRemoved;
       setRemovedItemNames(dbRemoved);
       try {
-        localStorage.setItem("removed_paraphernalia_items", JSON.stringify(Array.from(dbRemoved)));
+        localStorage.setItem("removed_inventory_equipment_items", JSON.stringify(Array.from(dbRemoved)));
       } catch {}
     }
 
     const wide = await supabase
-      .from("paraphernalia_items")
+      .from("inventory_equipment_items")
       .select("item_name, item_group, unit_price, is_active")
       .eq("is_active", true)
       .order("display_order", { ascending: true })
@@ -703,7 +711,7 @@ export default function LogisticsInventoryPage() {
       sourceRows = (wide.data ?? []) as Array<Record<string, unknown>>;
     } else {
       const fallback = await supabase
-        .from("paraphernalia_items")
+        .from("inventory_equipment_items")
         .select("item_name, unit_price, is_active")
         .eq("is_active", true)
         .order("display_order", { ascending: true })
@@ -741,21 +749,25 @@ export default function LogisticsInventoryPage() {
     const price = Number(newItemPrice) || 0;
     const category = newItemGroup === "Office Equipment" ? "OFFICE" : "SEC";
 
-    const res = await supabase.from("paraphernalia_items").insert({
-      item_name: name,
-      item_group: newItemGroup,
-      item_category: category,
-      unit_price: price,
-      is_active: true,
-    });
+    const res = await supabase.from("inventory_equipment_items").upsert(
+      {
+        item_name: name,
+        item_group: newItemGroup,
+        item_category: category,
+        unit_price: price,
+        is_active: true,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "item_name" }
+    );
 
-    await supabase.from("removed_paraphernalia_items").delete().ilike("item_name", name);
-    await supabase.from("removed_paraphernalia_items").delete().eq("item_name", name);
+    await supabase.from("removed_inventory_equipment_items").delete().ilike("item_name", name);
+    await supabase.from("removed_inventory_equipment_items").delete().eq("item_name", name);
     setRemovedItemNames((prev) => {
       const next = new Set(prev);
       next.delete(name);
       try {
-        localStorage.setItem("removed_paraphernalia_items", JSON.stringify(Array.from(next)));
+        localStorage.setItem("removed_inventory_equipment_items", JSON.stringify(Array.from(next)));
       } catch {}
       return next;
     });
@@ -781,8 +793,8 @@ export default function LogisticsInventoryPage() {
     setItemManagerMessage("");
 
     const res = await supabase
-      .from("paraphernalia_items")
-      .update({ unit_price: price })
+      .from("inventory_equipment_items")
+      .update({ unit_price: price, updated_at: new Date().toISOString() })
       .eq("item_name", item.name);
 
     setItemBusy(false);
@@ -805,17 +817,17 @@ export default function LogisticsInventoryPage() {
 
     const norm = normalizeEquipmentCatalogName(item.name);
 
-    await supabase.from("paraphernalia_items").update({ is_active: false }).ilike("item_name", norm);
-    await supabase.from("paraphernalia_items").delete().ilike("item_name", norm);
-    await supabase.from("paraphernalia_items").update({ is_active: false }).eq("item_name", item.name);
-    await supabase.from("paraphernalia_items").delete().eq("item_name", item.name);
-    await supabase.from("removed_paraphernalia_items").upsert({ item_name: norm }, { onConflict: "item_name" });
+    await supabase.from("inventory_equipment_items").update({ is_active: false }).ilike("item_name", norm);
+    await supabase.from("inventory_equipment_items").delete().ilike("item_name", norm);
+    await supabase.from("inventory_equipment_items").update({ is_active: false }).eq("item_name", item.name);
+    await supabase.from("inventory_equipment_items").delete().eq("item_name", item.name);
+    await supabase.from("removed_inventory_equipment_items").upsert({ item_name: norm }, { onConflict: "item_name" });
 
     setRemovedItemNames((prev) => {
       const next = new Set(prev);
       next.add(norm);
       try {
-        localStorage.setItem("removed_paraphernalia_items", JSON.stringify(Array.from(next)));
+        localStorage.setItem("removed_inventory_equipment_items", JSON.stringify(Array.from(next)));
       } catch {
         // ignore
       }
@@ -1171,11 +1183,11 @@ function downloadInventoryTemplateXlsx() {
       .on("postgres_changes", { event: "*", schema: "public", table: "contracts" }, () => {
         void loadClientNameOptions();
       })
-      .on("postgres_changes", { event: "*", schema: "public", table: "paraphernalia_items" }, () => {
-        void Promise.all([loadInventoryEquipmentOptions(), loadParaphernaliaBalances()]);
+      .on("postgres_changes", { event: "*", schema: "public", table: "inventory_equipment_items" }, () => {
+        void loadInventoryEquipmentOptions();
       })
-      .on("postgres_changes", { event: "*", schema: "public", table: "removed_paraphernalia_items" }, () => {
-        void Promise.all([loadInventoryEquipmentOptions(), loadParaphernaliaBalances()]);
+      .on("postgres_changes", { event: "*", schema: "public", table: "removed_inventory_equipment_items" }, () => {
+        void loadInventoryEquipmentOptions();
       })
       .on("postgres_changes", { event: "*", schema: "public", table: "restock" }, () => {
         void loadParaphernaliaBalances();
@@ -1219,33 +1231,6 @@ function downloadInventoryTemplateXlsx() {
         (sum, r) => sum + totalQuantityFromRow(r),
         0
       ),
-    [rows]
-  );
-
-  const totalsByCategory = useMemo(
-    () =>
-      CATEGORY_CONFIGS.map((cfg) => {
-        const quantity = rows.reduce((sum, row) => {
-          const categoryQuantity = numberValue(row[cfg.qtyRowField]);
-          if (categoryQuantity > 0) return sum + categoryQuantity;
-          const usesSimpleEquipmentRow = categoryQuantityFromRow(row) <= 0;
-          return usesSimpleEquipmentRow && equipmentGroupForName(row.equipment || row.particular) === cfg.group
-            ? sum + totalQuantityFromRow(row)
-            : sum;
-        }, 0);
-        const value = rows.reduce(
-          (sum, row) => {
-            const categoryQuantity = numberValue(row[cfg.qtyRowField]);
-            if (categoryQuantity > 0) return sum + lineTotal(categoryQuantity, row[cfg.priceRowField]);
-            const usesSimpleEquipmentRow = categoryQuantityFromRow(row) <= 0;
-            return usesSimpleEquipmentRow && equipmentGroupForName(row.equipment || row.particular) === cfg.group
-              ? sum + totalFromRowPrices(row)
-              : sum;
-          },
-          0
-        );
-        return { key: cfg.key, label: cfg.label, quantity, value };
-      }),
     [rows]
   );
 
@@ -1386,7 +1371,7 @@ function downloadInventoryTemplateXlsx() {
       equipmentRows,
       groupedByCategory,
     };
-  }, [detachmentSummaries, inventoryEquipmentOptions, paraphernaliaBalances, rows]);
+  }, [detachmentSummaries, inventoryEquipmentOptions, paraphernaliaBalances, removedItemNames, rows]);
   const selectedDetachmentRows = useMemo(() => {
     if (!selectedDetachmentView) return [];
     if (selectedDetachmentView === "__ALL__") return rows;
@@ -2133,16 +2118,14 @@ function downloadInventoryTemplateXlsx() {
                     {showModelColumn ? <td className="px-4 py-3 whitespace-nowrap">{row.model_number || "-"}</td> : null}
                     {showDetachmentColumn ? (
                       <td className="px-4 py-3 whitespace-nowrap">
-                        <button
-                          type="button"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            setSelectedDetachmentView(row.detachment?.trim() || "Unassigned Detachment");
-                          }}
-                          className="rounded-full border border-amber-300 bg-[#fff9e6] px-3 py-1.5 text-xs font-bold text-black hover:bg-[#FFDA03]"
-                        >
-                          {row.detachment || "Unassigned Detachment"}
-                        </button>
+                        <AssignmentHistoryPopover
+                          config={INVENTORY_DETACHMENT_HISTORY}
+                          recordId={row.id}
+                          currentValue={row.detachment}
+                          title="Detachment History"
+                          currentLabel="Current detachment"
+                          onCurrentValueClick={() => setSelectedDetachmentView(row.detachment?.trim() || "Unassigned Detachment")}
+                        />
                       </td>
                     ) : null}
                     {showRemarksColumn ? <td className="px-4 py-3 min-w-[180px]">{row.remarks || "-"}</td> : null}
@@ -2584,7 +2567,7 @@ function downloadInventoryTemplateXlsx() {
               <section className="space-y-3">
                 <div>
                   <h3 className="text-lg font-bold text-black">Connected Paraphernalia Balance</h3>
-                  <p className="text-sm text-gray-600">Live Stock In minus Stock Out balances from the Paraphernalia page, valued using the shared item catalog.</p>
+                  <p className="text-sm text-gray-600">Live Stock In minus Stock Out balances from the Paraphernalia page, valued with the independent Inventory catalog.</p>
                 </div>
                 <div className="overflow-x-auto rounded-2xl border bg-white">
                   <table className="min-w-[820px] w-full text-left text-sm text-black">

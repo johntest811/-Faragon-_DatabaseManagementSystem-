@@ -668,3 +668,46 @@ CREATE TABLE public.contract_notification_recipients (
   updated_at timestamp with time zone NOT NULL DEFAULT now(),
   CONSTRAINT contract_notification_recipients_pkey PRIMARY KEY (id)
 );
+CREATE TABLE public.removed_paraphernalia_items (
+  item_name text NOT NULL,
+  removed_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT removed_paraphernalia_items_pkey PRIMARY KEY (item_name)
+);
+CREATE TABLE public.inventory_equipment_items (
+  item_id bigint NOT NULL DEFAULT nextval('inventory_equipment_items_item_id_seq'::regclass),
+  item_name text NOT NULL UNIQUE,
+  item_group text NOT NULL DEFAULT 'Security / Safety'::text,
+  item_category text NOT NULL DEFAULT 'SEC'::text,
+  unit_price numeric NOT NULL DEFAULT 0,
+  display_order integer NOT NULL DEFAULT 0,
+  is_active boolean NOT NULL DEFAULT true,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT inventory_equipment_items_pkey PRIMARY KEY (item_id)
+);
+CREATE TABLE public.removed_inventory_equipment_items (
+  item_name text NOT NULL,
+  removed_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT removed_inventory_equipment_items_pkey PRIMARY KEY (item_name)
+);
+CREATE TABLE public.inventory_detachment_history (
+  id bigint NOT NULL DEFAULT nextval('inventory_detachment_history_id_seq'::regclass),
+  inventory_id text NOT NULL,
+  detachment text NOT NULL,
+  previous_detachment text,
+  new_detachment text,
+  change_type text NOT NULL DEFAULT 'UPDATED'::text CHECK (change_type = ANY (ARRAY['INITIAL'::text, 'UPDATED'::text, 'CLEARED'::text])),
+  changed_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT inventory_detachment_history_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.car_insurance_post_distribution_history (
+  id bigint NOT NULL DEFAULT nextval('car_insurance_post_distribution_history_id_seq'::regclass),
+  other_expiration_item_id bigint NOT NULL,
+  post_distributions text NOT NULL,
+  previous_post_distributions text,
+  new_post_distributions text,
+  change_type text NOT NULL DEFAULT 'UPDATED'::text CHECK (change_type = ANY (ARRAY['INITIAL'::text, 'UPDATED'::text, 'CLEARED'::text])),
+  changed_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT car_insurance_post_distribution_history_pkey PRIMARY KEY (id),
+  CONSTRAINT car_insurance_post_history_item_fkey FOREIGN KEY (other_expiration_item_id) REFERENCES public.other_expiration_items(id)
+);

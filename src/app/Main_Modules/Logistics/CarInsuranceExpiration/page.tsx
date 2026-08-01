@@ -14,6 +14,7 @@ import TableZoomWrapper from "@/app/Components/TableZoomWrapper";
 import SpreadsheetImportModal from "@/app/Components/SpreadsheetImportModal";
 import { useToast } from "@/app/Components/ToastProvider";
 import { addBrandedPdfHeader, buildBrandedAoa, buildBrandedWorkbookBuffer } from "../../Components/exportBranding";
+import AssignmentHistoryPopover from "../../Components/AssignmentHistoryPopover";
 import * as XLSX from "xlsx";
 
 type CarInsuranceRow = {
@@ -113,6 +114,13 @@ type FormField = {
 const MODULE_KEY = "car_insurance_expiration";
 const EXPIRATION_TYPE = "CAR_INSURANCE";
 const PAGE_TITLE = "Car Insurance Expiration";
+const CAR_INSURANCE_POST_HISTORY = {
+  table: "car_insurance_post_distribution_history",
+  recordColumn: "other_expiration_item_id",
+  previousColumn: "previous_post_distributions",
+  newColumn: "new_post_distributions",
+  legacyColumn: "post_distributions",
+} as const;
 
 const IMPORT_TEMPLATE_SAMPLE: CarInsuranceImportRow = {
   recordNo: "1",
@@ -1122,7 +1130,15 @@ export default function CarInsuranceExpirationPage() {
       case "patrol":
         return row.patrol || "—";
       case "postDistributions":
-        return row.post_distributions || "—";
+        return (
+          <AssignmentHistoryPopover
+            config={CAR_INSURANCE_POST_HISTORY}
+            recordId={row.id}
+            currentValue={row.post_distributions}
+            title="Post/s Distributions History"
+            currentLabel="Current Post/s Distribution"
+          />
+        );
       case "make":
         return row.make || "—";
       case "model":
