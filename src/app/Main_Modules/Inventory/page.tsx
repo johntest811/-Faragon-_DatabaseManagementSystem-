@@ -648,31 +648,19 @@ export default function LogisticsInventoryPage() {
   }, [rows]);
 
   const loadClientNameOptions = useCallback(async () => {
-    const [contractsRes, detachmentTablesRes, paraphernaliaSummaryRes, inventoryFixedRes] = await Promise.all([
-      supabase.from("contracts").select("client_name, specific_area").limit(5000),
-      supabase.from("paraphernalia_detachment_tables").select("detachment").eq("is_active", true).limit(5000),
-      supabase.from("vw_paraphernalia_inventory_summary").select("specific_area").limit(5000),
+    const [contractsRes, inventoryFixedRes] = await Promise.all([
+      supabase.from("contracts").select("specific_area").not("specific_area", "is", null).limit(5000),
       supabase.from("inventory_fixed_asset").select("detachment").limit(5000),
     ]);
 
     const names = new Set<string>();
 
     if (!contractsRes.error) {
-      for (const row of (contractsRes.data ?? []) as Array<{ client_name: string | null; specific_area: string | null }>) {
-        if (row.specific_area?.trim()) names.add(row.specific_area.trim());
-        if (row.client_name?.trim()) names.add(row.client_name.trim());
-      }
-    }
-    if (!detachmentTablesRes.error) {
-      for (const row of (detachmentTablesRes.data ?? []) as Array<{ detachment: string | null }>) {
-        if (row.detachment?.trim()) names.add(row.detachment.trim());
-      }
-    }
-    if (!paraphernaliaSummaryRes.error) {
-      for (const row of (paraphernaliaSummaryRes.data ?? []) as Array<{ specific_area: string | null }>) {
+      for (const row of (contractsRes.data ?? []) as Array<{ specific_area: string | null }>) {
         if (row.specific_area?.trim()) names.add(row.specific_area.trim());
       }
     }
+    // Also include detachment values already in existing inventory records so existing data remains selectable
     if (!inventoryFixedRes.error) {
       for (const row of (inventoryFixedRes.data ?? []) as Array<{ detachment: string | null }>) {
         if (row.detachment?.trim()) names.add(row.detachment.trim());
@@ -682,6 +670,7 @@ export default function LogisticsInventoryPage() {
     const nextOptions = Array.from(names).sort((a, b) => a.localeCompare(b));
     setClientNameOptions(nextOptions);
   }, []);
+
 
   const loadInventoryEquipmentOptions = useCallback(async () => {
     let removed = new Set<string>();

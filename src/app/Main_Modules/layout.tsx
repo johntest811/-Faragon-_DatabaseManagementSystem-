@@ -1229,30 +1229,59 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
         if (canViewCarInsuranceWidget) {
           const { data: othData } = await supabase
             .from("other_expiration_items")
-            .select("id, expiration_type, make, model, plate_number, recipient_email, policy_expiration, registration_expiration, created_at, updated_at")
+            .select("id, expiration_type, make, model, plate_number, recipient_email, expires_on, car_registration_to_date, created_at, updated_at")
+            .eq("expiration_type", "CAR_INSURANCE")
             .limit(100);
 
           if (othData) {
             for (const r of othData as Array<Record<string, unknown>>) {
-              const expStr = String(r.policy_expiration || r.registration_expiration || "");
-              if (!expStr) continue;
-              const expDate = new Date(expStr);
-              const diffDays = Math.ceil((expDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
-              if (diffDays <= 90) {
-                const title = [r.make, r.model, r.plate_number ? `(${r.plate_number})` : ""].filter(Boolean).join(" ") || "Vehicle Policy";
-                rows.push({
-                  applicant_id: `other:${r.id}`,
-                  first_name: null,
-                  last_name: null,
-                  record_name: title,
-                  recipient_email: r.recipient_email ? String(r.recipient_email) : null,
-                  license_type: title,
-                  expires_on: expStr,
-                  days_until_expiry: diffDays,
-                  source_kind: "other",
-                  created_at: r.created_at ? String(r.created_at) : null,
-                  updated_at: r.updated_at ? String(r.updated_at) : null,
-                });
+              const title = [r.make, r.model, r.plate_number ? `(${r.plate_number})` : ""].filter(Boolean).join(" ") || "Vehicle Policy";
+              const recipientEmail = r.recipient_email ? String(r.recipient_email) : null;
+              const baseCreatedAt = r.created_at ? String(r.created_at) : null;
+              const baseUpdatedAt = r.updated_at ? String(r.updated_at) : null;
+
+              // Policy Term expiration row
+              const policyExpStr = String(r.expires_on || "");
+              if (policyExpStr) {
+                const expDate = new Date(policyExpStr);
+                const diffDays = Math.ceil((expDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+                if (diffDays <= 90) {
+                  rows.push({
+                    applicant_id: `other:${r.id}`,
+                    first_name: null,
+                    last_name: null,
+                    record_name: title,
+                    recipient_email: recipientEmail,
+                    license_type: "Other: Policy Term",
+                    expires_on: policyExpStr,
+                    days_until_expiry: diffDays,
+                    source_kind: "other",
+                    created_at: baseCreatedAt,
+                    updated_at: baseUpdatedAt,
+                  });
+                }
+              }
+
+              // Car Registration expiration row
+              const regExpStr = String(r.car_registration_to_date || "");
+              if (regExpStr) {
+                const expDate = new Date(regExpStr);
+                const diffDays = Math.ceil((expDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+                if (diffDays <= 90) {
+                  rows.push({
+                    applicant_id: `other:${r.id}:reg`,
+                    first_name: null,
+                    last_name: null,
+                    record_name: title,
+                    recipient_email: recipientEmail,
+                    license_type: "Other: Car Registration Date",
+                    expires_on: regExpStr,
+                    days_until_expiry: diffDays,
+                    source_kind: "other",
+                    created_at: baseCreatedAt,
+                    updated_at: baseUpdatedAt,
+                  });
+                }
               }
             }
           }
@@ -1276,7 +1305,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
                   first_name: null,
                   last_name: null,
                   record_name: String(r.client_name ?? "Contract"),
-                  license_type: String(r.client_name ?? "Contract Expiration"),
+                  license_type: "Contract Expiration",
                   expires_on: String(r.contract_end),
                   days_until_expiry: diffDays,
                   source_kind: "contract",
