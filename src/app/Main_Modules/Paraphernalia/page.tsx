@@ -1,7 +1,6 @@
 "use client";
 
-import { FormEvent, ReactNode, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import { Download, FileText, Maximize2, Pencil, Plus, RefreshCw, Search, Trash2, Upload } from "lucide-react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -11,6 +10,7 @@ import LoadingCircle from "@/app/Components/LoadingCircle";
 import ImportSummaryModal, { ImportSummaryData } from "../Components/ImportSummaryModal";
 import SpreadsheetImportModal from "@/app/Components/SpreadsheetImportModal";
 import TableZoomWrapper from "@/app/Components/TableZoomWrapper";
+import SearchDropdownInput from "@/app/Components/SearchDropdownInput";
 import { addBrandedPdfHeader, buildBrandedAoa, buildBrandedWorkbookBuffer } from "../Components/exportBranding";
 import {
   EQUIPMENT_GROUPS,
@@ -549,125 +549,6 @@ function DataTable<T>({
         </div>
       ) : null}
     </TableZoomWrapper>
-  );
-}
-
-function SearchDropdownInput({
-  value,
-  onChange,
-  options,
-  className,
-  placeholder,
-  required,
-  emptyLabel = "No matching options found.",
-}: {
-  value: string;
-  onChange: (value: string) => void;
-  options: string[];
-  className: string;
-  placeholder?: string;
-  required?: boolean;
-  emptyLabel?: string;
-}) {
-  const [open, setOpen] = useState(false);
-  const [coords, setCoords] = useState<{ top: number; left: number; width: number }>({ top: 0, left: 0, width: 0 });
-  const inputRef = useRef<HTMLInputElement | null>(null);
-  const listboxId = useId();
-
-  const updateCoords = useCallback(() => {
-    if (inputRef.current) {
-      const rect = inputRef.current.getBoundingClientRect();
-      setCoords({
-        top: rect.bottom + window.scrollY,
-        left: rect.left + window.scrollX,
-        width: rect.width,
-      });
-    }
-  }, []);
-
-  useLayoutEffect(() => {
-    if (open) {
-      updateCoords();
-      window.addEventListener("resize", updateCoords);
-      window.addEventListener("scroll", updateCoords, true);
-      return () => {
-        window.removeEventListener("resize", updateCoords);
-        window.removeEventListener("scroll", updateCoords, true);
-      };
-    }
-  }, [open, updateCoords]);
-
-  const query = value.trim().toLowerCase();
-  const filteredOptions = options
-    .filter((option) => !query || option.toLowerCase().includes(query))
-    .slice(0, 60);
-
-  return (
-    <div className="relative">
-      <input
-        ref={inputRef}
-        value={value}
-        onChange={(event) => {
-          onChange(event.target.value);
-          updateCoords();
-          setOpen(true);
-        }}
-        onFocus={() => {
-          updateCoords();
-          setOpen(true);
-        }}
-        onBlur={() => setOpen(false)}
-        onKeyDown={(event) => {
-          if (event.key === "Escape") setOpen(false);
-        }}
-        className={className}
-        placeholder={placeholder}
-        autoComplete="off"
-        required={required}
-        role="combobox"
-        aria-expanded={open}
-        aria-controls={listboxId}
-        aria-autocomplete="list"
-      />
-      {open && typeof document !== "undefined"
-        ? createPortal(
-            <div
-              id={listboxId}
-              role="listbox"
-              style={{
-                position: "absolute",
-                top: `${coords.top + 4}px`,
-                left: `${coords.left}px`,
-                width: `${coords.width}px`,
-                zIndex: 999999,
-              }}
-              className="max-h-56 overflow-y-auto rounded-xl border-2 border-slate-200 bg-white p-1 shadow-2xl"
-            >
-              {filteredOptions.length ? (
-                filteredOptions.map((option) => (
-                  <button
-                    key={option}
-                    type="button"
-                    role="option"
-                    aria-selected={option === value}
-                    onMouseDown={(event) => event.preventDefault()}
-                    onClick={() => {
-                      onChange(option);
-                      setOpen(false);
-                    }}
-                    className="block w-full rounded-lg px-3 py-2.5 text-left text-sm font-medium text-black hover:bg-[#fff3b0]"
-                  >
-                    {option}
-                  </button>
-                ))
-              ) : (
-                <div className="px-3 py-3 text-sm text-gray-500">{emptyLabel}</div>
-              )}
-            </div>,
-            document.body
-          )
-        : null}
-    </div>
   );
 }
 

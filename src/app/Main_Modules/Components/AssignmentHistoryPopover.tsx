@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { History } from "lucide-react";
 import { supabase } from "@/app/Client/SupabaseClients";
@@ -73,7 +73,13 @@ export default function AssignmentHistoryPopover({
   const [loadedKey, setLoadedKey] = useState("");
   const [rows, setRows] = useState<HistoryRow[]>([]);
   const [loadError, setLoadError] = useState("");
-  const [position, setPosition] = useState({ top: 0, left: 0, width: 340, maxHeight: 360 });
+  const [position, setPosition] = useState({
+    top: 0,
+    left: 0,
+    width: 340,
+    maxHeight: 360,
+    placement: "below" as "above" | "below",
+  });
 
   const valueLabel = useMemo(() => displayValue(currentValue), [currentValue]);
   const recordKey = `${config.table}:${recordId}`;
@@ -96,13 +102,19 @@ export default function AssignmentHistoryPopover({
     const margin = 10;
     const width = Math.min(360, window.innerWidth - margin * 2);
     const left = Math.max(margin, Math.min(rect.left, window.innerWidth - width - margin));
-    const roomBelow = window.innerHeight - rect.bottom - margin;
-    const desiredHeight = Math.min(390, Math.max(220, window.innerHeight - margin * 2));
-    const showAbove = roomBelow < 220 && rect.top > roomBelow;
-    const top = showAbove
-      ? Math.max(margin, rect.top - desiredHeight - 8)
-      : Math.min(rect.bottom + 8, window.innerHeight - margin - 180);
-    setPosition({ top, left, width, maxHeight: Math.max(180, window.innerHeight - top - margin) });
+    const gap = 8;
+    const roomBelow = Math.max(0, window.innerHeight - rect.bottom - gap - margin);
+    const roomAbove = Math.max(0, rect.top - gap - margin);
+    const measuredHeight = popoverRef.current?.scrollHeight ?? 210;
+    const desiredHeight = Math.min(360, Math.max(160, measuredHeight));
+    const placement = roomBelow >= Math.min(desiredHeight, 160) || roomBelow >= roomAbove ? "below" : "above";
+    const availableRoom = placement === "below" ? roomBelow : roomAbove;
+    const maxHeight = Math.min(360, Math.max(160, availableRoom));
+    const renderedHeight = Math.min(desiredHeight, maxHeight);
+    const preferredTop = placement === "below" ? rect.bottom + gap : rect.top - gap - renderedHeight;
+    const top = Math.max(margin, Math.min(preferredTop, window.innerHeight - margin - renderedHeight));
+
+    setPosition({ top, left, width, maxHeight, placement });
   }, []);
 
   const loadHistory = useCallback(async () => {
@@ -189,6 +201,11 @@ export default function AssignmentHistoryPopover({
     };
   }, [loadHistory, open, updatePosition]);
 
+  useLayoutEffect(() => {
+    if (!open) return;
+    updatePosition();
+  }, [loadError, loading, open, rows.length, updatePosition]);
+
   useEffect(() => () => clearCloseTimer(), [clearCloseTimer]);
 
   return (
@@ -197,6 +214,7 @@ export default function AssignmentHistoryPopover({
       className="inline-flex max-w-full items-center gap-2"
       onMouseEnter={() => {
         clearCloseTimer();
+        updatePosition();
         setOpen(true);
       }}
       onMouseLeave={scheduleClose}
@@ -206,7 +224,10 @@ export default function AssignmentHistoryPopover({
         onClick={(event) => {
           event.stopPropagation();
           if (onCurrentValueClick) onCurrentValueClick();
-          else setOpen((value) => !value);
+          else {
+            updatePosition();
+            setOpen((value) => !value);
+          }
         }}
         className="max-w-[240px] truncate rounded-full border border-amber-300 bg-[#fff9e6] px-3 py-1.5 text-xs font-bold text-black hover:bg-[#FFDA03]"
         title={valueLabel}
@@ -218,6 +239,7 @@ export default function AssignmentHistoryPopover({
         onClick={(event) => {
           event.stopPropagation();
           clearCloseTimer();
+          updatePosition();
           setOpen((value) => !value);
         }}
         onFocus={() => setOpen(true)}
@@ -232,7 +254,8 @@ export default function AssignmentHistoryPopover({
         ? createPortal(
             <div
               ref={popoverRef}
-              className="fixed z-[120] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl"
+              data-placement={position.placement}
+              className="fixed z-[200] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl ring-1 ring-black/5"
               style={{ top: position.top, left: position.left, width: position.width, maxHeight: position.maxHeight }}
               onMouseEnter={clearCloseTimer}
               onMouseLeave={scheduleClose}
@@ -242,7 +265,7 @@ export default function AssignmentHistoryPopover({
                 <div className="text-sm font-bold text-slate-900">{title}</div>
                 <div className="mt-1 text-xs text-slate-500">{currentLabel}: {valueLabel}</div>
               </div>
-              <div className="max-h-[300px] overflow-y-auto p-3">
+              <div className="overflow-y-auto p-3" style={{ maxHeight: Math.max(96, position.maxHeight - 72) }}>
                 {loading ? <div className="px-1 py-3 text-sm text-slate-500">Loading history...</div> : null}
                 {!loading && loadError ? <div className="rounded-xl bg-amber-50 p-3 text-sm text-amber-800">{loadError}</div> : null}
                 {!loading && !loadError && rows.length === 0 ? (
