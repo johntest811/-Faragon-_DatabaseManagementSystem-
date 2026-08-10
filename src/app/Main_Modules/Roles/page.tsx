@@ -349,12 +349,6 @@ export default function RolesPage() {
 				.eq("role_id", currentRole.role_id);
 			if (updateErr) return setError(updateErr.message);
 
-			const { error: adminErr } = await supabase.from("admins").update({ role: nextName }).eq("role", currentRole.role_name);
-			if (adminErr) {
-				await supabase.from("app_roles").update({ role_name: currentRole.role_name }).eq("role_id", currentRole.role_id);
-				return setError(adminErr.message);
-			}
-
 			setSuccess("Role updated.");
 			setRoleDialogOpen(false);
 			void logAudit("RBAC_UPDATE_ROLE", {

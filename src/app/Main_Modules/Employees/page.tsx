@@ -3,6 +3,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../Client/SupabaseClients";
+import { useSignedStorageUrlMap } from "../../Client/useSignedStorageUrls";
 import { Pencil, SlidersHorizontal, Upload, LayoutGrid, Table, Search, FileText } from "lucide-react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -75,12 +76,6 @@ const BUCKETS = {
 function getFullName(a: Applicant) {
 	const parts = [a.first_name, a.middle_name, a.last_name].filter(Boolean);
 	return parts.length ? parts.join(" ") : "(No name)";
-}
-
-function getProfileUrl(profilePath: string | null) {
-	if (!profilePath) return null;
-	const { data } = supabase.storage.from(BUCKETS.profile).getPublicUrl(profilePath);
-	return data.publicUrl || null;
 }
 
 function shortCode(id: string) {
@@ -235,6 +230,7 @@ export default function EmployeesPage() {
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string>("");
 	const [employees, setEmployees] = useState<Applicant[]>([]);
+	const profileUrls = useSignedStorageUrlMap(BUCKETS.profile, employees.map((row) => row.profile_image_path));
 	const [licensureByApplicantId, setLicensureByApplicantId] = useState<
 		Record<string, { nextYmd: string | null; nextDays: number | null }>
 	>({});
@@ -1056,7 +1052,7 @@ if (hiredMonthFilter !== "ALL") {
 				<div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
 					{filtered.map((e) => {
 						const name = getFullName(e);
-						const profileUrl = getProfileUrl(e.profile_image_path);
+						const profileUrl = profileUrls.get(String(e.profile_image_path ?? "").trim()) ?? null;
 						const status = normalizeStatus(e.status);
 						const canClick = canAccessEmployees;
       const detailsHref = `/Main_Modules/Employees/details/?id=${encodeURIComponent(
@@ -1200,7 +1196,7 @@ if (hiredMonthFilter !== "ALL") {
 			</thead>
 			<tbody>
 				{filtered.map((e) => {
-					const profileUrl = getProfileUrl(e.profile_image_path);
+					const profileUrl = profileUrls.get(String(e.profile_image_path ?? "").trim()) ?? null;
 					const canClick = canAccessEmployees;
 					const detailsHref = `/Main_Modules/Employees/details/?id=${encodeURIComponent(
 						e.applicant_id

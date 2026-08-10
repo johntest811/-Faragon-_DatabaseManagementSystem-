@@ -15,6 +15,7 @@ import { readSpreadsheetRows } from "@/app/Components/spreadsheetImportUtils";
 import { addBrandedPdfHeader, buildBrandedAoa, buildBrandedWorkbookBuffer } from "../Components/exportBranding";
 import SearchDropdownInput from "@/app/Components/SearchDropdownInput";
 import AssignmentHistoryPopover from "../Components/AssignmentHistoryPopover";
+import { useSignedStorageUrlMap } from "@/app/Client/useSignedStorageUrls";
 import {
   EQUIPMENT_CATALOG,
   EQUIPMENT_GROUPS,
@@ -555,6 +556,7 @@ export default function LogisticsInventoryPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [rows, setRows] = useState<InventoryRow[]>([]);
+  const attachmentUrls = useSignedStorageUrlMap(INVENTORY_BUCKET, rows.map((row) => row.user_attachment));
   const [paraphernaliaBalances, setParaphernaliaBalances] = useState<ParaphernaliaBalanceRow[]>([]);
   const [saving, setSaving] = useState(false);
   const [success, setSuccess] = useState("");
@@ -1604,8 +1606,7 @@ function downloadInventoryTemplateXlsx() {
       upsert: true,
     });
     if (uploadError) throw uploadError;
-    const { data } = supabase.storage.from(INVENTORY_BUCKET).getPublicUrl(path);
-    return data.publicUrl || path;
+    return path;
   }
 
   async function buildInventoryPayload(totalAmount: number, totalQuantity: number, grandTotalValue?: number) {
@@ -2137,7 +2138,7 @@ function downloadInventoryTemplateXlsx() {
                       <td className="px-4 py-3 min-w-[220px]">
                         <div>{row.user_text || "-"}</div>
                         {row.user_attachment ? (
-                          <a href={row.user_attachment} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} className="text-xs font-semibold text-blue-700 underline">
+                          <a href={attachmentUrls.get(String(row.user_attachment).trim()) ?? row.user_attachment} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} className="text-xs font-semibold text-blue-700 underline">
                             View file
                           </a>
                         ) : null}
@@ -2818,7 +2819,7 @@ function downloadInventoryTemplateXlsx() {
                     <div className="text-xs font-semibold uppercase tracking-wide text-gray-500">User</div>
                     <div className="mt-1 text-black">{selectedDetailRow.user_text || "-"}</div>
                     {selectedDetailRow.user_attachment ? (
-                      <a href={selectedDetailRow.user_attachment} target="_blank" rel="noreferrer" className="mt-2 inline-flex text-sm font-semibold text-blue-700 underline">
+                      <a href={attachmentUrls.get(String(selectedDetailRow.user_attachment).trim()) ?? selectedDetailRow.user_attachment} target="_blank" rel="noreferrer" className="mt-2 inline-flex text-sm font-semibold text-blue-700 underline">
                         View attached file
                       </a>
                     ) : null}

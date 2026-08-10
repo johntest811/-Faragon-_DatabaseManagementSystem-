@@ -11,6 +11,7 @@ import DetachmentHistoryPopover from "../Components/DetachmentHistoryPopover";
 import EmployeeStatusMenu from "../Components/EmployeeStatusMenu";
 import { buildEmployeeStatusUpdatePatch } from "../employeeListData";
 import { useLiveNow } from "../../Client/useLiveNow";
+import { useSignedStorageUrlMap } from "../../Client/useSignedStorageUrls";
 
 type Applicant = {
   applicant_id: string;
@@ -37,12 +38,6 @@ const BUCKETS = {
 function getFullName(a: Applicant) {
   const parts = [a.first_name, a.middle_name, a.last_name].filter(Boolean);
   return parts.length ? parts.join(" ") : "(No name)";
-}
-
-function getProfileUrl(profilePath: string | null) {
-  if (!profilePath) return null;
-  const { data } = supabase.storage.from(BUCKETS.profile).getPublicUrl(profilePath);
-  return data.publicUrl || null;
 }
 
 function startOfDay(d: Date) {
@@ -114,6 +109,7 @@ export default function ArchivePage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>("");
   const [items, setItems] = useState<Applicant[]>([]);
+  const profileUrls = useSignedStorageUrlMap(BUCKETS.profile, items.map((row) => row.profile_image_path));
   const fetchRunIdRef = useRef(0);
   const [search, setSearch] = useState("");
   const [sortBy, setSortBy] = useState<"name" | "last_name" | "letter" | "created_at" | "category" | "service">("name");
@@ -480,7 +476,7 @@ export default function ArchivePage() {
         </thead>
         <tbody>
           {filtered.map((e) => {
-            const profileUrl = getProfileUrl(e.profile_image_path);
+            const profileUrl = profileUrls.get(String(e.profile_image_path ?? "").trim()) ?? null;
             const detailsHref = `/Main_Modules/Employees/details/?id=${encodeURIComponent(
               e.applicant_id
             )}&from=${encodeURIComponent("/Main_Modules/Archive/")}`;
@@ -573,7 +569,7 @@ export default function ArchivePage() {
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
           {filtered.map((e) => {
             const name = getFullName(e);
-            const profileUrl = getProfileUrl(e.profile_image_path);
+            const profileUrl = profileUrls.get(String(e.profile_image_path ?? "").trim()) ?? null;
             const detailsHref = `/Main_Modules/Employees/details/?id=${encodeURIComponent(e.applicant_id)}&from=${encodeURIComponent(
               "/Main_Modules/Archive/"
             )}`;

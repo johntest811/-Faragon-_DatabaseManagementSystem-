@@ -11,6 +11,7 @@ import TableZoomWrapper from "@/app/Components/TableZoomWrapper";
 import DetachmentHistoryPopover from "../Components/DetachmentHistoryPopover";
 import EmployeeStatusMenu from "../Components/EmployeeStatusMenu";
 import { buildEmployeeStatusUpdatePatch } from "../employeeListData";
+import { useSignedStorageUrlMap } from "../../Client/useSignedStorageUrls";
 
 type Applicant = {
   applicant_id: string;
@@ -40,11 +41,6 @@ function employeeCode(employee: Applicant) {
   return employee.custom_id?.trim() || `EMP-${employee.applicant_id.slice(0, 8).toUpperCase()}`;
 }
 
-function profileUrl(path: string | null) {
-  if (!path) return null;
-  return supabase.storage.from("applicants").getPublicUrl(path).data.publicUrl || null;
-}
-
 function displayDate(value: string | null) {
   if (!value) return "-";
   const date = new Date(value);
@@ -57,6 +53,7 @@ export default function FloatingPage() {
   const { canAccess } = useMyModuleAccess("floating");
   const { canDelete } = useMyModuleDeleteAccess("floating");
   const [employees, setEmployees] = useState<Applicant[]>([]);
+  const profileUrls = useSignedStorageUrlMap("applicants", employees.map((row) => row.profile_image_path));
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
@@ -274,7 +271,7 @@ export default function FloatingPage() {
               <tbody>
                 {filteredEmployees.map((employee) => {
                   const detailsHref = `/Main_Modules/Employees/details/?id=${encodeURIComponent(employee.applicant_id)}&from=${encodeURIComponent("/Main_Modules/Floating/")}`;
-                  const imageUrl = profileUrl(employee.profile_image_path);
+                  const imageUrl = profileUrls.get(String(employee.profile_image_path ?? "").trim()) ?? null;
                   return (
                     <tr
                       key={employee.applicant_id}
@@ -328,7 +325,7 @@ export default function FloatingPage() {
         <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
           {filteredEmployees.map((employee) => {
             const detailsHref = `/Main_Modules/Employees/details/?id=${encodeURIComponent(employee.applicant_id)}&from=${encodeURIComponent("/Main_Modules/Floating/")}`;
-            const imageUrl = profileUrl(employee.profile_image_path);
+            const imageUrl = profileUrls.get(String(employee.profile_image_path ?? "").trim()) ?? null;
             return (
               <article key={employee.applicant_id} className="glass-panel rounded-3xl p-5 shadow-sm">
                 <button type="button" onClick={() => router.push(detailsHref)} className="flex w-full items-center gap-4 text-left">

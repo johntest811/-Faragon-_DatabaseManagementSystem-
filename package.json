@@ -1,7 +1,7 @@
 {
   "name": "database-management-app",
   "productName": "Faragon Database",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "description": "Database management desktop app",
   "author": "JOHN",
   "private": true,
@@ -10,6 +10,8 @@
     "build": "node ./node_modules/next/dist/bin/next build",
     "start": "node ./node_modules/next/dist/bin/next start",
     "lint": "eslint",
+    "security:migrate-admins": "node ./scripts/migrate-admins-to-supabase-auth.mjs",
+    "security:verify-auth": "node ./scripts/verify-production-auth.mjs",
     "dist": "npm run build && cross-env NODE_ENV=production electron-builder",
     "dist:modern": "npm run dist",
     "dist:win7": "npm run build && cross-env NODE_ENV=production FARAGON_LEGACY_WINDOWS=1 electron-builder --config electron-builder.win7.cjs --win"
@@ -36,31 +38,35 @@
   },
   "devDependencies": {
     "@capacitor/cli": "^8.5.0",
-    "@electron/rebuild": "^4.0.3",
+    "@electron/rebuild": "^4.2.0",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19.2.8",
     "@types/react-dom": "^19.2.3",
-    "concurrently": "*",
+    "concurrently": "^10.0.4",
     "cross-env": "^10.1.0",
-    "electron": "^39.8.7",
-    "electron-builder": "^26.8.2",
+    "electron": "^39.8.10",
+    "electron-builder": "^26.15.3",
     "eslint": "^9.39.3",
     "eslint-config-next": "16.3.0",
-    "supabase": "^2.95.6",
+    "supabase": "^2.113.0",
     "tailwindcss": "^4",
     "typescript": "^5.9.3",
     "wait-on": "*"
   },
   "overrides": {
-    "axios": "^1.15.0",
-    "form-data": "^4.0.0",
+    "axios": "^1.19.0",
+    "brace-expansion@<=1.1.17": "1.1.18",
+    "brace-expansion@2.0.0 - 2.1.3": "2.1.4",
+    "brace-expansion@3.0.0 - 5.0.8": "5.0.9",
+    "form-data": "^4.0.6",
     "exceljs": {
       "uuid": "11.1.1"
     },
     "qs": "^6.11.0",
-    "tar": "7.5.13",
-    "tough-cookie": "^4.2.0"
+    "tar": "7.5.22",
+    "tough-cookie": "^4.2.0",
+    "uuid": "11.1.1"
   },
   "browserslist": {
     "production": [
@@ -86,28 +92,15 @@
     },
     "extraResources": [
       {
-        "from": ".",
-        "to": ".",
-        "filter": [
-          ".env",
-          ".env.local"
-        ]
-      },
-      {
         "from": "skills-lock.json",
         "to": "skills-lock.json"
-      },
-      {
-        "from": "Supabase_database.sql",
-        "to": "Supabase_database.sql"
       }
     ],
     "files": [
       "out/**/*",
       "electron/**/*",
       "package.json",
-      "skills-lock.json",
-      "Supabase_database.sql"
+      "skills-lock.json"
     ],
     "win": {
       "target": "nsis",

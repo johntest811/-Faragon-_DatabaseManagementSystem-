@@ -6,34 +6,34 @@ import { usePathname, useRouter } from 'next/navigation';
 import { supabase } from '../Client/SupabaseClients';
 import { ArrowRight, Activity, BadgeCheck, ShieldCheck, Sparkles } from 'lucide-react';
 
-function isMissingLoginHistoryTableError(error: unknown) {
-  const text = String((error as { message?: unknown })?.message ?? error ?? '').toLowerCase();
-  return (
-    text.includes('admin_login_history') &&
-    (text.includes('does not exist') ||
-      text.includes('schema cache') ||
-      text.includes('relation') ||
-      text.includes('could not find the table'))
-  );
-}
-
-function isLoginHistoryPermissionError(error: unknown) {
-  const code = String((error as { code?: unknown })?.code ?? '').trim();
-  const text = String((error as { message?: unknown })?.message ?? error ?? '').toLowerCase();
-  return code === '42501' || text.includes('row-level security policy');
-}
-
-type LoginElectronApi = {
+type AuthFunctionResponse = {
+  error?: string;
+  session?: { access_token?: string; refresh_token?: string };
   admin?: {
-    recordLoginHistory?: (payload: {
-      admin_id: string;
-      username: string;
-      full_name: string | null;
-      role: string | null;
-      logged_in_at: string;
-    }) => Promise<{ success?: boolean; missingTable?: boolean; unavailable?: boolean; error?: string }>;
+    id: string;
+    username: string;
+    full_name: string | null;
+    role: string;
+    profile_image_path?: string | null;
+    assigned_detachment?: string | null;
+    must_change_password?: boolean;
+    loginTime: string;
   };
 };
+
+async function edgeFunctionErrorMessage(error: unknown) {
+  const context = (error as { context?: unknown })?.context;
+  if (context instanceof Response) {
+    try {
+      const body = (await context.clone().json()) as { error?: unknown };
+      const message = String(body?.error ?? '').trim();
+      if (message) return message;
+    } catch {
+      // Fall through to the generic client error.
+    }
+  }
+  return String((error as { message?: unknown })?.message ?? '').trim() || 'Unable to sign in right now.';
+}
 
 export default function Login() {
   const [username, setUsername] = useState('');
@@ -43,8 +43,6 @@ export default function Login() {
   const router = useRouter();
   const pathname = usePathname() ?? '';
   const usernameRef = useRef<HTMLInputElement | null>(null);
-  const electronAPI = (globalThis as { electronAPI?: LoginElectronApi }).electronAPI;
-
   useEffect(() => {
     if (!pathname.startsWith('/Login')) return;
 
@@ -58,6 +56,7 @@ export default function Login() {
     } catch {
       // ignore
     }
+    void supabase.auth.signOut({ scope: 'local' });
 
     const focusTimer = window.setTimeout(() => {
       usernameRef.current?.focus();
@@ -81,79 +80,22 @@ export default function Login() {
     }
 
     try {
-      const { data: admin, error: adminError } = await supabase
-        .from('admins')
-        .select('id, username, password, role, full_name, is_active')
-        .eq('username', username.trim())
-        .single();
-
-      if (adminError || !admin) {
-        setError('Invalid username or password');
-        setIsLoading(false);
-        return;
+      const { data, error: invokeError } = await supabase.functions.invoke<AuthFunctionResponse>('admin-auth', {
+        body: { username: username.trim(), password },
+      });
+      if (invokeError) throw new Error(await edgeFunctionErrorMessage(invokeError));
+      if (data?.error) throw new Error(data.error);
+      if (!data?.session?.access_token || !data.session.refresh_token || !data.admin) {
+        throw new Error('The authentication service returned an incomplete session.');
       }
 
-      if (!admin.is_active) {
-        setError('Account deactivated. Contact administrator.');
-        setIsLoading(false);
-        return;
-      }
+      const { error: sessionError } = await supabase.auth.setSession({
+        access_token: data.session.access_token,
+        refresh_token: data.session.refresh_token,
+      });
+      if (sessionError) throw sessionError;
 
-      // NOTE: This matches your current SQL schema (plain-text password column).
-      // If you later migrate to Supabase Auth, this should be removed.
-      if (String(admin.password ?? '') !== password) {
-        setError('Invalid username or password');
-        setIsLoading(false);
-        return;
-      }
-
-      const loginAtIso = new Date().toISOString();
-
-      await supabase
-        .from('admins')
-        .update({ last_login: loginAtIso })
-        .eq('id', admin.id);
-
-      if (electronAPI?.admin?.recordLoginHistory) {
-        try {
-          const loginHistoryResult = await electronAPI.admin.recordLoginHistory({
-            admin_id: String(admin.id),
-            username: admin.username,
-            full_name: admin.full_name ?? null,
-            role: admin.role ?? null,
-            logged_in_at: loginAtIso,
-          });
-          if (loginHistoryResult?.error && !loginHistoryResult.missingTable) {
-            console.warn('[login] failed to write admin login history:', loginHistoryResult.error);
-          }
-        } catch (historyError) {
-          console.warn('[login] failed to write admin login history:', historyError);
-        }
-      } else {
-        const loginHistoryRes = await supabase.from('admin_login_history').insert({
-          admin_id: admin.id,
-          username: admin.username,
-          full_name: admin.full_name ?? null,
-          role: admin.role ?? null,
-          logged_in_at: loginAtIso,
-        });
-        if (
-          loginHistoryRes.error &&
-          !isMissingLoginHistoryTableError(loginHistoryRes.error) &&
-          !isLoginHistoryPermissionError(loginHistoryRes.error)
-        ) {
-          console.warn('[login] failed to write admin login history:', loginHistoryRes.error);
-        }
-      }
-
-      const sessionData = {
-        id: String(admin.id),
-        username: admin.username,
-        full_name: admin.full_name ?? null,
-        role: String(admin.role ?? "").trim().toLowerCase(),
-        loginTime: loginAtIso,
-      };
-      localStorage.setItem('adminSession', JSON.stringify(sessionData));
+      localStorage.setItem('adminSession', JSON.stringify(data.admin));
 
       try {
         sessionStorage.setItem('showLoginSplash', '1');
@@ -164,7 +106,7 @@ export default function Login() {
       router.replace('/Main_Modules/Dashboard/');
     } catch (err: unknown) {
       console.error('Login error', err);
-      setError('An unexpected error occurred. Try again.');
+      setError(err instanceof Error ? err.message : 'An unexpected error occurred. Try again.');
     } finally {
       setIsLoading(false);
     }

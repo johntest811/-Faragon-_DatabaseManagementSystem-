@@ -1,0 +1,7 @@
+-- Production Storage hardening is maintained as an ordered Supabase migration.
+--
+-- If the Supabase CLI migration has not already been applied, paste and run:
+--   supabase/migrations/20260810171500_secure_storage_buckets.sql
+--
+-- Do not run both copies. The migration is safe to rerun, but keeping one
+-- source of truth prevents the SQL Editor copy from drifting from deployment.

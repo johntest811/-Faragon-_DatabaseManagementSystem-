@@ -993,7 +993,7 @@ function parseEmailTemplateNotes(notes) {
   return { subject: null, bodyHtml: null, legacyMessage: raw };
 }
 
-const BUNDLED_TEXT_FILES = new Set(['skills-lock.json', 'Supabase_database.sql']);
+const BUNDLED_TEXT_FILES = new Set(['skills-lock.json']);
 
 function bundledFileCandidates(fileName) {
   const rel = String(fileName || '').trim();
@@ -4657,6 +4657,12 @@ if (gotSingleInstanceLock) {
   app.whenReady().then(startApp);
 
   app.whenReady().then(() => {
+    const privilegedEnv = resolveSupabaseAdminEnv();
+    if (!privilegedEnv.url || !privilegedEnv.serviceKey) {
+      // Production notifications are handled by the Supabase worker. Never
+      // require a service-role key inside the installed desktop application.
+      return;
+    }
     // Scheduler: checks frequently while the app is open so due emails send promptly.
     if (notificationTimer) clearInterval(notificationTimer);
     notificationTimer = setInterval(() => {

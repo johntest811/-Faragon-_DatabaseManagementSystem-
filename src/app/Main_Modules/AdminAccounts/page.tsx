@@ -6,7 +6,6 @@ import { useRouter } from "next/navigation";
 import { supabase } from "../../Client/SupabaseClients";
 import { useAuthRole } from "../../Client/useRbac";
 import { AccessTabs } from "../Components/AccessTabs";
-import { SECURITY_ACCOUNT_PARAPHERNALIA_COLUMNS } from "../Components/permissionCatalog";
 import { Pencil, Search, ShieldCheck, UserCheck, UserPlus, UserX, Users, X } from "lucide-react";
 import TableZoomWrapper from "@/app/Components/TableZoomWrapper";
 import PageLoading from "@/app/Components/PageLoading";
@@ -79,6 +78,30 @@ function getLegacyAdminDisplayName() {
 	} catch {
 		return null;
 	}
+}
+
+async function invokeAccountManager(payload: Record<string, unknown>) {
+	const { data, error } = await supabase.functions.invoke<{ success?: boolean; error?: string }>(
+		"admin-account-manager",
+		{ body: payload }
+	);
+	if (error) {
+		const context = (error as { context?: unknown }).context;
+		if (context instanceof Response) {
+			let message = "";
+			try {
+				const body = await context.clone().json() as { error?: unknown };
+				message = String(body?.error ?? "").trim();
+			} catch {
+				// Keep the original function error when the response is not JSON.
+			}
+			if (message) throw new Error(message);
+		}
+		throw error;
+	}
+	if (data?.error) throw new Error(data.error);
+	if (!data?.success) throw new Error("The account operation did not complete.");
+	return data;
 }
 
 function formatRoleLabel(value: string | null | undefined) {
@@ -367,6 +390,7 @@ export default function AdminAccountsPage() {
 		if (!accountUsername.trim() || !accountPassword.trim()) {
 			return setError("Username and password are required");
 		}
+		if (accountPassword.length < 8) return setError("Password must be at least 8 characters.");
 		if (!accountRole.trim()) {
 			return setError("Role is required");
 		}
@@ -375,20 +399,15 @@ export default function AdminAccountsPage() {
 		try {
 			const username = accountUsername.trim();
 			const roleName = accountRole.trim().toLowerCase();
-			const { error: roleUpsertErr } = await supabase
-				.from("app_roles")
-				.upsert({ role_name: roleName }, { onConflict: "role_name" });
-			if (roleUpsertErr) return setError(roleUpsertErr.message);
-
-			const { error: insErr } = await supabase.from("admins").insert({
+			await invokeAccountManager({
+				action: "create",
 				username,
 				password: accountPassword,
 				role: roleName,
 				full_name: accountFullName.trim() || null,
 				assigned_detachment: accountDetachment.trim() || null,
-				is_active: true,
+				security_account: false,
 			});
-			if (insErr) return setError(insErr.message);
 
 			setSuccess("Account created.");
 			setAccountUsername("");
@@ -416,19 +435,12 @@ export default function AdminAccountsPage() {
 		setTogglingActiveId(a.id);
 		try {
 			const nextIsActive = !a.is_active;
-			const { data, error: upErr } = await supabase
-				.from("admins")
-				.update({ is_active: nextIsActive })
-				.eq("id", a.id)
-				.select("id, is_active")
-				.maybeSingle();
-			if (upErr) return setError(upErr.message);
-			if (!data) return setError("Account update did not apply. Please try again.");
+			await invokeAccountManager({ action: "update", account_id: a.id, is_active: nextIsActive });
 
 			setAdmins((prev) =>
 				prev.map((row) =>
 					row.id === a.id
-						? { ...row, is_active: Boolean((data as { is_active?: boolean | null }).is_active) }
+						? { ...row, is_active: nextIsActive }
 						: row
 				)
 			);
@@ -450,13 +462,11 @@ export default function AdminAccountsPage() {
 		if (!nextRole.trim()) return setError("Role is required");
 		const roleName = nextRole.trim().toLowerCase();
 
-		const { error: roleUpsertErr } = await supabase
-			.from("app_roles")
-			.upsert({ role_name: roleName }, { onConflict: "role_name" });
-		if (roleUpsertErr) return setError(roleUpsertErr.message);
-
-		const { error: upErr } = await supabase.from("admins").update({ role: roleName }).eq("id", a.id);
-		if (upErr) return setError(upErr.message);
+		try {
+			await invokeAccountManager({ action: "update", account_id: a.id, role: roleName });
+		} catch (e: unknown) {
+			return setError(getErrorMessage(e));
+		}
 		setSuccess("Role updated.");
 		logAudit("ADMIN_UPDATE_ACCOUNT_ROLE", { id: a.id, username: a.username, role: roleName });
 		setAdmins((prev) => prev.map((row) => (row.id === a.id ? { ...row, role: roleName } : row)));
@@ -479,6 +489,7 @@ export default function AdminAccountsPage() {
 		if (!editingAccount) return;
 		const username = editUsername.trim();
 		if (!username) return setError("Username is required.");
+		if (editPassword && editPassword.length < 8) return setError("New password must be at least 8 characters.");
 
 		setSavingAccountEdit(true);
 		try {
@@ -487,15 +498,7 @@ export default function AdminAccountsPage() {
 				full_name: editFullName.trim() || null,
 			};
 			if (editPassword.trim()) updates.password = editPassword;
-
-			const { data, error: updateError } = await supabase
-				.from("admins")
-				.update(updates)
-				.eq("id", editingAccount.id)
-				.select("id, username, full_name")
-				.maybeSingle();
-			if (updateError) throw updateError;
-			if (!data) throw new Error("Account update did not apply. Please try again.");
+			await invokeAccountManager({ action: "update", account_id: editingAccount.id, ...updates });
 
 			setAdmins((previous) => previous.map((account) => (
 				account.id === editingAccount.id
@@ -550,23 +553,13 @@ export default function AdminAccountsPage() {
 		const ok = window.confirm(`Permanently delete ${a.username}?`);
 		if (!ok) return;
 
-		const { error: clearRequesterErr } = await supabase
-			.from("access_requests")
-			.update({ requester_admin_id: null })
-			.eq("requester_admin_id", a.id);
-		if (clearRequesterErr) return setError(clearRequesterErr.message);
-
-		const { error: clearApproverErr } = await supabase
-			.from("access_requests")
-			.update({ approver_admin_id: null })
-			.eq("approver_admin_id", a.id);
-		if (clearApproverErr) return setError(clearApproverErr.message);
-
-		const { error: delErr } = await supabase.from("admins").delete().eq("id", a.id);
-		if (delErr) return setError(delErr.message);
-		setSuccess("Account deleted.");
-		logAudit("ADMIN_DELETE_ACCOUNT", { id: a.id, username: a.username });
-		void loadAccounts();
+		try {
+			await invokeAccountManager({ action: "delete", account_id: a.id });
+			setSuccess("Account deleted.");
+			void loadAccounts();
+		} catch (e: unknown) {
+			setError(getErrorMessage(e));
+		}
 	}
 
 	async function createEmployeeAccount() {
@@ -576,6 +569,7 @@ export default function AdminAccountsPage() {
 		if (!selectedEmployee) return setError("Select an active employee first.");
 		if (employeeAccountIds.has(selectedEmployee.applicant_id)) return setError("This employee already has an account.");
 		if (!employeeUsername.trim() || !employeePassword.trim()) return setError("Username and password are required.");
+		if (employeePassword.length < 8) return setError("Password must be at least 8 characters.");
 
 		setCreatingEmployeeAccount(true);
 		try {
@@ -583,44 +577,9 @@ export default function AdminAccountsPage() {
 			if (roleName === "superadmin") {
 				throw new Error("Superadmin is reserved and cannot be assigned through Create Security Account.");
 			}
-			const { data: employeeRole, error: roleError } = await supabase
-				.from("app_roles")
-				.upsert({ role_name: roleName }, { onConflict: "role_name" })
-				.select("role_id")
-				.single();
-			if (roleError) throw roleError;
-
-			const roleId = String(employeeRole?.role_id ?? "");
-			if (roleId) {
-				const clearColumns = await supabase.from("role_column_access").delete().eq("role_id", roleId);
-				if (clearColumns.error) throw clearColumns.error;
-				const [clearModules, clearDetachmentScope] = await Promise.all([
-					supabase.from("role_module_access").delete().eq("role_id", roleId),
-					supabase.from("role_paraphernalia_detachment_access").delete().eq("role_id", roleId),
-				]);
-				if (clearModules.error) throw clearModules.error;
-				if (clearDetachmentScope.error) throw clearDetachmentScope.error;
-
-				const { error: moduleError } = await supabase.from("role_module_access").upsert(
-					{ role_id: roleId, module_key: "paraphernalia", can_read: true, can_write: false, can_edit: false },
-					{ onConflict: "role_id,module_key" }
-				);
-				if (moduleError) throw moduleError;
-
-				const { error: columnsError } = await supabase.from("role_column_access").upsert(
-					SECURITY_ACCOUNT_PARAPHERNALIA_COLUMNS.map((columnKey) => ({
-						role_id: roleId,
-						module_key: "paraphernalia",
-						column_key: columnKey,
-						can_read: true,
-					})),
-					{ onConflict: "role_id,module_key,column_key" }
-				);
-				if (columnsError) throw columnsError;
-			}
-
 			const username = employeeUsername.trim();
-			const { error: insertError } = await supabase.from("admins").insert({
+			await invokeAccountManager({
+				action: "create",
 				username,
 				password: employeePassword,
 				role: roleName,
@@ -628,9 +587,8 @@ export default function AdminAccountsPage() {
 				employee_number: selectedEmployee.custom_id?.trim() || null,
 				applicant_id: selectedEmployee.applicant_id,
 				assigned_detachment: selectedEmployee.detachment?.trim() || null,
-				is_active: true,
+				security_account: true,
 			});
-			if (insertError) throw insertError;
 
 			setSuccess(`Security account created for ${formatEmployeeName(selectedEmployee)} with the ${formatRoleLabel(roleName)} role.`);
 			setEmployeeAccountOpen(false);
@@ -646,11 +604,9 @@ export default function AdminAccountsPage() {
 			await Promise.all([loadAccounts(), loadRoles()]);
 		} catch (e: unknown) {
 			const message = getErrorMessage(e);
-			setError(
-				message.includes("duplicate") || message.includes("unique")
-					? "That employee or username already has an account."
-					: `${message} Run SQL/supabase_paraphernalia_main_inventory_and_access.sql if applicant_id is missing.`
-			);
+			setError(message.includes("duplicate") || message.includes("unique")
+				? "That employee or username already has an account."
+				: message);
 		} finally {
 			setCreatingEmployeeAccount(false);
 		}
@@ -661,11 +617,11 @@ export default function AdminAccountsPage() {
 		setSuccess("");
 		if (!canManage) return setError("Only Superadmin can manage account detachments.");
 		const assignedDetachment = nextDetachment.trim() || null;
-		const { error: updateError } = await supabase
-			.from("admins")
-			.update({ assigned_detachment: assignedDetachment })
-			.eq("id", a.id);
-		if (updateError) return setError(updateError.message);
+		try {
+			await invokeAccountManager({ action: "update", account_id: a.id, assigned_detachment: assignedDetachment });
+		} catch (e: unknown) {
+			return setError(getErrorMessage(e));
+		}
 		setAdmins((prev) => prev.map((row) => row.id === a.id ? { ...row, assigned_detachment: assignedDetachment } : row));
 		setSuccess(assignedDetachment ? "Assigned detachment updated." : "Account detachment assignment cleared.");
 		logAudit("ADMIN_UPDATE_ACCOUNT_DETACHMENT", {
@@ -851,6 +807,7 @@ export default function AdminAccountsPage() {
 											<div className="mb-1 text-xs font-semibold uppercase tracking-wide text-black">Password</div>
 											<input
 												type="password"
+												minLength={8}
 												value={accountPassword}
 												onChange={(e) => setAccountPassword(e.target.value)}
 												placeholder="password"
@@ -1004,6 +961,7 @@ export default function AdminAccountsPage() {
 									<span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600">Temporary Password</span>
 									<input
 										type="password"
+										minLength={8}
 										value={employeePassword}
 										onChange={(event) => setEmployeePassword(event.target.value)}
 										disabled={creatingEmployeeAccount}
@@ -1070,7 +1028,7 @@ export default function AdminAccountsPage() {
 							</label>
 							<label className="block">
 								<span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600">New Password</span>
-								<input type="password" value={editPassword} onChange={(event) => setEditPassword(event.target.value)} disabled={savingAccountEdit} placeholder="Leave blank to keep the current password" className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-black outline-none focus:border-[#8B1C1C] focus:ring-4 focus:ring-[#8B1C1C]/10" />
+								<input type="password" minLength={8} value={editPassword} onChange={(event) => setEditPassword(event.target.value)} disabled={savingAccountEdit} placeholder="Leave blank to keep the current password" className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-black outline-none focus:border-[#8B1C1C] focus:ring-4 focus:ring-[#8B1C1C]/10" />
 								<span className="mt-2 block text-xs text-slate-500">The current password is never displayed. Enter a new one only when it needs to change.</span>
 							</label>
 							<div className="flex justify-end gap-2 pt-2">

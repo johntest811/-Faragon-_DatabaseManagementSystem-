@@ -8,6 +8,7 @@ import Image from "next/image";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "../Client/SupabaseClients";
 import { useAuthRole, useMyModules } from "../Client/useRbac";
+import { useSignedStorageUrlMap } from "../Client/useSignedStorageUrls";
 import {
   LayoutGrid,
   Users,
@@ -275,16 +276,6 @@ function writeLegacyAdminSessionPatch(patch: Partial<LegacyAdminSession>) {
   } catch {
     // ignore
   }
-}
-
-function profileImageUrl(profilePath: string | null, cacheBust?: number) {
-  if (!profilePath) return null;
-  const { data } = supabase.storage.from(PROFILE_BUCKET).getPublicUrl(profilePath);
-  const url = data.publicUrl || null;
-  if (!url) return null;
-  if (!cacheBust) return url;
-  const join = url.includes("?") ? "&" : "?";
-  return `${url}${join}v=${cacheBust}`;
 }
 
 function displayAdminName(fullName: string, username: string) {
@@ -663,6 +654,15 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
     profileImagePath: null,
     profileImageUrl: null,
   });
+  const currentProfileUrls = useSignedStorageUrlMap(PROFILE_BUCKET, [currentAdmin.profileImagePath]);
+
+  useEffect(() => {
+    const path = String(currentAdmin.profileImagePath ?? "").trim();
+    const nextUrl = path ? currentProfileUrls.get(path) ?? null : null;
+    setCurrentAdmin((previous) => previous.profileImageUrl === nextUrl
+      ? previous
+      : { ...previous, profileImageUrl: nextUrl });
+  }, [currentAdmin.profileImagePath, currentProfileUrls]);
   const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [workforceOpen, setWorkforceOpen] = useState(false);
@@ -944,7 +944,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
         username: nextUsername,
         fullName: nextFullName,
         profileImagePath: nextProfilePath,
-        profileImageUrl: profileImageUrl(nextProfilePath),
+        profileImageUrl: null,
       });
 
       return {
@@ -993,7 +993,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
           username: nextUsername,
           fullName: nextFullName,
           profileImagePath: nextProfilePath,
-          profileImageUrl: profileImageUrl(nextProfilePath, Date.now()),
+          profileImageUrl: null,
         });
 
         writeLegacyAdminSessionPatch({
@@ -1827,15 +1827,8 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
     }
   }, [pathname]);
 
-  function hasLegacySession() {
-    try {
-      return Boolean(localStorage.getItem("adminSession"));
-    } catch {
-      return false;
-    }
-  }
-
-  function handleLogout() {
+  async function handleLogout() {
+    await supabase.auth.signOut({ scope: "local" });
     try {
       localStorage.removeItem("adminSession");
     } catch {
@@ -1863,14 +1856,18 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
   useEffect(() => {
     let cancelled = false;
     async function ensureSession() {
-      if (hasLegacySession()) return;
-
-      const { data } = await supabase.auth.getSession();
-      if (!cancelled && !data.session) window.location.href = "/Login/";
+      const { data, error } = await supabase.auth.getSession();
+      if (!cancelled && (error || !data.session)) {
+        localStorage.removeItem("adminSession");
+        window.location.href = "/Login/";
+      }
     }
     ensureSession();
     const { data: sub } = supabase.auth.onAuthStateChange((_evt, session) => {
-      if (!session && !hasLegacySession()) window.location.href = "/Login/";
+      if (!session) {
+        localStorage.removeItem("adminSession");
+        window.location.href = "/Login/";
+      }
     });
 
     const onStorage = (e: StorageEvent) => {

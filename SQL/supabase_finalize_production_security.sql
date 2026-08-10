@@ -1,0 +1,7 @@
+-- Production security stage 2.
+-- Run the matching migration file below in the Supabase SQL Editor only after
+-- the Auth account migration and Edge Function deployment are complete:
+-- supabase/migrations/20260810160510_finalize_production_security.sql
+--
+-- This small pointer avoids maintaining two copies of security-critical SQL.
+-- Open the migration file, paste its entire contents into SQL Editor, and run.

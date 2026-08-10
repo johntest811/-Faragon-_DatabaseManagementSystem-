@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import JSZip from "jszip";
 import { supabase } from "../Client/SupabaseClients";
+import { StorageUrlRequest, useSignedStorageUrls } from "../Client/useSignedStorageUrls";
 import * as XLSX from "xlsx";
 import LoadingCircle from "./LoadingCircle";
 
@@ -353,12 +354,6 @@ function generateUuidV4(): string {
     const s = () => Math.floor((1 + Math.random()) * 0x10000).toString(16).slice(1);
     return `${s()}${s()}-${s()}-${s()}-${s()}-${s()}${s()}${s()}`;
   }
-}
-
-function publicUrl(bucket: string, path: string | null) {
-  if (!path) return null;
-  const { data } = supabase.storage.from(bucket).getPublicUrl(path);
-  return data.publicUrl || null;
 }
 
 function toNullableText(value: string) {
@@ -925,24 +920,31 @@ function normalizeJobTitle(value: string) {
     setError("");
   }
 
-  const docPreview = useMemo(() => {
-    return {
-      profile: publicUrl(BUCKETS.applicants, app.profile_image_path || null),
-      applicationForm: publicUrl(BUCKETS.certificates, bio.applicant_form_path || null),
-      sss: publicUrl(BUCKETS.applicants, app.sss_certain_path || null),
-      tin: publicUrl(BUCKETS.applicants, app.tin_id_path || null),
-      pagibig: publicUrl(BUCKETS.applicants, app.pag_ibig_id_path || null),
-      philhealth: publicUrl(BUCKETS.applicants, app.philhealth_id_path || null),
-      securityLicense: publicUrl(BUCKETS.licensure, app.security_license_path || null),
-
-      training: publicUrl(BUCKETS.certificates, certs.training_path || null),
-      seminar: publicUrl(BUCKETS.certificates, certs.seminar_path || null),
-      gunSafety: publicUrl(BUCKETS.certificates, certs.gun_safety_certificate_path || null),
-      hs: publicUrl(BUCKETS.certificates, certs.highschool_diploma_path || null),
-      college: publicUrl(BUCKETS.certificates, certs.college_diploma_path || null),
-      vocational: publicUrl(BUCKETS.certificates, certs.vocational_path || null),
-    };
-  }, [app, bio, certs]);
+  const docPreviewRequests = useMemo<StorageUrlRequest[]>(() => [
+    { key: "profile", bucket: BUCKETS.applicants, path: app.profile_image_path },
+    { key: "applicationForm", bucket: BUCKETS.certificates, path: bio.applicant_form_path },
+    { key: "sss", bucket: BUCKETS.applicants, path: app.sss_certain_path },
+    { key: "tin", bucket: BUCKETS.applicants, path: app.tin_id_path },
+    { key: "pagibig", bucket: BUCKETS.applicants, path: app.pag_ibig_id_path },
+    { key: "philhealth", bucket: BUCKETS.applicants, path: app.philhealth_id_path },
+    { key: "securityLicense", bucket: BUCKETS.licensure, path: app.security_license_path },
+    { key: "training", bucket: BUCKETS.certificates, path: certs.training_path },
+    { key: "seminar", bucket: BUCKETS.certificates, path: certs.seminar_path },
+    { key: "gunSafety", bucket: BUCKETS.certificates, path: certs.gun_safety_certificate_path },
+    { key: "hs", bucket: BUCKETS.certificates, path: certs.highschool_diploma_path },
+    { key: "college", bucket: BUCKETS.certificates, path: certs.college_diploma_path },
+    { key: "vocational", bucket: BUCKETS.certificates, path: certs.vocational_path },
+  ], [app, bio, certs]);
+  const docPreview = useSignedStorageUrls(docPreviewRequests);
+  const otherDocPreviewRequests = useMemo<StorageUrlRequest[]>(
+    () => otherDocs.map((doc, idx) => ({
+      key: doc.document_id ?? `other-doc-${idx}`,
+      bucket: doc.bucket || BUCKETS.certificates,
+      path: doc.path,
+    })),
+    [otherDocs]
+  );
+  const otherDocPreviews = useSignedStorageUrls(otherDocPreviewRequests);
 
   useEffect(() => {
     if (!open) return;
@@ -2524,7 +2526,7 @@ function normalizeJobTitle(value: string) {
                 ) : (
                   <div className="mt-3 space-y-3">
                     {otherDocs.map((doc, idx) => {
-                      const preview = publicUrl(doc.bucket, doc.path || null);
+                      const preview = otherDocPreviews[doc.document_id ?? `other-doc-${idx}`] ?? null;
                       const uploadKey = `other_document_${idx + 1}`;
                       return (
                         <div key={doc.document_id ?? `other-doc-${idx}`} className="rounded-xl border p-3">

@@ -19,6 +19,7 @@ import {
   paraphernaliaKindForGroup,
 } from "../Components/equipmentCatalog";
 import * as XLSX from "xlsx";
+import { useSignedStorageUrlMap } from "@/app/Client/useSignedStorageUrls";
 
 type InventoryKind = "SEC" | "OFFICE";
 type EntryKind = "stockIn" | "stockOut";
@@ -608,6 +609,7 @@ export default function ParaphernaliaPage() {
 
   const [contracts, setContracts] = useState<ContractOption[]>([]);
   const [stockInRows, setStockInRows] = useState<StockInRow[]>([]);
+  const attachmentUrls = useSignedStorageUrlMap(PARAPHERNALIA_BUCKET, stockInRows.map((row) => row.attachment));
   const [stockOutRows, setStockOutRows] = useState<StockOutRow[]>([]);
   const [itemOptions, setItemOptions] = useState<ItemOption[]>([]);
   const [employeeOptions, setEmployeeOptions] = useState<EmployeeOption[]>([]);
@@ -1397,9 +1399,9 @@ export default function ParaphernaliaPage() {
         render: (row) => {
           const value = safeText(row.attachment);
           if (value === "-") return value;
-          const isUrl = /^https?:\/\//i.test(value);
-          return isUrl ? (
-            <a href={value} target="_blank" rel="noreferrer" className="font-medium text-[#8B1C1C] underline">
+          const url = attachmentUrls.get(String(row.attachment ?? "").trim()) ?? (/^https?:\/\//i.test(value) ? value : null);
+          return url ? (
+            <a href={url} target="_blank" rel="noreferrer" className="font-medium text-[#8B1C1C] underline">
               {makeAttachmentLabel(row.attachment)}
             </a>
           ) : (
@@ -1409,7 +1411,7 @@ export default function ParaphernaliaPage() {
       },
     ];
     return columns.filter((column) => canViewPermission(column.key));
-  }, [canViewPermission]);
+  }, [attachmentUrls, canViewPermission]);
 
   const mainTransferColumns = useMemo<ColumnDef<StockInRow>[]>(() => [
     { key: "transfer_timestamp", header: "Timestamp", render: (row) => formatDateTime(row.timestamp) },
@@ -1441,14 +1443,15 @@ export default function ParaphernaliaPage() {
       render: (row) => {
         const value = safeText(row.attachment);
         if (value === "-") return value;
-        return /^https?:\/\//i.test(value) ? (
-          <a href={value} target="_blank" rel="noreferrer" className="font-medium text-[#8B1C1C] underline">
+        const url = attachmentUrls.get(String(row.attachment ?? "").trim()) ?? (/^https?:\/\//i.test(value) ? value : null);
+        return url ? (
+          <a href={url} target="_blank" rel="noreferrer" className="font-medium text-[#8B1C1C] underline">
             {makeAttachmentLabel(row.attachment)}
           </a>
         ) : value;
       },
     },
-  ], [resolveClientName, resolveSpecificArea]);
+  ], [attachmentUrls, resolveClientName, resolveSpecificArea]);
 
   const stockOutColumns = useMemo<ColumnDef<StockOutRow>[]>(() => {
     const columns: ColumnDef<StockOutRow>[] = [
@@ -1809,8 +1812,7 @@ export default function ParaphernaliaPage() {
       upsert: true,
     });
     if (uploadError) throw uploadError;
-    const { data } = supabase.storage.from(PARAPHERNALIA_BUCKET).getPublicUrl(path);
-    return data.publicUrl || path;
+    return path;
   }
 
   async function ensureItemOption(itemName: string) {

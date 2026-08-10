@@ -1,0 +1,3 @@
+-- Production operational RLS.
+-- Paste the complete contents of the matching migration into Supabase SQL Editor:
+-- supabase/migrations/20260810162923_enforce_operational_module_rls.sql

@@ -23,6 +23,7 @@ import { useMyApplicantColumnAccess, useMyApplicantRowAccess, useMyColumnAccess,
 import EmployeeEditorModal from "../../../Components/EmployeeEditorModal";
 import LoadingCircle from "../../../Components/LoadingCircle";
 import DetachmentHistoryPopover from "../../Components/DetachmentHistoryPopover";
+import { StorageUrlRequest, useSignedStorageUrls } from "../../../Client/useSignedStorageUrls";
 
 type Applicant = {
   applicant_id: string;
@@ -208,12 +209,6 @@ function formatServiceLength(fromIso: string | null, now: Date) {
   if (Number.isNaN(d.getTime())) return "—";
   const diff = diffYearsMonthsDays(d, now);
   return `${diff.years} year(s), ${diff.months} month(s), ${diff.days} day(s)`;
-}
-
-function publicUrl(bucket: string, path: string | null) {
-  if (!path) return null;
-  const { data } = supabase.storage.from(bucket).getPublicUrl(path);
-  return data.publicUrl || null;
 }
 
 type ViewerItem = {
@@ -612,37 +607,38 @@ function EmployeeDetailsInner() {
     detailLabelLower,
   ]);
 
-  const profile = useMemo(() => {
-    if (!applicant) return null;
-    return publicUrl(BUCKETS.applicants, applicant.profile_image_path);
-  }, [applicant]);
-
-  const docUrls = useMemo(() => {
-    if (!applicant) return null;
-    return {
-      applicationForm: publicUrl(BUCKETS.certificates, bio?.applicant_form_path || null),
-      sss: publicUrl(BUCKETS.applicants, applicant.sss_certain_path),
-      tin: publicUrl(BUCKETS.applicants, applicant.tin_id_path),
-      pagibig: publicUrl(BUCKETS.applicants, applicant.pag_ibig_id_path),
-      philhealth: publicUrl(BUCKETS.applicants, applicant.philhealth_id_path),
-      securityLicense: publicUrl(BUCKETS.licensure, applicant.security_license_path),
-      training: publicUrl(BUCKETS.certificates, certs?.training_path || null),
-      seminar: publicUrl(BUCKETS.certificates, certs?.seminar_path || null),
-      gunSafety: publicUrl(BUCKETS.certificates, certs?.gun_safety_certificate_path || null),
-      hs: publicUrl(BUCKETS.certificates, certs?.highschool_diploma_path || null),
-      college: publicUrl(BUCKETS.certificates, certs?.college_diploma_path || null),
-      vocational: publicUrl(BUCKETS.certificates, certs?.vocational_path || null),
-    };
-  }, [applicant, certs, bio]);
+  const storageRequests = useMemo<StorageUrlRequest[]>(() => [
+    { key: "profile", bucket: BUCKETS.applicants, path: applicant?.profile_image_path },
+    { key: "applicationForm", bucket: BUCKETS.certificates, path: bio?.applicant_form_path },
+    { key: "sss", bucket: BUCKETS.applicants, path: applicant?.sss_certain_path },
+    { key: "tin", bucket: BUCKETS.applicants, path: applicant?.tin_id_path },
+    { key: "pagibig", bucket: BUCKETS.applicants, path: applicant?.pag_ibig_id_path },
+    { key: "philhealth", bucket: BUCKETS.applicants, path: applicant?.philhealth_id_path },
+    { key: "securityLicense", bucket: BUCKETS.licensure, path: applicant?.security_license_path },
+    { key: "training", bucket: BUCKETS.certificates, path: certs?.training_path },
+    { key: "seminar", bucket: BUCKETS.certificates, path: certs?.seminar_path },
+    { key: "gunSafety", bucket: BUCKETS.certificates, path: certs?.gun_safety_certificate_path },
+    { key: "hs", bucket: BUCKETS.certificates, path: certs?.highschool_diploma_path },
+    { key: "college", bucket: BUCKETS.certificates, path: certs?.college_diploma_path },
+    { key: "vocational", bucket: BUCKETS.certificates, path: certs?.vocational_path },
+    ...otherDocs.map((doc, idx) => ({
+      key: `other-document-${doc.document_id ?? idx}`,
+      bucket: doc.bucket || BUCKETS.certificates,
+      path: doc.file_path,
+    })),
+  ], [applicant, certs, bio, otherDocs]);
+  const signedStorageUrls = useSignedStorageUrls(storageRequests);
+  const profile = signedStorageUrls.profile ?? null;
+  const docUrls = applicant ? signedStorageUrls : null;
 
   const otherDocumentItems = useMemo(
     () =>
       otherDocs.map((doc, idx) => ({
         key: `other-document-${doc.document_id ?? idx}`,
         title: doc.label?.trim() || `Other Document ${idx + 1}`,
-        url: doc.file_path ? publicUrl((doc.bucket || BUCKETS.certificates) as keyof typeof BUCKETS, doc.file_path) : null,
+        url: signedStorageUrls[`other-document-${doc.document_id ?? idx}`] ?? null,
       })),
-    [otherDocs]
+    [otherDocs, signedStorageUrls]
   );
 
   const scannedDocumentItems = useMemo(() => {

@@ -1,0 +1,6 @@
+-- Production security stage 1.
+-- Run the matching migration file below in the Supabase SQL Editor:
+-- supabase/migrations/20260810160508_prepare_production_auth.sql
+--
+-- This small pointer avoids maintaining two copies of security-critical SQL.
+-- Open the migration file, paste its entire contents into SQL Editor, and run.

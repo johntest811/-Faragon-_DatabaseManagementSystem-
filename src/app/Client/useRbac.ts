@@ -14,17 +14,31 @@ type AdminSession = {
   loginTime?: string;
 };
 
-function readAdminSession(): AdminSession | null {
+async function readAdminSession(): Promise<AdminSession | null> {
+  const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+  if (sessionError || !sessionData.session) return null;
+
+  const { data: admin, error: adminError } = await supabase
+    .from("admins")
+    .select("id, username, role, full_name, is_active")
+    .eq("auth_user_id", sessionData.session.user.id)
+    .maybeSingle();
+  if (adminError || !admin || admin.is_active === false) return null;
+
+  const verified: AdminSession = {
+    id: String(admin.id),
+    username: String(admin.username),
+    role: String(admin.role ?? "").trim().toLowerCase(),
+    full_name: admin.full_name ?? null,
+  };
   try {
     const raw = localStorage.getItem("adminSession");
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as AdminSession;
-    if (!parsed || typeof parsed !== "object") return null;
-    if (!parsed.id || !parsed.username) return null;
-    return parsed;
+    const cached = raw ? JSON.parse(raw) as Partial<AdminSession> : {};
+    localStorage.setItem("adminSession", JSON.stringify({ ...cached, ...verified }));
   } catch {
-    return null;
+    // The signed Supabase session and database row remain authoritative.
   }
+  return verified;
 }
 
 export function normalizeRoleName(value: unknown): RoleName {
@@ -44,8 +58,7 @@ export function useAuthRole() {
       setLoading(true);
       setError("");
 
-      // Legacy mode: username login via public.admins + localStorage session.
-      const legacySession = readAdminSession();
+      const legacySession = await readAdminSession();
       if (legacySession) {
         try {
           const { data: adminRow, error: adminErr } = await supabase
@@ -56,8 +69,8 @@ export function useAuthRole() {
 
           if (!cancelled) {
             if (adminErr) {
-              // Fall back to whatever is currently in the local session.
-              setRole(normalizeRoleName(legacySession.role));
+              setError(adminErr.message);
+              setRole(null);
               setLoading(false);
               return;
             }
@@ -81,9 +94,10 @@ export function useAuthRole() {
             setRole(dbRole ?? sessionRole);
             setLoading(false);
           }
-        } catch {
+        } catch (authError) {
           if (!cancelled) {
-            setRole(normalizeRoleName(legacySession.role));
+            setError(authError instanceof Error ? authError.message : "Unable to verify the active account.");
+            setRole(null);
             setLoading(false);
           }
         }
@@ -232,7 +246,7 @@ export function useMyModules() {
       setLoading(true);
       setError("");
 
-      const legacySession = readAdminSession();
+      const legacySession = await readAdminSession();
       if (legacySession) {
         try {
           const legacyRole = normalizeRoleName(legacySession.role);
@@ -418,7 +432,7 @@ export function useMyModuleDeleteAccess(moduleKey: string): ModuleDeleteAccessRe
       }
 
       try {
-        const legacySession = readAdminSession();
+        const legacySession = await readAdminSession();
         if (legacySession) {
           const roleName = normalizeRoleName(legacySession.role);
           if (roleName === "superadmin") {
@@ -577,7 +591,7 @@ export function useMyModuleEditAccess(moduleKey: string): ModuleEditAccessResult
       }
 
       try {
-        const legacySession = readAdminSession();
+        const legacySession = await readAdminSession();
         if (legacySession) {
           const roleName = normalizeRoleName(legacySession.role);
           if (roleName === "superadmin") {
@@ -739,7 +753,7 @@ export function useMyColumnAccess(moduleKey: string): ColumnAccessResult {
       }
 
       try {
-        const legacySession = readAdminSession();
+        const legacySession = await readAdminSession();
 
         if (legacySession) {
           const roleName = normalizeRoleName(legacySession.role);
@@ -957,7 +971,7 @@ export function useMyApplicantColumnAccess(moduleKey: string, applicantId: strin
       }
 
       try {
-        const legacySession = readAdminSession();
+        const legacySession = await readAdminSession();
 
         if (legacySession) {
           const roleName = normalizeRoleName(legacySession.role);
@@ -1097,7 +1111,7 @@ export function useMyApplicantRowAccess(moduleKey: string, applicantId: string |
       }
 
       try {
-        const legacySession = readAdminSession();
+        const legacySession = await readAdminSession();
 
         if (legacySession) {
           const roleName = normalizeRoleName(legacySession.role);
@@ -1233,7 +1247,7 @@ export function useMyParaphernaliaDetachmentAccess(): ParaphernaliaDetachmentAcc
       setError("");
 
       try {
-        const legacySession = readAdminSession();
+        const legacySession = await readAdminSession();
         if (!legacySession) {
           if (!cancelled) {
             setAllowedDetachments(new Set());

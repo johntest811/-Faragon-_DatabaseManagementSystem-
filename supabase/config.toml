@@ -1,2 +1,8 @@
 [functions.notification-worker]
 verify_jwt = false
+
+[functions.admin-auth]
+verify_jwt = false
+
+[functions.admin-account-manager]
+verify_jwt = false

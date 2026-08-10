@@ -6,13 +6,14 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/app/Client/SupabaseClients";
 import { useAuthRole } from "@/app/Client/useRbac";
 import LoadingCircle from "@/app/Components/LoadingCircle";
+import { useSignedStorageUrlMap } from "@/app/Client/useSignedStorageUrls";
 
 type EmailSettingsRow = {
 	id: string;
 	provider: "gmail";
 	gmail_user: string;
 	from_email: string;
-	gmail_app_password: string | null;
+	gmail_app_password?: string | null;
 	is_active: boolean;
 	notes: string | null;
 };
@@ -148,16 +149,6 @@ function writeLegacyAdminSessionPatch(patch: Partial<LegacyAdminSession>) {
 	} catch {
 		// ignore
 	}
-}
-
-function profileImagePublicUrl(profilePath: string | null, cacheBust?: number) {
-	if (!profilePath) return null;
-	const { data } = supabase.storage.from(PROFILE_BUCKET).getPublicUrl(profilePath);
-	const url = data.publicUrl || null;
-	if (!url) return null;
-	if (!cacheBust) return url;
-	const join = url.includes("?") ? "&" : "?";
-	return `${url}${join}v=${cacheBust}`;
 }
 
 function profileInitials(name: string, username: string) {
@@ -528,9 +519,15 @@ export default function SettingsPage() {
 	const [profileDisplayName, setProfileDisplayName] = useState("");
 	const [profileImagePath, setProfileImagePath] = useState<string | null>(null);
 	const [profileImageUrl, setProfileImageUrl] = useState<string | null>(null);
+	const profileImageUrls = useSignedStorageUrlMap(PROFILE_BUCKET, [profileImagePath]);
 	const [profileSaving, setProfileSaving] = useState(false);
 	const [profileUploading, setProfileUploading] = useState(false);
 	const [profileRemoving, setProfileRemoving] = useState(false);
+
+	useEffect(() => {
+		const path = String(profileImagePath ?? "").trim();
+		setProfileImageUrl(path ? profileImageUrls.get(path) ?? null : null);
+	}, [profileImagePath, profileImageUrls]);
 
 	// Auto updater state
 	const [updaterState, setUpdaterState] = useState<"idle" | "checking" | "available" | "downloading" | "downloaded" | "no-update" | "error">("idle");
@@ -543,9 +540,9 @@ export default function SettingsPage() {
 	useEffect(() => {
 		async function fetchVersion() {
 			const anyWin = typeof window !== "undefined" ? (window as any) : null;
-			if (anyWin?.electronAPI?.invoke) {
+			if (anyWin?.electronAPI?.app?.getVersion) {
 				try {
-					const ver = await anyWin.electronAPI.invoke("app:getVersion");
+					const ver = await anyWin.electronAPI.app.getVersion();
 					setCurrentVersion(ver);
 				} catch {
 					// ignore web fallback
@@ -578,11 +575,11 @@ export default function SettingsPage() {
 
 	async function handleCheckForUpdates() {
 		const anyWin = typeof window !== "undefined" ? (window as any) : null;
-		if (!anyWin?.electronAPI?.invoke) return;
+		if (!anyWin?.electronAPI?.app?.checkForUpdates) return;
 		setUpdaterState("checking");
 		setUpdaterError(null);
 		try {
-			const res = await anyWin.electronAPI.invoke("app:checkForUpdates");
+			const res = await anyWin.electronAPI.app.checkForUpdates();
 			if (res.success) {
 				if (res.updateAvailable) {
 					setUpdaterState("available");
@@ -602,12 +599,12 @@ export default function SettingsPage() {
 
 	async function handleDownloadUpdate() {
 		const anyWin = typeof window !== "undefined" ? (window as any) : null;
-		if (!anyWin?.electronAPI?.invoke) return;
+		if (!anyWin?.electronAPI?.app?.downloadUpdate) return;
 		setUpdaterState("downloading");
 		setDownloadPercent(0);
 		setUpdaterError(null);
 		try {
-			const res = await anyWin.electronAPI.invoke("app:downloadUpdate");
+			const res = await anyWin.electronAPI.app.downloadUpdate();
 			if (!res.success) {
 				setUpdaterState("error");
 				setUpdaterError(res.error || "Failed to start download.");
@@ -620,9 +617,9 @@ export default function SettingsPage() {
 
 	async function handleInstallUpdate() {
 		const anyWin = typeof window !== "undefined" ? (window as any) : null;
-		if (!anyWin?.electronAPI?.invoke) return;
+		if (!anyWin?.electronAPI?.app?.installUpdate) return;
 		try {
-			await anyWin.electronAPI.invoke("app:installUpdate");
+			await anyWin.electronAPI.app.installUpdate();
 		} catch (err: any) {
 			setUpdaterState("error");
 			setUpdaterError(err?.message || "Failed to execute installer.");
@@ -797,7 +794,7 @@ export default function SettingsPage() {
 		setProfileUsername(legacyUsername);
 		setProfileDisplayName(legacyFullName || legacyUsername);
 		setProfileImagePath(legacyProfilePath);
-		setProfileImageUrl(profileImagePublicUrl(legacyProfilePath));
+		setProfileImageUrl(null);
 
 		try {
 			const wideRes = await supabase
@@ -834,7 +831,7 @@ export default function SettingsPage() {
 			setProfileUsername(nextUsername);
 			setProfileDisplayName(nextFullName || nextUsername);
 			setProfileImagePath(nextProfilePath);
-			setProfileImageUrl(profileImagePublicUrl(nextProfilePath, Date.now()));
+			setProfileImageUrl(null);
 
 			writeLegacyAdminSessionPatch({
 				id: nextId,
@@ -920,7 +917,7 @@ export default function SettingsPage() {
 
 			const previousPath = profileImagePath;
 			setProfileImagePath(path);
-			setProfileImageUrl(profileImagePublicUrl(path, Date.now()));
+			setProfileImageUrl(null);
 			writeLegacyAdminSessionPatch({ profile_image_path: path });
 			notifyAdminProfileUpdated();
 			setSuccess("Profile image updated.");
@@ -1336,7 +1333,7 @@ export default function SettingsPage() {
 					const [emailRes, prefRes] = await Promise.all([
 						supabase
 							.from("notification_email_settings")
-							.select("id, provider, gmail_user, from_email, gmail_app_password, is_active, notes")
+							.select("id, provider, gmail_user, from_email, is_active, notes")
 							.eq("provider", "gmail")
 							.limit(1)
 							.maybeSingle(),
@@ -1373,8 +1370,8 @@ export default function SettingsPage() {
 						const tpl = parseTemplateNotes(email.notes);
 						setEmailSubject(tpl.subject || DEFAULT_NOTICE_SUBJECT);
 						setEmailBodyHtml(tpl.bodyHtml || DEFAULT_NOTICE_BODY);
-						setDbHasStoredPassword(Boolean(email.gmail_app_password));
-						setDbStoredPasswordCache(email.gmail_app_password ?? "");
+						setDbHasStoredPassword(false);
+						setDbStoredPasswordCache("");
 						setGmailAppPassword("");
 						setStoreAppPassword(false);
 						setLoadedStoredPassword(false);

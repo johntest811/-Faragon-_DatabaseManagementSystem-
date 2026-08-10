@@ -6,6 +6,7 @@ import { FileDown, FileText, LayoutGrid, Pencil, Search, Table } from "lucide-re
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { supabase } from "../../Client/SupabaseClients";
+import { useSignedStorageUrlMap } from "../../Client/useSignedStorageUrls";
 import { useAuthRole, useMyColumnAccess, useMyModuleAccess, useMyModuleEditAccess } from "../../Client/useRbac";
 import EmployeeEditorModal from "../../Components/EmployeeEditorModal";
 import LoadingCircle from "../../Components/LoadingCircle";
@@ -62,12 +63,6 @@ function shortCode(id: string) {
 	return `APP-${id.slice(0, 2).toUpperCase()}-${id.slice(2, 5).toUpperCase()}`;
 }
 
-function getProfileUrl(profilePath: string | null) {
-	if (!profilePath) return null;
-	const { data } = supabase.storage.from(BUCKETS.profile).getPublicUrl(profilePath);
-	return data.publicUrl || null;
-}
-
 function downloadBlob(filename: string, blob: Blob) {
 	const url = URL.createObjectURL(blob);
 	const a = document.createElement("a");
@@ -117,6 +112,7 @@ export default function ApplicantsPage() {
 	const canExportApplicants = isAdmin && canViewApplicantColumn("export_file");
 
 	const [applicants, setApplicants] = useState<ApplicantRow[]>([]);
+	const profileUrls = useSignedStorageUrlMap(BUCKETS.profile, applicants.map((row) => row.profile_image_path));
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState("");
 	const [search, setSearch] = useState("");
@@ -444,7 +440,7 @@ export default function ApplicantsPage() {
 				<div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
 					{filteredApplicants.map((row) => {
 						const name = getFullName(row);
-						const profileUrl = getProfileUrl(row.profile_image_path);
+						const profileUrl = profileUrls.get(String(row.profile_image_path ?? "").trim()) ?? null;
 						const status = normalizeStatus(row.status);
 						const detailsHref = `/Main_Modules/Applicants/details/?id=${encodeURIComponent(row.applicant_id)}&from=${encodeURIComponent(
 							"/Main_Modules/Applicants/"
@@ -546,7 +542,7 @@ export default function ApplicantsPage() {
 							</thead>
 							<tbody>
 								{filteredApplicants.map((row) => {
-									const profileUrl = getProfileUrl(row.profile_image_path);
+									const profileUrl = profileUrls.get(String(row.profile_image_path ?? "").trim()) ?? null;
 									const name = getFullName(row);
 									const status = normalizeStatus(row.status);
 									const detailsHref = `/Main_Modules/Applicants/details/?id=${encodeURIComponent(row.applicant_id)}&from=${encodeURIComponent(
