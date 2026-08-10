@@ -8,6 +8,7 @@ import { AccessTabs } from "../Components/AccessTabs";
 import { RoleDialog } from "./RoleDialog";
 import { PencilLine, Plus, Trash2 } from "lucide-react";
 import TableZoomWrapper from "@/app/Components/TableZoomWrapper";
+import PageLoading from "@/app/Components/PageLoading";
 import {
 	columnsForModule,
 	formatPermissionColumnLabel,
@@ -55,7 +56,7 @@ type RoleDialogMode = "create" | "edit";
 
 export default function RolesPage() {
 	const router = useRouter();
-	const { role } = useAuthRole();
+	const { role, loading: roleLoading } = useAuthRole();
 
 	type ElectronAuditEvent = {
 		actor_user_id: string | null;
@@ -95,6 +96,7 @@ export default function RolesPage() {
 
 	const [error, setError] = useState<string>("");
 	const [success, setSuccess] = useState<string>("");
+	const [initialLoading, setInitialLoading] = useState(true);
 
 	const [roles, setRoles] = useState<RoleRow[]>([]);
 	const [modules, setModules] = useState<ModuleRow[]>([]);
@@ -235,6 +237,8 @@ export default function RolesPage() {
 			});
 		} catch (e: unknown) {
 			setError(getErrorMessage(e));
+		} finally {
+			setInitialLoading(false);
 		}
 	}, []);
 
@@ -770,6 +774,10 @@ export default function RolesPage() {
 		} finally {
 			setSavingKey("");
 		}
+	}
+
+	if (initialLoading || roleLoading) {
+		return <PageLoading label="Loading roles..." />;
 	}
 
 	const accessDenied = role !== null && role !== "superadmin";

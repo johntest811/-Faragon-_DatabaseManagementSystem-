@@ -9,6 +9,7 @@ import { AccessTabs } from "../Components/AccessTabs";
 import { SECURITY_ACCOUNT_PARAPHERNALIA_COLUMNS } from "../Components/permissionCatalog";
 import { Pencil, Search, ShieldCheck, UserCheck, UserPlus, UserX, Users, X } from "lucide-react";
 import TableZoomWrapper from "@/app/Components/TableZoomWrapper";
+import PageLoading from "@/app/Components/PageLoading";
 
 type RoleRow = { role_id: string; role_name: string };
 
@@ -119,11 +120,12 @@ function employeePositionRole(employee: EmployeeAccountOption) {
 
 export default function AdminAccountsPage() {
 	const router = useRouter();
-	const { role } = useAuthRole();
+	const { role, loading: roleLoading } = useAuthRole();
 	const api = getElectronApi();
 
 	const [error, setError] = useState<string>("");
 	const [success, setSuccess] = useState<string>("");
+	const [initialLoading, setInitialLoading] = useState(true);
 
 	const [roles, setRoles] = useState<RoleRow[]>([]);
 	const [admins, setAdmins] = useState<AdminRow[]>([]);
@@ -288,6 +290,8 @@ export default function AdminAccountsPage() {
 			await Promise.all([loadRoles(), loadAccounts(), loadDetachments(), loadEmployees()]);
 		} catch (e: unknown) {
 			setError(getErrorMessage(e));
+		} finally {
+			setInitialLoading(false);
 		}
 	}, [loadAccounts, loadDetachments, loadEmployees, loadRoles]);
 
@@ -669,6 +673,10 @@ export default function AdminAccountsPage() {
 			username: a.username,
 			assigned_detachment: assignedDetachment,
 		});
+	}
+
+	if (initialLoading || roleLoading) {
+		return <PageLoading label="Loading admin accounts..." />;
 	}
 
 	const accessDenied = role !== null && role !== "superadmin";
