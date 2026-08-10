@@ -4,6 +4,7 @@ import React, { useMemo, useState } from "react";
 import * as XLSX from "xlsx";
 import { supabase } from "../Client/SupabaseClients";
 import { readSpreadsheetRows } from "./spreadsheetImportUtils";
+import { buildBrandedWorkbookBuffer } from "../Main_Modules/Components/exportBranding";
 
 export type EmployeeExcelImportModalProps = {
   open: boolean;
@@ -532,18 +533,29 @@ export default function EmployeeExcelImportModal({
     downloadBlob("employee_import_template.csv", blob);
   }
 
-  function downloadXlsxTemplate() {
-    const templateRow = new Array(TEMPLATE_HEADERS.length).fill("");
-    templateRow[TEMPLATE_HEADERS.length - 1] = normalizedDefaultStatus;
-    const aoa = [[...TEMPLATE_HEADERS], templateRow];
-    const ws = XLSX.utils.aoa_to_sheet(aoa);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Employees");
-    const out = XLSX.write(wb, { bookType: "xlsx", type: "array" });
-    const blob = new Blob([out], {
-      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    });
-    downloadBlob("employee_import_template.xlsx", blob);
+  async function downloadXlsxTemplate() {
+    setParsingError("");
+    try {
+      const templateRow = new Array(TEMPLATE_HEADERS.length).fill("");
+      templateRow[TEMPLATE_HEADERS.length - 1] = normalizedDefaultStatus;
+      const templateRecord = Object.fromEntries(
+        TEMPLATE_HEADERS.map((header, index) => [header, templateRow[index]])
+      );
+      const out = await buildBrandedWorkbookBuffer([
+        {
+          name: "Employees",
+          title: "Employee Import Template",
+          subtitle: "Keep the column names unchanged when preparing employee records for import.",
+          rows: [templateRecord],
+        },
+      ]);
+      const blob = new Blob([out], {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      });
+      downloadBlob("employee_import_template.xlsx", blob);
+    } catch (error: unknown) {
+      setParsingError(error instanceof Error ? error.message : "Failed to create the Excel template.");
+    }
   }
 
   async function exportAllEmployeesTemplateXlsx() {
@@ -622,11 +634,17 @@ export default function EmployeeExcelImportModal({
         ];
       });
 
-      const aoa = [[...TEMPLATE_HEADERS], ...bodyRows];
-      const ws = XLSX.utils.aoa_to_sheet(aoa);
-      const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, "Employees");
-      const out = XLSX.write(wb, { bookType: "xlsx", type: "array" });
+      const exportRows = bodyRows.map((row) =>
+        Object.fromEntries(TEMPLATE_HEADERS.map((header, index) => [header, row[index]]))
+      );
+      const out = await buildBrandedWorkbookBuffer([
+        {
+          name: "Employees",
+          title: "Employees Export",
+          subtitle: `Employee import-compatible records exported ${new Date().toLocaleString()}`,
+          rows: exportRows,
+        },
+      ]);
       const blob = new Blob([out], {
         type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       });
@@ -923,7 +941,7 @@ export default function EmployeeExcelImportModal({
                     </button>
                     <button
                       type="button"
-                      onClick={downloadXlsxTemplate}
+                      onClick={() => void downloadXlsxTemplate()}
                       className="px-3 py-2 rounded-xl border bg-white text-black text-sm font-semibold"
                     >
                       Template XLSX
@@ -936,7 +954,7 @@ export default function EmployeeExcelImportModal({
                         exporting || importing ? "opacity-60" : ""
                       }`}
                     >
-                      {exporting ? "Exporting…" : "Export Excel All Tables"}
+                      {exporting ? "Exporting..." : "Export Employees XLSX"}
                     </button>
                   </div>
                 ) : null}

@@ -2,16 +2,14 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { FileDown, FileText, LayoutGrid, Pencil, Search, Table, Upload } from "lucide-react";
+import { FileDown, FileText, LayoutGrid, Pencil, Search, Table } from "lucide-react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { supabase } from "../../Client/SupabaseClients";
 import { useAuthRole, useMyColumnAccess, useMyModuleAccess, useMyModuleEditAccess } from "../../Client/useRbac";
 import EmployeeEditorModal from "../../Components/EmployeeEditorModal";
-import EmployeeExcelImportModal from "../../Components/EmployeeExcelImportModal";
 import LoadingCircle from "../../Components/LoadingCircle";
 import TableZoomWrapper from "@/app/Components/TableZoomWrapper";
-import ImportSummaryModal, { ImportSummaryData } from "../Components/ImportSummaryModal";
 import DetachmentHistoryPopover from "../Components/DetachmentHistoryPopover";
 import EmployeeStatusMenu from "../Components/EmployeeStatusMenu";
 import { buildEmployeeStatusUpdatePatch } from "../employeeListData";
@@ -116,7 +114,6 @@ export default function ApplicantsPage() {
 
 	const isAdmin = sessionRole === "admin" || sessionRole === "superadmin";
 	const canViewApplicantColumn = (columnKey: string) => !applicantColumnsRestricted || allowedApplicantColumns.has(columnKey);
-	const canImportApplicants = isAdmin && canViewApplicantColumn("import_file");
 	const canExportApplicants = isAdmin && canViewApplicantColumn("export_file");
 
 	const [applicants, setApplicants] = useState<ApplicantRow[]>([]);
@@ -132,9 +129,6 @@ export default function ApplicantsPage() {
 	const [statusFilter, setStatusFilter] = useState<StatusFilter>("APPLICANT");
 	const [editorOpen, setEditorOpen] = useState(false);
 	const [editorApplicantId, setEditorApplicantId] = useState<string | null>(null);
-	const [importOpen, setImportOpen] = useState(false);
-	const [importSummary, setImportSummary] = useState<ImportSummaryData | null>(null);
-	const [importSummaryOpen, setImportSummaryOpen] = useState(false);
 
 	const fetchApplicants = useCallback(async () => {
 		setLoading(true);
@@ -426,17 +420,6 @@ export default function ApplicantsPage() {
 							</>
 						) : null}
 
-						{canImportApplicants ? (
-							<button
-								onClick={() => setImportOpen(true)}
-								className="h-10 w-10 rounded-xl border bg-white flex items-center justify-center"
-								aria-label="Import Excel"
-								title="Import Excel"
-							>
-								<Upload className="w-5 h-5 text-gray-800" />
-							</button>
-						) : null}
-
 						{canEditApplicants ? (
 							<button onClick={openCreate} className="px-4 py-2 rounded-full bg-[#FFDA03] text-black font-semibold" type="button">
 								New Applicant
@@ -654,25 +637,6 @@ export default function ApplicantsPage() {
 				onClose={closeEditor}
 				onSaved={() => void onSaved()}
 				onDeleted={() => void onDeleted()}
-			/>
-
-			<EmployeeExcelImportModal
-				open={importOpen}
-				onClose={() => setImportOpen(false)}
-				allowTemplateDownloads={canImportApplicants}
-				defaultStatus="APPLICANT"
-				onImported={(result) => {
-					setImportSummary(result);
-					setImportSummaryOpen(true);
-					void fetchApplicants();
-				}}
-			/>
-
-			<ImportSummaryModal
-				open={importSummaryOpen}
-				title="Applicant Import Summary"
-				summary={importSummary}
-				onClose={() => setImportSummaryOpen(false)}
 			/>
 
 		</section>

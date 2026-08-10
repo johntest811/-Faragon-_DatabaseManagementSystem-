@@ -72,8 +72,6 @@ export const MODULE_CATALOG: ModuleCatalogItem[] = [
       "birth_date",
       "age",
       "profile_image_path",
-      "import_file",
-      "export_template",
       "export_file",
     ],
   },
