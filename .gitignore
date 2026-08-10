@@ -19,6 +19,7 @@
 
 # electron-builder / electron output
 /dist/
+/dist-win7/
 
 
 # production

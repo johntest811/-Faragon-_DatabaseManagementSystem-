@@ -189,7 +189,7 @@ export default function Login() {
 
               <div className="mt-8 flex flex-col gap-5 sm:flex-row sm:items-start">
                 <div className="flex h-24 w-24 items-center justify-center p-1 drop-shadow-2xl sm:-mt-2">
-                  <Image src="/Logo.png" alt="Faragon Security Agency logo" width={96} height={96} className="h-full w-full object-contain" priority />
+                  <Image src="/Logo-ui.png" alt="Faragon Security Agency logo" width={96} height={96} className="h-full w-full object-contain" priority />
                 </div>
                 <div className="max-w-md">
                   <h1 className="font-brand-serif text-4xl font-semibold tracking-tight text-white sm:text-5xl">Faragon</h1>

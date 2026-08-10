@@ -105,15 +105,11 @@ body {
   }
 }
 
-/* Hardware compositing & rendering containment hints for smooth table & grid scrolling */
-.glass-panel {
-  transform: translateZ(0);
-  backface-visibility: hidden;
-}
-
-table, .overflow-x-auto, .grid {
-  contain: layout style;
+/* Keep large tables scrollable without forcing every panel into a GPU layer. */
+.overflow-x-auto,
+.overflow-y-auto {
   -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
 }
 
 /* ==========================================================================
@@ -124,6 +120,18 @@ table, .overflow-x-auto, .grid {
 @media (max-width: 768px) {
   button, select, input[type="text"], input[type="search"], input[type="date"], input[type="number"] {
     min-height: 40px;
+  }
+
+  input,
+  select,
+  textarea {
+    max-width: 100%;
+  }
+
+  .glass-panel {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    background-color: rgba(255, 255, 255, 0.98);
   }
 }
 
@@ -153,4 +161,26 @@ table, .overflow-x-auto, .grid {
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
   }
+}
+
+/* Applied automatically for low-memory/low-core devices and slow networks. */
+html.performance-mode .glass-panel {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  background-color: #ffffff !important;
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.08) !important;
+}
+
+html.performance-mode .animate-slide-up,
+html.performance-mode .animate-fade-in,
+html.performance-mode .animate-pulse,
+html.performance-mode .animated-row,
+html.performance-mode .animated-btn {
+  animation: none !important;
+  transition-duration: 0.01ms !important;
+  transform: none !important;
+}
+
+html.performance-mode body {
+  background: #f6f1e8;
 }

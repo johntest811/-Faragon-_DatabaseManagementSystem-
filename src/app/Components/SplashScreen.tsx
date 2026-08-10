@@ -75,7 +75,7 @@ export default function SplashScreen({
     >
       <div className="mb-7 relative h-40 w-40 md:h-48 md:w-48 overflow-hidden">
         <img
-          src="/Logo2.png"
+          src="/Logo2-ui.png"
           alt="Faragon Logo Base"
           className="absolute inset-0 h-full w-full object-contain opacity-20"
         />
@@ -84,7 +84,7 @@ export default function SplashScreen({
           style={{ clipPath: `inset(${100 - progress}% 0 0 0)` }}
         >
           <img
-            src="/Logo2.png"
+            src="/Logo2-ui.png"
             alt="Faragon Logo"
             className="h-full w-full object-contain"
           />

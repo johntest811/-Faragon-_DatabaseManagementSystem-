@@ -2,12 +2,12 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { useRealtimeRefresh } from "../Client/useRealtimeRefresh";
 import SplashScreen from "./SplashScreen";
 import ToastProvider from "./ToastProvider";
 
 type SplashReason = "startup" | "logout" | "login" | null;
 type NavigatorWithConnection = Navigator & {
+  deviceMemory?: number;
   connection?: {
     effectiveType?: string;
     saveData?: boolean;
@@ -15,31 +15,6 @@ type NavigatorWithConnection = Navigator & {
     removeEventListener?: (type: "change", listener: () => void) => void;
   };
 };
-
-const APP_REFRESH_TABLES = [
-  "admins",
-  "app_roles",
-  "role_module_access",
-  "role_column_access",
-  "modules",
-  "applicants",
-  "applicant_other_documents",
-  "access_requests",
-  "contracts",
-  "contract_employees",
-  "inventory_fixed_asset",
-  "paraphernalia",
-  "paraphernalia_inventory",
-  "restock",
-  "notification_preferences",
-  "notification_email_settings",
-  "notification_recipients",
-  "car_insurance_notification_recipients",
-  "contract_notification_recipients",
-  "other_expiration_items",
-  "licensure",
-  "audit_log",
-];
 
 export default function ClientRoot({
   children,
@@ -55,24 +30,28 @@ export default function ClientRoot({
   const [splashReason, setSplashReason] = useState<SplashReason>("startup");
   const [isOnline, setIsOnline] = useState(true);
   const [isSlowConnection, setIsSlowConnection] = useState(false);
+  const [isLowSpecDevice, setIsLowSpecDevice] = useState(false);
   const wasOnlineRef = useRef(true);
   const splashFinishTimerRef = useRef<number | null>(null);
   const splashFinishingRef = useRef(false);
   const nonStartupSplashShownRef = useRef(false);
-
-  useRealtimeRefresh(APP_REFRESH_TABLES, {
-    debounceMs: isSlowConnection ? 1800 : 900,
-    disabled: !isOnline || isLoginRoute,
-  });
 
   useEffect(() => {
     const updateNetworkState = () => {
       const nav = navigator as NavigatorWithConnection;
       const connection = nav.connection;
       const effectiveType = String(connection?.effectiveType ?? "").toLowerCase();
+      const logicalCores = Number(nav.hardwareConcurrency || 0);
+      const deviceMemory = Number(nav.deviceMemory || 0);
+      const isLegacyWindows = /Windows NT 6\.[01]/i.test(nav.userAgent);
 
       setIsOnline(nav.onLine !== false);
       setIsSlowConnection(Boolean(connection?.saveData) || effectiveType === "slow-2g" || effectiveType === "2g");
+      setIsLowSpecDevice(
+        isLegacyWindows ||
+          (logicalCores > 0 && logicalCores <= 4) ||
+          (deviceMemory > 0 && deviceMemory <= 4)
+      );
     };
 
     updateNetworkState();
@@ -88,6 +67,12 @@ export default function ClientRoot({
       connection?.removeEventListener?.("change", updateNetworkState);
     };
   }, []);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    root.classList.toggle("performance-mode", isLowSpecDevice || isSlowConnection);
+    return () => root.classList.remove("performance-mode");
+  }, [isLowSpecDevice, isSlowConnection]);
 
   useEffect(() => {
     const wasOnline = wasOnlineRef.current;

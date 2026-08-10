@@ -1619,28 +1619,9 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
     fromDb.add("requests");
 
     if (sessionRole === "superadmin") {
-      return new Set<ModuleKey>([
-        "dashboard",
-        "applicants",
-        "employees",
-        "reassign",
-        "resigned",
-        "retired",
-        "archive",
-        "client",
-        "inventory",
-        "paraphernalia",
-        "requests",
-        "access_reviewer_queue",
-        "audit",
-        "settings",
-        "access",
-        "logistics",
-        "recent_activities",
-        "preview_service_anniversary",
-        "expiring_licenses_records",
-        "car_insurance_expiration",
-      ]);
+      // Superadmin owns every registered navigation item. Building this from
+      // ALL_MENU prevents newly added modules from silently disappearing.
+      return new Set<ModuleKey>(ALL_MENU.map((item) => item.key as ModuleKey));
     }
 
     if (fromDb.size) {
@@ -1666,6 +1647,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
         "reassign",
         "resigned",
         "retired",
+        "floating",
         "archive",
         "client",
         "inventory",
@@ -1995,7 +1977,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
       >
         <div className="px-5 pt-6 pb-4">
           <div className={`flex items-center gap-3 ${collapsed ? "justify-center" : ""}`}>
-            <Image src="/Logo.png" alt="Faragon logo" width={40} height={40} className="h-10 w-10 shrink-0" priority />
+            <Image src="/Logo-ui.png" alt="Faragon logo" width={40} height={40} className="h-10 w-10 shrink-0" priority />
 
             {!collapsed ? (
               <div className="leading-tight">
@@ -2054,6 +2036,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
                           <Link
                             key={w.key}
                             href={w.href}
+                            prefetch={false}
                             className={navLinkClass(active)}
                           >
                             <w.icon className="w-5 h-5 shrink-0" />
@@ -2113,6 +2096,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
                           <Link
                             key={l.key}
                             href={l.href}
+                            prefetch={false}
                             className={navLinkClass(active)}
                           >
                             <l.icon className="w-5 h-5 shrink-0" />
@@ -2169,6 +2153,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
                           <Link
                             key={a.key}
                             href={a.href}
+                            prefetch={false}
                             className={navLinkClass(active)}
                           >
                             <a.icon className="w-5 h-5 shrink-0" />
@@ -2192,6 +2177,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
               <Link
                 key={item.name}
                 href={item.href}
+                prefetch={false}
                 className={navLinkClass(active)}
               >
                 <item.icon className="w-5 h-5 shrink-0" />
@@ -2413,6 +2399,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
                         <div className="text-sm font-black text-slate-900 tracking-wide">Recent Activities</div>
                         <Link
                           href="/Main_Modules/Audit/"
+                          prefetch={false}
                           className="text-xs font-bold text-blue-600 hover:text-blue-800 transition-colors"
                           onClick={() => setActivityOpen(false)}
                         >
@@ -2511,6 +2498,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
                           </button>
                           <Link
                             href="/Main_Modules/Settings/"
+                            prefetch={false}
                             className="text-xs font-bold text-blue-600 hover:text-blue-800 transition-colors"
                             onClick={() => setExpiringOpen(false)}
                           >
@@ -2676,6 +2664,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
                           </button>
                           <Link
                             href="/Main_Modules/Logistics/CarInsuranceExpiration/"
+                            prefetch={false}
                             className="text-xs font-bold text-blue-600 hover:text-blue-800 transition-colors"
                             onClick={() => setCarInsuranceExpiringOpen(false)}
                           >
@@ -2796,6 +2785,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
                           </button>
                           <Link
                             href="/Main_Modules/Client/"
+                            prefetch={false}
                             className="text-xs font-bold text-blue-600 hover:text-blue-800 transition-colors"
                             onClick={() => setContractExpiringOpen(false)}
                           >
@@ -3069,6 +3059,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
                     <Link
                       key={w.key}
                       href={w.href}
+                      prefetch={false}
                       title={w.name}
                       aria-label={w.name}
                       onClick={() => setWorkforceFlyoutOpen(false)}
@@ -3102,6 +3093,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
                     <Link
                       key={l.key}
                       href={l.href}
+                      prefetch={false}
                       title={l.name}
                       aria-label={l.name}
                       onClick={() => setLogisticsFlyoutOpen(false)}
@@ -3135,6 +3127,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
                     <Link
                       key={a.key}
                       href={a.href}
+                      prefetch={false}
                       title={a.name}
                       aria-label={a.name}
                       onClick={() => setAccessFlyoutOpen(false)}

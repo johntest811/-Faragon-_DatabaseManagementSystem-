@@ -43,7 +43,7 @@ CREATE TABLE public.applicants (
   province_address character varying,
   emergency_contact_person character varying,
   emergency_contact_num character varying,
-  status character varying DEFAULT 'ACTIVE'::character varying CHECK (NULLIF(btrim(status::text), ''::text) IS NULL OR (upper(NULLIF(btrim(status::text), ''::text)) = ANY (ARRAY['ACTIVE'::text, 'INACTIVE'::text, 'APPLICANT'::text, 'AWOL'::text, 'RETIRED'::text, 'RESIGNED'::text]))),
+  status character varying DEFAULT 'ACTIVE'::character varying CHECK (NULLIF(btrim(status::text), ''::text) IS NULL OR (upper(NULLIF(btrim(status::text), ''::text)) = ANY (ARRAY['ACTIVE'::text, 'INACTIVE'::text, 'APPLICANT'::text, 'AWOL'::text, 'RETIRED'::text, 'RESIGNED'::text, 'FLOATING'::text]))),
   profile_image_path text,
   sss_certain_path text,
   tin_id_path text,
@@ -710,4 +710,16 @@ CREATE TABLE public.car_insurance_post_distribution_history (
   change_type text DEFAULT 'UPDATED'::text CHECK (change_type = ANY (ARRAY['INITIAL'::text, 'UPDATED'::text, 'CLEARED'::text])),
   CONSTRAINT car_insurance_post_distribution_history_pkey PRIMARY KEY (id),
   CONSTRAINT car_insurance_post_history_item_fkey FOREIGN KEY (other_expiration_item_id) REFERENCES public.other_expiration_items(id)
+);
+CREATE TABLE public.notification_delivery_claims (
+  delivery_key text NOT NULL CHECK (NULLIF(btrim(delivery_key), ''::text) IS NOT NULL),
+  notification_kind text NOT NULL CHECK (notification_kind = ANY (ARRAY['licensure'::text, 'other_expiration'::text, 'car_insurance'::text, 'contract'::text])),
+  record_id text NOT NULL CHECK (NULLIF(btrim(record_id), ''::text) IS NOT NULL),
+  notification_type text NOT NULL,
+  expires_on date NOT NULL,
+  recipient_email text NOT NULL CHECK (recipient_email ~* '^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$'::text),
+  claimed_at timestamp with time zone NOT NULL DEFAULT now(),
+  sent_at timestamp with time zone,
+  last_error text,
+  CONSTRAINT notification_delivery_claims_pkey PRIMARY KEY (delivery_key)
 );

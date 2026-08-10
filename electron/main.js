@@ -3,15 +3,8 @@ const { autoUpdater, CancellationToken } = require('electron-updater');
 const path = require('path');
 const fs = require('fs');
 
-// Low-spec & Windows 7 performance and GPU hardware acceleration switches
-try {
-  app.commandLine.appendSwitch('ignore-gpu-blocklist');
-  app.commandLine.appendSwitch('enable-gpu-rasterization');
-  app.commandLine.appendSwitch('enable-zero-copy');
-  app.commandLine.appendSwitch('disable-site-isolation-trials');
-} catch {
-  // ignore if app.commandLine is unavailable
-}
+const ELECTRON_MAJOR_VERSION = Number.parseInt(String(process.versions.electron || '0').split('.')[0], 10) || 0;
+const IS_LEGACY_WINDOWS_RUNTIME = ELECTRON_MAJOR_VERSION > 0 && ELECTRON_MAJOR_VERSION <= 22;
 
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
 
@@ -32,7 +25,7 @@ const throttledWarnings = new Map();
 const PARALLEL_SUPABASE_QUERY_CONCURRENCY = 4;
 const SMTP_POOL_CONNECTIONS = 3;
 const SMTP_SEND_CONCURRENCY = 3;
-const NOTIFICATION_TIMER_INTERVAL_MS = 15 * 1000;
+const NOTIFICATION_TIMER_INTERVAL_MS = 60 * 1000;
 
 function collectMainEnvCandidates() {
   const out = [];
@@ -143,6 +136,7 @@ function getAdminSupabase() {
   adminSupabaseClient = createClient(url, serviceKey, {
     auth: { persistSession: false, autoRefreshToken: false },
     global: { fetch: getAdminSupabaseFetch() },
+    ...(IS_LEGACY_WINDOWS_RUNTIME ? { realtime: { transport: require('ws') } } : {}),
   });
   adminSupabaseClientKey = cacheKey;
   return adminSupabaseClient;
@@ -238,8 +232,31 @@ function warnThrottled(scope, errOrMessage, cooldownMs = 120000) {
 function getAdminSupabaseFetch() {
   if (adminSupabaseFetch) return adminSupabaseFetch;
 
-  const fallbackFetch =
+  let fallbackFetch =
     typeof globalThis.fetch === 'function' ? globalThis.fetch.bind(globalThis) : null;
+
+  if (!fallbackFetch) {
+    try {
+      const nodeFetchModule = require('node-fetch');
+      const nodeFetch = nodeFetchModule?.default ?? nodeFetchModule;
+      if (typeof nodeFetch === 'function') {
+        fallbackFetch = nodeFetch;
+        if (typeof globalThis.fetch !== 'function') globalThis.fetch = nodeFetch;
+        if (typeof globalThis.Headers !== 'function' && nodeFetchModule.Headers) {
+          globalThis.Headers = nodeFetchModule.Headers;
+        }
+        if (typeof globalThis.Request !== 'function' && nodeFetchModule.Request) {
+          globalThis.Request = nodeFetchModule.Request;
+        }
+        if (typeof globalThis.Response !== 'function' && nodeFetchModule.Response) {
+          globalThis.Response = nodeFetchModule.Response;
+        }
+      }
+    } catch {
+      // The modern runtime has native fetch; the legacy package supplies this fallback.
+    }
+  }
+
   if (!fallbackFetch) {
     throw new Error('No fetch implementation available for Supabase client.');
   }
@@ -4294,6 +4311,8 @@ function createWindow(url) {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      backgroundThrottling: true,
+      spellcheck: false,
     },
   });
 
@@ -4664,6 +4683,13 @@ autoUpdater.on('update-downloaded', (info) => {
 
 // IPC Handler for checking updates
 ipcMain.handle('app:checkForUpdates', async () => {
+  if (IS_LEGACY_WINDOWS_RUNTIME) {
+    return {
+      supported: false,
+      updateAvailable: false,
+      message: 'Automatic updates are disabled for the Windows 7 legacy build.',
+    };
+  }
   try {
     const result = await autoUpdater.checkForUpdates();
     const updateAvailable = result && result.updateInfo && result.updateInfo.version !== app.getVersion();
