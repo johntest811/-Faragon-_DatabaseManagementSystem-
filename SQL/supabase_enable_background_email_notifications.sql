@@ -5,6 +5,65 @@
 
 begin;
 
+create extension if not exists pgcrypto;
+create extension if not exists pg_net;
+create extension if not exists pg_cron;
+
+create schema if not exists private;
+
+create table if not exists private.notification_worker_settings (
+  setting_key text primary key,
+  worker_url text not null default '',
+  worker_secret text not null default encode(gen_random_bytes(32), 'hex'),
+  is_enabled boolean not null default false,
+  updated_at timestamptz not null default now()
+);
+
+insert into private.notification_worker_settings (setting_key)
+values ('default')
+on conflict (setting_key) do nothing;
+
+create or replace function private.trigger_notification_worker()
+returns void
+language plpgsql
+security definer
+set search_path = private, public, net, pg_temp
+as $$
+declare
+  worker_row private.notification_worker_settings%rowtype;
+begin
+  select *
+  into worker_row
+  from private.notification_worker_settings
+  where setting_key = 'default'
+  limit 1;
+
+  if not found
+     or not worker_row.is_enabled
+     or nullif(btrim(worker_row.worker_url), '') is null
+     or nullif(btrim(worker_row.worker_secret), '') is null then
+    return;
+  end if;
+
+  perform net.http_post(
+    url := worker_row.worker_url,
+    body := jsonb_build_object(
+      'task', 'send_notifications',
+      'source', 'pg_cron'
+    ),
+    headers := jsonb_build_object(
+      'Content-Type', 'application/json',
+      'x-notification-worker-secret', worker_row.worker_secret
+    ),
+    timeout_milliseconds := 120000
+  );
+end;
+$$;
+
+revoke all on schema private from public, anon, authenticated;
+revoke all on table private.notification_worker_settings from public, anon, authenticated;
+revoke all on function private.trigger_notification_worker() from public, anon, authenticated;
+
 -- Repair the delivery claim function used by both the Vercel worker and the
 -- desktop sender. Naming the primary-key constraint avoids PostgreSQL 42702
 -- (delivery_key could otherwise mean the output variable or table column).
@@ -91,6 +150,26 @@ delete from public.notification_delivery_claims
 where sent_at is null
   and claimed_at < now() - interval '15 minutes';
 
+-- Recreate the job on every run so schedule or function changes cannot leave
+-- an older inactive definition behind.
+do $cron$
+begin
+  if exists (
+    select 1
+    from cron.job
+    where jobname = 'notification-worker-every-minute'
+  ) then
+    perform cron.unschedule('notification-worker-every-minute');
+  end if;
+
+  perform cron.schedule(
+    'notification-worker-every-minute',
+    '* * * * *',
+    $job$ select private.trigger_notification_worker(); $job$
+  );
+end
+$cron$;
+
 notify pgrst, 'reload schema';
 
 commit;
@@ -101,3 +180,17 @@ commit;
 -- from public.notification_preferences
 -- order by updated_at desc
 -- limit 1;
+--
+-- select jobid, jobname, schedule, active, command
+-- from cron.job
+-- where jobname = 'notification-worker-every-minute';
+--
+-- select status, count(*) as runs, max(end_time) as last_finished_at
+-- from cron.job_run_details
+-- where jobid in (
+--   select jobid from cron.job
+--   where jobname = 'notification-worker-every-minute'
+-- )
+--   and start_time >= now() - interval '30 minutes'
+-- group by status
+-- order by status;

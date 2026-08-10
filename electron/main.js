@@ -857,7 +857,9 @@ async function loadNotificationConfig(admin) {
     if (typeof prefRow.send_to_employees === 'undefined') {
       prefRow = { ...prefRow, send_to_employees: localPrefs.sendToEmployees };
     }
-    prefRow = { ...prefRow, use_supabase_email_sender: false };
+    if (typeof prefRow.use_supabase_email_sender === 'undefined') {
+      prefRow = { ...prefRow, use_supabase_email_sender: true };
+    }
     if (typeof prefRow.include_expired === 'undefined') {
       prefRow = { ...prefRow, include_expired: localPrefs.includeExpired };
     }
@@ -868,7 +870,7 @@ async function loadNotificationConfig(admin) {
     // If preferences row is missing entirely, still provide a minimal object.
     prefRow = {
       send_to_employees: localPrefs.sendToEmployees,
-      use_supabase_email_sender: false,
+      use_supabase_email_sender: true,
       include_expired: localPrefs.includeExpired,
       expired_within_days: localPrefs.expiredWithinDays,
     };
@@ -4569,6 +4571,9 @@ async function maybeAutoSendNotifications() {
     ]);
     if (!preferences?.is_enabled) return;
     if (email && !email.is_active) return;
+    // Supabase Cron owns automatic delivery in background-sender mode. This
+    // keeps Electron and Vercel on one sender/template and avoids race sends.
+    if (preferences?.use_supabase_email_sender) return;
 
     const now = new Date();
     const todayKey = ymd(now);

@@ -108,6 +108,8 @@ const DEFAULT_TIMEZONE = "Asia/Manila";
 const DEFAULT_NOTICE_SUBJECT = "NOTICE: LICENSE EXPIRATION ALERT ({count})";
 const DEFAULT_NOTICE_BODY =
   "<div><b>To all concerned,</b></div><div>This serves as a formal notice that the records listed below are nearing expiration.</div><div>Please review each item and coordinate the appropriate renewal action before the listed date.</div><div>If renewal has already been completed, you may disregard this message.</div>";
+const DEFAULT_EMAIL_LOGO_URL =
+  "https://faragon-database-management-system.vercel.app/Logo-ui.png";
 const PARALLEL_SUPABASE_QUERY_CONCURRENCY = 4;
 const SMTP_SEND_CONCURRENCY = 3;
 
@@ -122,6 +124,28 @@ function normalizeEmailAddress(value: unknown) {
   return /^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/i.test(email)
     ? email
     : "";
+}
+
+function resolveEmailLogoUrl() {
+  const configuredLogoUrl = safeText(Deno.env.get("EMAIL_LOGO_URL"));
+  const publicAppUrl = safeText(Deno.env.get("PUBLIC_APP_URL"));
+  const candidates = [
+    configuredLogoUrl,
+    publicAppUrl ? `${publicAppUrl.replace(/\/+$/, "")}/Logo-ui.png` : "",
+    DEFAULT_EMAIL_LOGO_URL,
+  ];
+
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    try {
+      const parsed = new URL(candidate);
+      if (parsed.protocol === "https:") return parsed.toString();
+    } catch {
+      // Try the next safe fallback URL.
+    }
+  }
+
+  return DEFAULT_EMAIL_LOGO_URL;
 }
 
 function clampInt(
@@ -479,10 +503,8 @@ function renderEmailHtml(args: {
   const itemCount = Array.isArray(args.items) ? args.items.length : 0;
   const itemSummary =
     itemCount === 1 ? "1 record requires immediate attention." : `${itemCount} records require immediate attention.`;
-  const logoUrl = safeText(Deno.env.get("EMAIL_LOGO_URL"));
-  const logoMarkup = logoUrl
-    ? `<img src="${escapeHtml(logoUrl)}" alt="${escapeHtml(companyName)} logo" width="64" style="display:block;width:64px;max-width:64px;height:auto;margin:0;border:0;outline:none;text-decoration:none;background-color:transparent;" />`
-    : `<div style="width:64px;height:64px;line-height:64px;text-align:center;color:#ffffff;font-size:24px;font-weight:800;letter-spacing:0.08em;">F</div>`;
+  const logoUrl = resolveEmailLogoUrl();
+  const logoMarkup = `<img src="${escapeHtml(logoUrl)}" alt="${escapeHtml(companyName)} logo" width="64" style="display:block;width:64px;max-width:64px;height:auto;margin:0;border:0;outline:none;text-decoration:none;background-color:transparent;" />`;
 
   function formatDays(value: number | null) {
     const numeric = Number(value);
