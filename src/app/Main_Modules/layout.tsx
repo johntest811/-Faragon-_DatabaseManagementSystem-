@@ -1261,6 +1261,28 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
         const daysBeforeExpiry = clampNotificationDays(preferences.days_before_expiry, 30);
         const includeExpired = preferences.include_expired === true;
         const expiredWithinDays = clampNotificationDays(preferences.expired_within_days, 7);
+        let defaultCarInsuranceRecipient: string | null = null;
+        let defaultContractRecipient: string | null = null;
+
+        if (canViewCarInsuranceWidget) {
+          const recipientResult = await supabase
+            .from("car_insurance_notification_recipients")
+            .select("email")
+            .eq("is_active", true)
+            .order("created_at", { ascending: true })
+            .limit(1);
+          defaultCarInsuranceRecipient = String(recipientResult.data?.[0]?.email ?? "").trim().toLowerCase() || null;
+        }
+
+        if (canViewContractExpiringWidget) {
+          const recipientResult = await supabase
+            .from("contract_notification_recipients")
+            .select("email")
+            .eq("is_active", true)
+            .order("created_at", { ascending: true })
+            .limit(1);
+          defaultContractRecipient = String(recipientResult.data?.[0]?.email ?? "").trim().toLowerCase() || null;
+        }
 
         if (canViewExpiringWidget) {
           const { data: licData, error: licensureError } = await supabase
@@ -1325,7 +1347,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
           if (!otherExpirationError && othData) {
             for (const r of othData as Array<Record<string, unknown>>) {
               const title = String(r.item_name ?? "").trim() || [r.make, r.model, r.plate_number ? `(${r.plate_number})` : ""].filter(Boolean).join(" ") || "Vehicle Policy";
-              const recipientEmail = r.recipient_email ? String(r.recipient_email) : null;
+              const recipientEmail = String(r.recipient_email ?? "").trim().toLowerCase() || defaultCarInsuranceRecipient;
               const baseCreatedAt = r.created_at ? String(r.created_at) : null;
               const baseUpdatedAt = r.updated_at ? String(r.updated_at) : null;
               const rowDaysBefore = clampNotificationDays(r.days_before_expiry, daysBeforeExpiry);
@@ -1400,7 +1422,10 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
                   first_name: null,
                   last_name: null,
                   record_name: recordName,
-                  recipient_email: String(r.notification_recipient_email ?? "").trim() || null,
+                  recipient_email:
+                    defaultContractRecipient ||
+                    String(r.notification_recipient_email ?? "").trim().toLowerCase() ||
+                    null,
                   license_type: "Contract Expiration",
                   expires_on: expiresOn,
                   days_until_expiry: diffDays ?? 0,
@@ -1410,6 +1435,119 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
               }
             }
           }
+        }
+
+        const sentStats = new Map<string, { sent_count: number; last_sent_at: string | null; recipient_email: string | null }>();
+        const dateKey = (value: unknown) => String(value ?? "").slice(0, 10);
+        const summaryKey = (row: ExpiringSummaryRow) => {
+          const applicantId = String(row.applicant_id ?? "");
+          if (row.source_kind === "contract" || applicantId.startsWith("contract:")) {
+            return `${applicantId}:${dateKey(row.expires_on)}`;
+          }
+          if (row.source_kind === "other" || applicantId.startsWith("other:")) {
+            const itemId = applicantId.split(":")[1] ?? "";
+            return `other:${itemId}:${dateKey(row.expires_on)}`;
+          }
+          return `${applicantId}:${row.license_type}:${dateKey(row.expires_on)}`;
+        };
+        const recordSentDelivery = (key: string, createdAt: unknown, recipientEmail: unknown) => {
+          const previous = sentStats.get(key) ?? { sent_count: 0, last_sent_at: null, recipient_email: null };
+          const timestamp = String(createdAt ?? "").trim() || null;
+          const email = String(recipientEmail ?? "").trim().toLowerCase() || null;
+          previous.sent_count += 1;
+          if (timestamp && (!previous.last_sent_at || Date.parse(timestamp) > Date.parse(previous.last_sent_at))) {
+            previous.last_sent_at = timestamp;
+          }
+          if (!previous.recipient_email && email) previous.recipient_email = email;
+          sentStats.set(key, previous);
+        };
+
+        const licensureApplicantIds = Array.from(
+          new Set(
+            rows
+              .filter((row) => row.source_kind === "licensure")
+              .map((row) => String(row.applicant_id ?? ""))
+              .filter(Boolean)
+          )
+        );
+        if (licensureApplicantIds.length) {
+          const logResult = await supabase
+            .from("licensure_notification_log")
+            .select("applicant_id, license_type, expires_on, recipient_email, created_at")
+            .eq("status", "SENT")
+            .in("applicant_id", licensureApplicantIds)
+            .order("created_at", { ascending: false })
+            .limit(5000);
+          if (!logResult.error) {
+            for (const entry of logResult.data ?? []) {
+              recordSentDelivery(
+                `${entry.applicant_id}:${entry.license_type}:${dateKey(entry.expires_on)}`,
+                entry.created_at,
+                entry.recipient_email
+              );
+            }
+          }
+        }
+
+        const otherItemIds = Array.from(
+          new Set(
+            rows
+              .filter((row) => row.source_kind === "other")
+              .map((row) => Number(String(row.applicant_id ?? "").split(":")[1]))
+              .filter((value) => Number.isFinite(value))
+          )
+        );
+        if (otherItemIds.length) {
+          const logResult = await supabase
+            .from("other_expiration_notification_log")
+            .select("other_expiration_item_id, expires_on, recipient_email, created_at")
+            .eq("status", "SENT")
+            .in("other_expiration_item_id", otherItemIds)
+            .order("created_at", { ascending: false })
+            .limit(5000);
+          if (!logResult.error) {
+            for (const entry of logResult.data ?? []) {
+              recordSentDelivery(
+                `other:${entry.other_expiration_item_id}:${dateKey(entry.expires_on)}`,
+                entry.created_at,
+                entry.recipient_email
+              );
+            }
+          }
+        }
+
+        const contractIds = Array.from(
+          new Set(
+            rows
+              .filter((row) => row.source_kind === "contract")
+              .map((row) => String(row.applicant_id ?? "").replace(/^contract:/, ""))
+              .filter(Boolean)
+          )
+        );
+        if (contractIds.length) {
+          const logResult = await supabase
+            .from("contract_expiration_notification_log")
+            .select("contract_id, expires_on, recipient_email, created_at")
+            .eq("status", "SENT")
+            .in("contract_id", contractIds)
+            .order("created_at", { ascending: false })
+            .limit(5000);
+          if (!logResult.error) {
+            for (const entry of logResult.data ?? []) {
+              recordSentDelivery(
+                `contract:${entry.contract_id}:${dateKey(entry.expires_on)}`,
+                entry.created_at,
+                entry.recipient_email
+              );
+            }
+          }
+        }
+
+        for (const row of rows) {
+          const stats = sentStats.get(summaryKey(row));
+          row.sent_count = stats?.sent_count ?? 0;
+          row.last_sent_at = stats?.last_sent_at ?? null;
+          if (!row.recipient_email && stats?.recipient_email) row.recipient_email = stats.recipient_email;
         }
 
         const sortedRows = rows.sort((a, b) => a.days_until_expiry - b.days_until_expiry);
