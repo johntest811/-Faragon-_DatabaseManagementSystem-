@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { supabase } from "../../Client/SupabaseClients";
 import { useAuthRole } from "../../Client/useRbac";
 import { AccessTabs } from "../Components/AccessTabs";
-import { Pencil, Search, ShieldCheck, UserCheck, UserPlus, UserX, Users, X } from "lucide-react";
+import { AlertTriangle, Pencil, Search, ShieldCheck, UserCheck, UserPlus, UserX, Users, X } from "lucide-react";
 import TableZoomWrapper from "@/app/Components/TableZoomWrapper";
 import PageLoading from "@/app/Components/PageLoading";
 
@@ -165,6 +165,7 @@ export default function AdminAccountsPage() {
 	const [creatingAccount, setCreatingAccount] = useState(false);
 	const [createAccountOpen, setCreateAccountOpen] = useState(false);
 	const [employeeAccountOpen, setEmployeeAccountOpen] = useState(false);
+	const [accountWarning, setAccountWarning] = useState<{ title: string; message: string } | null>(null);
 	const [selectedEmployeeId, setSelectedEmployeeId] = useState("");
 	const [employeeUsername, setEmployeeUsername] = useState("");
 	const [employeePassword, setEmployeePassword] = useState("");
@@ -191,7 +192,7 @@ export default function AdminAccountsPage() {
 	const canUsePortal = typeof document !== "undefined";
 
 	useEffect(() => {
-		if ((!createAccountOpen && !employeeAccountOpen && !editingAccount) || !canUsePortal) return;
+		if ((!createAccountOpen && !employeeAccountOpen && !editingAccount && !accountWarning) || !canUsePortal) return;
 
 		const previousOverflow = document.body.style.overflow;
 		document.body.style.overflow = "hidden";
@@ -199,7 +200,20 @@ export default function AdminAccountsPage() {
 		return () => {
 			document.body.style.overflow = previousOverflow;
 		};
-	}, [createAccountOpen, editingAccount, employeeAccountOpen, canUsePortal]);
+	}, [accountWarning, createAccountOpen, editingAccount, employeeAccountOpen, canUsePortal]);
+
+	useEffect(() => {
+		if (!accountWarning) return;
+		const closeOnEscape = (event: KeyboardEvent) => {
+			if (event.key === "Escape") setAccountWarning(null);
+		};
+		window.addEventListener("keydown", closeOnEscape);
+		return () => window.removeEventListener("keydown", closeOnEscape);
+	}, [accountWarning]);
+
+	function showAccountWarning(title: string, message: string) {
+		setAccountWarning({ title, message });
+	}
 
 	async function logAudit(action: string, details?: unknown) {
 		if (!api?.audit?.logEvent) return;
@@ -370,6 +384,7 @@ export default function AdminAccountsPage() {
 	function openEmployeeAccountDialog() {
 		setError("");
 		setSuccess("");
+		setAccountWarning(null);
 		const firstAvailable = employees.find((employee) => !employeeAccountIds.has(employee.applicant_id)) ?? null;
 		setSelectedEmployeeId(firstAvailable?.applicant_id ?? "");
 		setEmployeeUsername(firstAvailable ? suggestedEmployeeUsername(firstAvailable) : "");
@@ -386,13 +401,13 @@ export default function AdminAccountsPage() {
 	async function createAccount() {
 		setError("");
 		setSuccess("");
-		if (!canManage) return setError("Only Superadmin can create accounts.");
+		if (!canManage) return showAccountWarning("Unable to Create Admin Account", "Only Superadmin can create accounts.");
 		if (!accountUsername.trim() || !accountPassword.trim()) {
-			return setError("Username and password are required");
+			return showAccountWarning("Required Information", "Username and password are required.");
 		}
-		if (accountPassword.length < 8) return setError("Password must be at least 8 characters.");
+		if (accountPassword.length < 8) return showAccountWarning("Password Is Too Short", "Password must be at least 8 characters.");
 		if (!accountRole.trim()) {
-			return setError("Role is required");
+			return showAccountWarning("Required Information", "Role is required.");
 		}
 
 		setCreatingAccount(true);
@@ -558,18 +573,18 @@ export default function AdminAccountsPage() {
 			setSuccess("Account deleted.");
 			void loadAccounts();
 		} catch (e: unknown) {
-			setError(getErrorMessage(e));
+			showAccountWarning("Unable to Create Admin Account", getErrorMessage(e));
 		}
 	}
 
 	async function createEmployeeAccount() {
 		setError("");
 		setSuccess("");
-		if (!canManage) return setError("Only Superadmin can create security accounts.");
-		if (!selectedEmployee) return setError("Select an active employee first.");
-		if (employeeAccountIds.has(selectedEmployee.applicant_id)) return setError("This employee already has an account.");
-		if (!employeeUsername.trim() || !employeePassword.trim()) return setError("Username and password are required.");
-		if (employeePassword.length < 8) return setError("Password must be at least 8 characters.");
+		if (!canManage) return showAccountWarning("Unable to Create Security Account", "Only Superadmin can create security accounts.");
+		if (!selectedEmployee) return showAccountWarning("Select an Employee", "Select an active employee first.");
+		if (employeeAccountIds.has(selectedEmployee.applicant_id)) return showAccountWarning("Account Already Exists", "This employee already has an account.");
+		if (!employeeUsername.trim() || !employeePassword.trim()) return showAccountWarning("Required Information", "Username and password are required.");
+		if (employeePassword.length < 8) return showAccountWarning("Password Is Too Short", "Password must be at least 8 characters.");
 
 		setCreatingEmployeeAccount(true);
 		try {
@@ -604,7 +619,7 @@ export default function AdminAccountsPage() {
 			await Promise.all([loadAccounts(), loadRoles()]);
 		} catch (e: unknown) {
 			const message = getErrorMessage(e);
-			setError(message.includes("duplicate") || message.includes("unique")
+			showAccountWarning("Unable to Create Security Account", message.includes("duplicate") || message.includes("unique")
 				? "That employee or username already has an account."
 				: message);
 		} finally {
@@ -676,10 +691,11 @@ export default function AdminAccountsPage() {
 						Create Security Account
 					</button>
 					<button
-						onClick={() => {
-							setError("");
-							setSuccess("");
-							setCreateAccountOpen(true);
+							onClick={() => {
+								setError("");
+								setSuccess("");
+								setAccountWarning(null);
+								setCreateAccountOpen(true);
 						}}
 						disabled={!canManage}
 						className={`animated-btn inline-flex items-center gap-2 px-4 py-2 rounded-xl font-semibold border ${
@@ -984,6 +1000,57 @@ export default function AdminAccountsPage() {
 					</div>
 				</div>,
 				document.body
+				)
+				: null}
+
+			{accountWarning && canUsePortal
+				? createPortal(
+					<div
+						className="fixed inset-0 z-[260] flex items-center justify-center bg-slate-950/65 p-4 backdrop-blur-sm"
+						onClick={() => setAccountWarning(null)}
+						role="presentation"
+					>
+						<div
+							className="w-full max-w-md overflow-hidden rounded-[28px] border border-amber-200 bg-white shadow-[0_30px_90px_rgba(15,23,42,0.35)]"
+							onClick={(event) => event.stopPropagation()}
+							role="alertdialog"
+							aria-modal="true"
+							aria-labelledby="account-warning-title"
+							aria-describedby="account-warning-message"
+						>
+							<div className="flex items-start gap-4 bg-gradient-to-r from-amber-400 via-[#FFDA03] to-amber-300 px-6 py-5 text-black">
+								<div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-black text-[#FFDA03] shadow-lg">
+									<AlertTriangle className="h-6 w-6" />
+								</div>
+								<div className="min-w-0 flex-1">
+									<div className="text-xs font-bold uppercase tracking-[0.2em] text-black/60">Please review</div>
+									<h2 id="account-warning-title" className="mt-1 text-xl font-black leading-tight">{accountWarning.title}</h2>
+								</div>
+								<button
+									type="button"
+									onClick={() => setAccountWarning(null)}
+									className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-black/15 bg-white/45 text-black hover:bg-white/70"
+									aria-label="Close warning"
+								>
+									<X className="h-4 w-4" />
+								</button>
+							</div>
+							<div className="px-6 py-6">
+								<p id="account-warning-message" className="text-base font-medium leading-7 text-slate-700">{accountWarning.message}</p>
+								<div className="mt-6 flex justify-end">
+									<button
+										type="button"
+										autoFocus
+										onClick={() => setAccountWarning(null)}
+										className="rounded-xl bg-slate-950 px-5 py-3 font-bold text-white shadow-lg hover:bg-slate-800"
+									>
+										Review Information
+									</button>
+								</div>
+							</div>
+						</div>
+					</div>,
+					document.body
 				)
 				: null}
 
