@@ -212,7 +212,7 @@ begin
     null,
     null
   from payload requested
-  on conflict (delivery_key) do nothing
+  on conflict on constraint notification_delivery_claims_pkey do nothing
   returning claims.delivery_key;
 end;
 $$;

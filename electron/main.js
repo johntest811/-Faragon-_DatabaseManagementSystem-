@@ -146,6 +146,13 @@ function safeText(v) {
   return String(v ?? '').trim();
 }
 
+function normalizeEmailAddress(value) {
+  const email = safeText(value).toLowerCase();
+  return /^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/i.test(email)
+    ? email
+    : '';
+}
+
 function clampInt(n, { min, max, fallback }) {
   const v = Number(n);
   if (!Number.isFinite(v)) return fallback;
@@ -2602,9 +2609,9 @@ async function claimQueuedNotificationDeliveries(admin, queuedItems, recipientEm
   const result = await admin.rpc('claim_notification_deliveries', { p_deliveries: claims });
   if (result.error) {
     const message = extractErrorMessageText(result.error);
-    if (/claim_notification_deliveries|schema cache|could not find the function/i.test(message)) {
+    if (/claim_notification_deliveries|schema cache|could not find the function|\b42702\b|ambiguous/i.test(message)) {
       notificationDeliveryClaimsAvailable = false;
-      console.warn('[notifications] delivery claim migration is not installed; using legacy sent-log checks.');
+      console.warn('[notifications] delivery claims unavailable; using legacy sent-log checks.');
       return rows;
     }
     throw result.error;
@@ -2962,7 +2969,7 @@ async function runNotificationSend(admin) {
   const useScheduledSend = preferences?.use_scheduled_send !== false;
   const sendTimeLocal = useScheduledSend ? preferences.send_time_local : null;
   const sendToEmployees = preferences?.send_to_employees !== false;
-  const configuredRecipients = Array.isArray(recipients) ? recipients.map((x) => safeText(x).toLowerCase()).filter(Boolean) : [];
+  const configuredRecipients = Array.isArray(recipients) ? recipients.map(normalizeEmailAddress).filter(Boolean) : [];
   const configuredCarInsuranceRecipients = Array.isArray(carInsuranceRecipients)
     ? carInsuranceRecipients.map((x) => safeText(x).toLowerCase()).filter(Boolean)
     : [];
@@ -2997,7 +3004,7 @@ async function runNotificationSend(admin) {
     }
 
     if (sendToEmployees) {
-      const employeeEmail = safeText(item.client_email).toLowerCase();
+      const employeeEmail = normalizeEmailAddress(item.client_email);
       if (employeeEmail && !targetEmails.has(employeeEmail)) targetEmails.set(employeeEmail, 'employee');
     }
 
@@ -3031,7 +3038,7 @@ async function runNotificationSend(admin) {
     if (configuredRecipientSource.length) {
       for (const to of configuredRecipientSource) targetEmails.add(to);
     }
-    const itemRecipient = safeText(item.recipient_email).toLowerCase();
+    const itemRecipient = normalizeEmailAddress(item.recipient_email);
     if (itemRecipient) targetEmails.add(itemRecipient);
 
     if (!targetEmails.size) {
@@ -3059,7 +3066,7 @@ async function runNotificationSend(admin) {
   for (const item of dueContractExpiring) {
     const targetEmails = new Set(configuredContractRecipients);
     if (!targetEmails.size) {
-      const legacyRecipient = safeText(item.recipient_email).toLowerCase();
+      const legacyRecipient = normalizeEmailAddress(item.recipient_email);
       if (legacyRecipient) targetEmails.add(legacyRecipient);
     }
     if (!targetEmails.size) {
@@ -4161,7 +4168,7 @@ ipcMain.handle('notifications:resendAllExpiring', async (_event, payload) => {
   let skipped = 0;
 
   function enqueue(recipientEmail, queuedItem) {
-    const to = safeText(recipientEmail).toLowerCase();
+    const to = normalizeEmailAddress(recipientEmail);
     if (!to) return false;
     if (maxRecipients && !byRecipient.has(to) && byRecipient.size >= maxRecipients) return false;
     return pushRecipientBucket(byRecipient, to, queuedItem);
@@ -4175,7 +4182,7 @@ ipcMain.handle('notifications:resendAllExpiring', async (_event, payload) => {
     }
 
     if (sendToEmployees) {
-      const employeeEmail = safeText(item.client_email).toLowerCase();
+      const employeeEmail = normalizeEmailAddress(item.client_email);
       if (employeeEmail && !targetEmails.has(employeeEmail)) targetEmails.set(employeeEmail, 'employee');
     }
 
@@ -4208,7 +4215,7 @@ ipcMain.handle('notifications:resendAllExpiring', async (_event, payload) => {
     if (configuredRecipientSource.length) {
       for (const to of configuredRecipientSource) targetEmails.add(to);
     }
-    const itemRecipient = safeText(item.recipient_email).toLowerCase();
+    const itemRecipient = normalizeEmailAddress(item.recipient_email);
     if (itemRecipient) targetEmails.add(itemRecipient);
 
     if (!targetEmails.size) {
@@ -4235,7 +4242,7 @@ ipcMain.handle('notifications:resendAllExpiring', async (_event, payload) => {
   for (const item of contractExpiring) {
     const targetEmails = new Set(configuredContractRecipients);
     if (!targetEmails.size) {
-      const legacyRecipient = safeText(item.recipient_email).toLowerCase();
+      const legacyRecipient = normalizeEmailAddress(item.recipient_email);
       if (legacyRecipient) targetEmails.add(legacyRecipient);
     }
     if (!targetEmails.size) {

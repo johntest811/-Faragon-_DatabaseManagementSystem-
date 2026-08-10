@@ -309,6 +309,9 @@ function initialsFromLabel(value: string) {
 function emailBadge(email: string | null) {
   const value = (email ?? "").trim();
   if (!value) return { label: "No Email", className: "bg-red-100 text-red-700" };
+  if (!/^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/i.test(value)) {
+    return { label: "Invalid Email", className: "bg-red-100 text-red-700" };
+  }
   if (value.toLowerCase().endsWith("@gmail.com")) return { label: "Gmail", className: "bg-emerald-100 text-emerald-800" };
   return { label: "Email", className: "bg-blue-100 text-blue-800" };
 }

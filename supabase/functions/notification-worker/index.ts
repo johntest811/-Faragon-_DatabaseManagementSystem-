@@ -117,6 +117,13 @@ function safeText(value: unknown) {
   return String(value ?? "").trim();
 }
 
+function normalizeEmailAddress(value: unknown) {
+  const email = safeText(value).toLowerCase();
+  return /^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/i.test(email)
+    ? email
+    : "";
+}
+
 function clampInt(
   value: unknown,
   { min, max, fallback }: { min: number; max: number; fallback: number },
@@ -615,7 +622,7 @@ function normalizeRecipients(values: unknown[]) {
   return Array.from(
     new Set(
       values
-        .map((value) => safeText(value).toLowerCase())
+        .map(normalizeEmailAddress)
         .filter(Boolean),
     ),
   );
@@ -1056,9 +1063,9 @@ async function claimQueuedNotificationDeliveries(
   const result = await admin.rpc("claim_notification_deliveries", { p_deliveries: claims });
   if (result.error) {
     const message = extractErrorMessageText(result.error);
-    if (/claim_notification_deliveries|schema cache|could not find the function/i.test(message)) {
+    if (/claim_notification_deliveries|schema cache|could not find the function|\b42702\b|ambiguous/i.test(message)) {
       notificationDeliveryClaimsAvailable = false;
-      console.warn("[notification-worker] delivery claim migration is not installed; using legacy sent-log checks.");
+      console.warn("[notification-worker] delivery claims unavailable; using legacy sent-log checks.");
       return queuedItems;
     }
     throw result.error;
@@ -1622,7 +1629,7 @@ async function executeAutomaticNotificationRun(
   let skipped = 0;
 
   function enqueue(recipientEmail: string | null, queuedItem: QueuedNotification) {
-    const to = safeText(recipientEmail).toLowerCase();
+    const to = normalizeEmailAddress(recipientEmail);
     if (!to) return false;
     if (maxRecipients > 0 && !byRecipient.has(to) && byRecipient.size >= maxRecipients) return false;
     return pushRecipientBucket(byRecipient, to, queuedItem);
@@ -1631,7 +1638,7 @@ async function executeAutomaticNotificationRun(
   for (const item of licensureItems) {
     const targetEmails = new Set(configuredRecipients);
     if (sendToEmployees) {
-      const employeeEmail = safeText(item.client_email).toLowerCase();
+      const employeeEmail = normalizeEmailAddress(item.client_email);
       if (employeeEmail) targetEmails.add(employeeEmail);
     }
 
@@ -1661,7 +1668,7 @@ async function executeAutomaticNotificationRun(
     const isCarInsurance = safeText(item.expiration_type).toUpperCase().startsWith("CAR_INSURANCE");
     const targetEmails = new Set(isCarInsurance ? configuredCarInsuranceRecipients : configuredRecipients);
 
-    const itemRecipient = safeText(item.recipient_email).toLowerCase();
+    const itemRecipient = normalizeEmailAddress(item.recipient_email);
     if (itemRecipient) targetEmails.add(itemRecipient);
 
     if (!targetEmails.size) {
@@ -1688,7 +1695,8 @@ async function executeAutomaticNotificationRun(
 
   for (const item of contractItems) {
     const targetEmails = new Set(configuredContractRecipients);
-    if (!targetEmails.size && item.recipient_email) targetEmails.add(item.recipient_email);
+    const itemRecipient = normalizeEmailAddress(item.recipient_email);
+    if (!targetEmails.size && itemRecipient) targetEmails.add(itemRecipient);
 
     if (!targetEmails.size) {
       await insertContractExpirationNotificationLog(admin, {
