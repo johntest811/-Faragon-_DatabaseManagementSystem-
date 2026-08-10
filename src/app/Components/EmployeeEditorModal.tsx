@@ -315,6 +315,7 @@ function normalizeStatus(value: string | null | undefined) {
   if (v === "AWOL" || v === "REASSIGN") return "AWOL";
   if (v === "RETIRED") return "RETIRED";
   if (v === "RESIGNED") return "RESIGNED";
+  if (v === "FLOATING") return "FLOATING";
   return "ACTIVE";
 }
 
@@ -1459,6 +1460,8 @@ function normalizeJobTitle(value: string) {
           router.push("/Main_Modules/Resigned/");
         } else if (nextStatus === "RETIRED") {
           router.push("/Main_Modules/Retired/");
+        } else if (nextStatus === "FLOATING") {
+          router.push("/Main_Modules/Floating/");
         }
         return;
       }
@@ -1599,6 +1602,8 @@ function normalizeJobTitle(value: string) {
         router.push("/Main_Modules/Resigned/");
       } else if (nextStatus === "RETIRED") {
         router.push("/Main_Modules/Retired/");
+      } else if (nextStatus === "FLOATING") {
+        router.push("/Main_Modules/Floating/");
       }
     } catch (e: unknown) {
       const message =
@@ -1988,6 +1993,7 @@ function normalizeJobTitle(value: string) {
                       <option value="AWOL">AWOL</option>
                       <option value="RESIGNED">RESIGNED</option>
                       <option value="RETIRED">RETIRED</option>
+                      <option value="FLOATING">FLOATING</option>
                     </select>
                     <span
                       className={`absolute left-3 top-1/2 -translate-y-1/2 h-2.5 w-2.5 rounded-full ${

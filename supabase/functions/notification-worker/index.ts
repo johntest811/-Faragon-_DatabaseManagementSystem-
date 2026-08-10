@@ -74,9 +74,10 @@ type MailRow = {
   days_until_expiry: number | null;
 };
 
-type QueuedNotification =
+type QueuedNotification = (
   | { kind: "licensure"; item: LicensureMailItem }
-  | { kind: "other"; item: OtherMailItem };
+  | { kind: "other"; item: OtherMailItem }
+) & { deliveryClaimKey?: string };
 
 type RunSummary = {
   sent: number;
@@ -849,6 +850,89 @@ function buildOtherExpirationNoticeKey(item: Partial<OtherMailItem>, recipientEm
   ].join("|");
 }
 
+let notificationDeliveryClaimsAvailable = true;
+
+function buildQueuedNotificationDeliveryClaim(queued: QueuedNotification, recipientEmail: string) {
+  const recipient = safeText(recipientEmail).toLowerCase();
+  const isOther = queued.kind === "other";
+  const rawOtherType = isOther ? safeText(queued.item.expiration_type).toUpperCase() : "";
+  const notificationKind = isOther
+    ? rawOtherType.startsWith("CAR_INSURANCE")
+      ? "car_insurance"
+      : "other_expiration"
+    : "licensure";
+  const recordId = isOther
+    ? safeText(queued.item.other_expiration_item_id)
+    : safeText(queued.item.applicant_id);
+  const notificationType = isOther
+    ? safeText(queued.item.expiration_type) || "OTHER_EXPIRATION"
+    : safeText(queued.item.license_type) || "LICENSE";
+  const expiresOn = safeText(queued.item.expires_on);
+  const deliveryKey = [notificationKind, recordId, notificationType, expiresOn, recipient]
+    .map((value) => safeText(value).toLowerCase())
+    .join("|");
+
+  return {
+    delivery_key: deliveryKey,
+    notification_kind: notificationKind,
+    record_id: recordId,
+    notification_type: notificationType,
+    expires_on: expiresOn,
+    recipient_email: recipient,
+  };
+}
+
+async function claimQueuedNotificationDeliveries(
+  admin: SupabaseClient,
+  queuedItems: QueuedNotification[],
+  recipientEmail: string,
+) {
+  if (!queuedItems.length || !notificationDeliveryClaimsAvailable) return queuedItems;
+
+  const claims = queuedItems.map((queued) => buildQueuedNotificationDeliveryClaim(queued, recipientEmail));
+  const result = await admin.rpc("claim_notification_deliveries", { p_deliveries: claims });
+  if (result.error) {
+    const message = extractErrorMessageText(result.error);
+    if (/claim_notification_deliveries|schema cache|could not find the function/i.test(message)) {
+      notificationDeliveryClaimsAvailable = false;
+      console.warn("[notification-worker] delivery claim migration is not installed; using legacy sent-log checks.");
+      return queuedItems;
+    }
+    throw result.error;
+  }
+
+  const claimedKeys = new Set(
+    (Array.isArray(result.data) ? result.data : [])
+      .map((entry) => safeText((entry as JsonRecord)?.delivery_key ?? entry))
+      .filter(Boolean),
+  );
+
+  return queuedItems
+    .map((queued, index) => ({ ...queued, deliveryClaimKey: claims[index].delivery_key }))
+    .filter((queued) => claimedKeys.has(queued.deliveryClaimKey));
+}
+
+async function completeQueuedNotificationDeliveries(
+  admin: SupabaseClient,
+  queuedItems: QueuedNotification[],
+  sent: boolean,
+  errorMessage: string | null,
+) {
+  const deliveryKeys = Array.from(
+    new Set(queuedItems.map((queued) => safeText(queued.deliveryClaimKey)).filter(Boolean)),
+  );
+  if (!deliveryKeys.length || !notificationDeliveryClaimsAvailable) return;
+
+  const result = await admin.rpc("complete_notification_deliveries", {
+    p_delivery_keys: deliveryKeys,
+    p_sent: sent,
+    p_error_message: errorMessage,
+  });
+  if (result.error) {
+    console.error("[notification-worker] delivery claim completion failed:", extractErrorMessageText(result.error));
+  }
+}
+
 type RangeQueryResult<T> = {
   data: T[] | null;
   error: unknown;
@@ -1120,16 +1204,22 @@ async function sendQueuedNotificationBuckets(
   transporter: Awaited<ReturnType<typeof buildTransport>>["transporter"],
   from: string,
   template: { subject: string | null; bodyHtml: string | null; legacyMessage: string | null },
+  { claimDeliveries = true }: { claimDeliveries?: boolean } = {},
 ) {
   const recipientEntries = Array.from(byRecipient.entries()).filter(([, bucket]) => bucket.items.length > 0);
   if (!recipientEntries.length) {
-    return { sent: 0, failed: 0 };
+    return { sent: 0, failed: 0, skipped: 0 };
   }
 
   const results = await mapWithConcurrency(
     recipientEntries,
     async ([to, bucket]) => {
-      const mailRows = bucket.items.map((queued) => toMailRowFromQueuedItem(queued));
+      const queuedItems = claimDeliveries
+        ? await claimQueuedNotificationDeliveries(admin, bucket.items, to)
+        : bucket.items;
+      const claimSkipped = Math.max(0, bucket.items.length - queuedItems.length);
+      if (!queuedItems.length) return { sent: 0, failed: 0, skipped: claimSkipped };
+      const mailRows = queuedItems.map((queued) => toMailRowFromQueuedItem(queued));
       const subject = computeEmailSubject(template.subject, mailRows.length);
       const html = renderEmailHtml({
         subject,
@@ -1141,14 +1231,16 @@ async function sendQueuedNotificationBuckets(
 
       try {
         await transporter.sendMail({ from, to, subject, html });
-        await Promise.all(bucket.items.map((queued) => logQueuedNotificationStatus(admin, queued, to, "SENT", null)));
-        return { sent: bucket.items.length, failed: 0 };
+        await Promise.all(queuedItems.map((queued) => logQueuedNotificationStatus(admin, queued, to, "SENT", null)));
+        await completeQueuedNotificationDeliveries(admin, queuedItems, true, null);
+        return { sent: queuedItems.length, failed: 0, skipped: claimSkipped };
       } catch (errorLike) {
         const errorMessage = extractErrorMessageText(errorLike) || "Failed to send Gmail notification.";
         await Promise.all(
-          bucket.items.map((queued) => logQueuedNotificationStatus(admin, queued, to, "FAILED", errorMessage)),
+          queuedItems.map((queued) => logQueuedNotificationStatus(admin, queued, to, "FAILED", errorMessage)),
         );
-        return { sent: 0, failed: bucket.items.length };
+        await completeQueuedNotificationDeliveries(admin, queuedItems, false, errorMessage);
+        return { sent: 0, failed: queuedItems.length, skipped: claimSkipped };
       }
     },
     SMTP_SEND_CONCURRENCY,
@@ -1158,8 +1250,9 @@ async function sendQueuedNotificationBuckets(
     (summary, result) => ({
       sent: summary.sent + Number(result?.sent ?? 0),
       failed: summary.failed + Number(result?.failed ?? 0),
+      skipped: summary.skipped + Number(result?.skipped ?? 0),
     }),
-    { sent: 0, failed: 0 },
+    { sent: 0, failed: 0, skipped: 0 },
   );
 }
 
@@ -1344,12 +1437,19 @@ async function executeAutomaticNotificationRun(
 
   const { transporter, from } = buildTransport(email);
   const template = parseEmailTemplateNotes(email?.notes);
-  const { sent, failed } = await sendQueuedNotificationBuckets(admin, byRecipient, transporter, from, template);
+  const { sent, failed, skipped: claimSkipped } = await sendQueuedNotificationBuckets(
+    admin,
+    byRecipient,
+    transporter,
+    from,
+    template,
+    { claimDeliveries: !args.sendAllEligible },
+  );
 
   return {
     ok: true,
     message: args.sendAllEligible ? "Resend all finished." : "Run complete.",
-    summary: { sent, failed, skipped } satisfies RunSummary,
+    summary: { sent, failed, skipped: skipped + claimSkipped } satisfies RunSummary,
   };
 }
 

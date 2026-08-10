@@ -54,7 +54,8 @@ function normalizeEmployeeStatus(value: string | null | undefined) {
 		normalized === "INACTIVE" ||
 		normalized === "AWOL" ||
 		normalized === "RETIRED" ||
-		normalized === "RESIGNED"
+		normalized === "RESIGNED" ||
+		normalized === "FLOATING"
 	) {
 		return normalized;
 	}

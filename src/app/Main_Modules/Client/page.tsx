@@ -106,7 +106,7 @@ const labelClass = "block text-xs font-semibold uppercase tracking-wide text-gra
 const CLIENT_SECTORS = [
   { value: "Metro Manila", label: "1 Metro Manila" },
   { value: "Northern Luzon", label: "2 Northern Luzon" },
-  { value: "Southern Visayas", label: "3 Southern Visayas" },
+  { value: "Southern Luzon", label: "3 Southern Luzon" },
   { value: "Visayas", label: "4 Visayas" },
   { value: "Mindanao", label: "5 Mindanao" },
 ] as const;
@@ -224,7 +224,8 @@ function normalizeImportKey(value: unknown) {
 }
 
 function normalizeSectorKey(value: unknown) {
-  return normalizeImportKey(value).replace(/^\d+\s+/, "");
+  const normalized = normalizeImportKey(value).replace(/^\d+\s+/, "");
+  return normalized === "southern visayas" ? "southern luzon" : normalized;
 }
 
 function clusterMatchesSector(cluster: unknown, sector: ClientSectorValue) {
@@ -1415,7 +1416,7 @@ export default function ClientsPage() {
     const counts: Record<ClientSectorValue, number> = {
       "Metro Manila": 0,
       "Northern Luzon": 0,
-      "Southern Visayas": 0,
+      "Southern Luzon": 0,
       Visayas: 0,
       Mindanao: 0,
     };

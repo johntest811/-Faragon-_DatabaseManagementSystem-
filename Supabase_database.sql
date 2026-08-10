@@ -694,20 +694,20 @@ CREATE TABLE public.inventory_detachment_history (
   id bigint NOT NULL DEFAULT nextval('inventory_detachment_history_id_seq'::regclass),
   inventory_id text NOT NULL,
   detachment text NOT NULL,
+  changed_at timestamp with time zone NOT NULL DEFAULT now(),
   previous_detachment text,
   new_detachment text,
-  change_type text NOT NULL DEFAULT 'UPDATED'::text CHECK (change_type = ANY (ARRAY['INITIAL'::text, 'UPDATED'::text, 'CLEARED'::text])),
-  changed_at timestamp with time zone NOT NULL DEFAULT now(),
+  change_type text DEFAULT 'UPDATED'::text CHECK (change_type = ANY (ARRAY['INITIAL'::text, 'UPDATED'::text, 'CLEARED'::text])),
   CONSTRAINT inventory_detachment_history_pkey PRIMARY KEY (id)
 );
 CREATE TABLE public.car_insurance_post_distribution_history (
   id bigint NOT NULL DEFAULT nextval('car_insurance_post_distribution_history_id_seq'::regclass),
   other_expiration_item_id bigint NOT NULL,
   post_distributions text NOT NULL,
+  changed_at timestamp with time zone NOT NULL DEFAULT now(),
   previous_post_distributions text,
   new_post_distributions text,
-  change_type text NOT NULL DEFAULT 'UPDATED'::text CHECK (change_type = ANY (ARRAY['INITIAL'::text, 'UPDATED'::text, 'CLEARED'::text])),
-  changed_at timestamp with time zone NOT NULL DEFAULT now(),
+  change_type text DEFAULT 'UPDATED'::text CHECK (change_type = ANY (ARRAY['INITIAL'::text, 'UPDATED'::text, 'CLEARED'::text])),
   CONSTRAINT car_insurance_post_distribution_history_pkey PRIMARY KEY (id),
   CONSTRAINT car_insurance_post_history_item_fkey FOREIGN KEY (other_expiration_item_id) REFERENCES public.other_expiration_items(id)
 );

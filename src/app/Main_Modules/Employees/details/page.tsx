@@ -150,6 +150,8 @@ function statusBadgeClass(status: string) {
       return "bg-rose-500 text-white";
     case "RETIRED":
       return "bg-zinc-700 text-white";
+    case "FLOATING":
+      return "bg-cyan-600 text-white";
     default:
       return "bg-gray-700 text-white";
   }

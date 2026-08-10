@@ -395,6 +395,15 @@ function pageMetaForPath(pathname: string): PageMeta {
       },
     },
     {
+      test: (value) => value.startsWith("/Main_Modules/Floating"),
+      meta: {
+        title: "Floating",
+        description: "Review employees who are temporarily awaiting a permanent detachment assignment.",
+        badge: "Available",
+        icon: Users,
+      },
+    },
+    {
       test: (value) => value.startsWith("/Main_Modules/Client"),
       meta: {
         title: "Client",
@@ -439,6 +448,7 @@ const ALL_MENU = [
   { key: "reassign", name: "AWOL", href: "/Main_Modules/AWOL/", icon: Repeat2 },
   { key: "resigned", name: "Resigned", href: "/Main_Modules/Resigned/", icon: UserMinus },
   { key: "retired", name: "Retired", href: "/Main_Modules/Retired/", icon: UserX },
+  { key: "floating", name: "Floating", href: "/Main_Modules/Floating/", icon: Users },
   { key: "archive", name: "Archive", href: "/Main_Modules/Archive/", icon: Archive },
   { key: "logistics", name: "Logistics", href: "/Main_Modules/Logistics/", icon: Truck },
   { key: "requests", name: "Requests", href: "/Main_Modules/Requests/", icon: ClipboardCheck },
@@ -455,6 +465,7 @@ type ModuleKey =
   | "reassign"
   | "resigned"
   | "retired"
+  | "floating"
   | "archive"
   | "client"
   | "inventory"
@@ -499,6 +510,7 @@ function accessRequirementForPath(pathname: string): AccessRequirement | null {
   }
   if (p.startsWith("/Main_Modules/Resigned/")) return { kind: "module", moduleKey: "resigned" };
   if (p.startsWith("/Main_Modules/Retired/")) return { kind: "module", moduleKey: "retired" };
+  if (p.startsWith("/Main_Modules/Floating/")) return { kind: "module", moduleKey: "floating" };
   if (p.startsWith("/Main_Modules/Archive/")) return { kind: "module", moduleKey: "archive" };
   if (p.startsWith("/Main_Modules/Client/")) return { kind: "module", moduleKey: "client" };
   if (p.startsWith("/Main_Modules/Inventory/")) return { kind: "module", moduleKey: "inventory" };
@@ -1095,7 +1107,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
       for (const r of data) {
         const years = serviceYearsExact(r.date_hired_fsai, now);
         const s = String(r.status ?? "").trim().toUpperCase();
-        const excluded = s === "AWOL" || s === "REASSIGN" || s === "RETIRED" || s === "RESIGNED";
+        const excluded = s === "AWOL" || s === "REASSIGN" || s === "RETIRED" || s === "RESIGNED" || s === "FLOATING";
         if (excluded) continue;
         if (years == null || years < 1) continue;
         rows.push({
@@ -1696,7 +1708,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
   }, [pathname, sessionRole, allowedKeys, router]);
 
   const WORKFORCE_KEYS = useMemo(
-    () => new Set(["applicants", "employees", "reassign", "resigned", "retired", "archive"]),
+    () => new Set(["applicants", "employees", "reassign", "resigned", "retired", "floating", "archive"]),
     []
   );
 

@@ -130,7 +130,7 @@ export default function ArchivePage() {
   function normalizeStatus(input: string | null) {
     const v = (input ?? "").trim().toUpperCase();
     if (!v) return "ACTIVE";
-    if (v === "ACTIVE" || v === "APPLICANT" || v === "INACTIVE" || v === "AWOL" || v === "RETIRED" || v === "RESIGNED") return v;
+    if (v === "ACTIVE" || v === "APPLICANT" || v === "INACTIVE" || v === "AWOL" || v === "RETIRED" || v === "RESIGNED" || v === "FLOATING") return v;
     if (v === "REASSIGN") return "AWOL";
     return "ACTIVE";
   }

@@ -10,6 +10,7 @@ export const EMPLOYEE_STATUS_OPTIONS = [
 	{ value: "AWOL", label: "AWOL" },
 	{ value: "RESIGNED", label: "Resigned" },
 	{ value: "RETIRED", label: "Retired" },
+	{ value: "FLOATING", label: "Floating" },
 ] as const;
 
 type EmployeeStatusValue = (typeof EMPLOYEE_STATUS_OPTIONS)[number]["value"];
@@ -58,6 +59,12 @@ function statusTone(status: EmployeeStatusValue) {
 				trigger: "bg-zinc-700 text-white border-zinc-600 hover:bg-zinc-800",
 				dot: "bg-white/90",
 				menuSelected: "bg-zinc-50 text-zinc-800",
+			};
+		case "FLOATING":
+			return {
+				trigger: "bg-cyan-600 text-white border-cyan-500 hover:bg-cyan-700",
+				dot: "bg-white/90",
+				menuSelected: "bg-cyan-50 text-cyan-800",
 			};
 		default:
 			return {

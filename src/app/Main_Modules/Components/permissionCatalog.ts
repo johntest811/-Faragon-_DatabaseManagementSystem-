@@ -124,6 +124,13 @@ export const MODULE_CATALOG: ModuleCatalogItem[] = [
     columns: ["applicant_id", "first_name", "last_name", "retired_at", "retired_by", "status"],
   },
   {
+    moduleKey: "floating",
+    displayName: "Floating",
+    path: "/Main_Modules/Floating/",
+    group: "workforce",
+    columns: ["applicant_id", "custom_id", "first_name", "last_name", "client_position", "detachment", "date_hired_fsai", "status"],
+  },
+  {
     moduleKey: "archive",
     displayName: "Archive",
     path: "/Main_Modules/Archive/",

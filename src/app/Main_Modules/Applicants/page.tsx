@@ -42,14 +42,14 @@ const BUCKETS = {
 	profile: "applicants",
 };
 
-const STATUS_FILTERS = ["ALL", "APPLICANT", "ACTIVE", "AWOL", "RESIGNED", "RETIRED"] as const;
+const STATUS_FILTERS = ["ALL", "APPLICANT", "ACTIVE", "AWOL", "RESIGNED", "RETIRED", "FLOATING"] as const;
 
 type StatusFilter = (typeof STATUS_FILTERS)[number];
 
 function normalizeStatus(input: string | null) {
 	const v = (input ?? "").trim().toUpperCase();
 	if (!v) return "ACTIVE";
-	if (v === "ACTIVE" || v === "APPLICANT" || v === "INACTIVE" || v === "AWOL" || v === "RETIRED" || v === "RESIGNED") {
+	if (v === "ACTIVE" || v === "APPLICANT" || v === "INACTIVE" || v === "AWOL" || v === "RETIRED" || v === "RESIGNED" || v === "FLOATING") {
 		return v;
 	}
 	if (v === "REASSIGN") return "AWOL";
@@ -95,6 +95,8 @@ function badgeClass(status: string) {
 			return "bg-rose-500 text-white";
 		case "RETIRED":
 			return "bg-zinc-700 text-white";
+		case "FLOATING":
+			return "bg-cyan-600 text-white";
 		default:
 			return "bg-gray-700 text-white";
 	}

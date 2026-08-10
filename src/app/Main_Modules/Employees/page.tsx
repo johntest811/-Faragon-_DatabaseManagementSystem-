@@ -91,7 +91,7 @@ function shortCode(id: string) {
 function normalizeStatus(input: string | null) {
 	const v = (input ?? "").trim().toUpperCase();
 	if (!v) return "ACTIVE";
-	if (v === "ACTIVE" || v === "APPLICANT" || v === "INACTIVE" || v === "AWOL" || v === "RETIRED" || v === "RESIGNED") return v;
+	if (v === "ACTIVE" || v === "APPLICANT" || v === "INACTIVE" || v === "AWOL" || v === "RETIRED" || v === "RESIGNED" || v === "FLOATING") return v;
 	if (v === "REASSIGN") return "AWOL";
 	return "ACTIVE";
 }
@@ -254,7 +254,7 @@ export default function EmployeesPage() {
 
 
 	const [filtersOpen, setFiltersOpen] = useState(false);
-	const [statusFilter, setStatusFilter] = useState<"ALL" | "ACTIVE" | "APPLICANT" | "AWOL" | "RETIRED">("ALL");
+	const [statusFilter, setStatusFilter] = useState<"ALL" | "ACTIVE" | "APPLICANT" | "AWOL" | "RETIRED" | "FLOATING">("ALL");
 	const [genderFilter, setGenderFilter] = useState<string>("ALL");
 	const [detachmentFilter, setDetachmentFilter] = useState<string>("ALL");
 	const [positionFilter, setPositionFilter] = useState<string>("ALL");
@@ -404,7 +404,7 @@ export default function EmployeesPage() {
 		if (statusFilter === "ALL") {
 			list = list.filter((e) => {
 				const s = normalizeStatus(e.status);
-						return s !== "AWOL" && s !== "RETIRED" && s !== "RESIGNED" && s !== "APPLICANT";
+						return s !== "AWOL" && s !== "RETIRED" && s !== "RESIGNED" && s !== "FLOATING" && s !== "APPLICANT";
 			});
 		}
 
@@ -571,7 +571,7 @@ if (hiredMonthFilter !== "ALL") {
 	const exportSourceEmployees = useMemo(() => {
 		return employees.filter((e) => {
 			const status = normalizeStatus(e.status);
-			return status !== "AWOL" && status !== "RETIRED" && status !== "RESIGNED" && status !== "APPLICANT";
+			return status !== "AWOL" && status !== "RETIRED" && status !== "RESIGNED" && status !== "FLOATING" && status !== "APPLICANT";
 		});
 	}, [employees]);
 
@@ -832,6 +832,10 @@ if (hiredMonthFilter !== "ALL") {
 		}
 		if (normalized === "RESIGNED") {
 			router.push("/Main_Modules/Resigned/");
+			return;
+		}
+		if (normalized === "FLOATING") {
+			router.push("/Main_Modules/Floating/");
 			return;
 		}
 		if (editorMode === "create" && normalized !== "RETIRED") {
@@ -1559,7 +1563,7 @@ if (hiredMonthFilter !== "ALL") {
 									<select
 										value={statusFilter}
 										onChange={(e) =>
-											setStatusFilter(e.target.value as "ALL" | "ACTIVE" | "APPLICANT" | "AWOL" | "RETIRED")
+											setStatusFilter(e.target.value as "ALL" | "ACTIVE" | "APPLICANT" | "AWOL" | "RETIRED" | "FLOATING")
 										}
 										className="w-full border rounded-xl px-3 py-2 bg-white"
 									>
@@ -1568,6 +1572,7 @@ if (hiredMonthFilter !== "ALL") {
 										<option value="APPLICANT">APPLICANT</option>
 										<option value="AWOL">AWOL</option>
 										<option value="RETIRED">RETIRED</option>
+										<option value="FLOATING">FLOATING</option>
 									</select>
 								</label>
 
