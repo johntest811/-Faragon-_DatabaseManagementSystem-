@@ -1387,8 +1387,8 @@ function renderEmailHtml({ subject, recipientName, items, daysBefore, bodyHtml, 
   }
 
   const logoMarkup = brandLogoCid
-    ? `<img src="cid:${escapeHtml(brandLogoCid)}" alt="${escapeHtml(companyName)} logo" style="width:100%;height:100%;object-fit:contain;display:block;" />`
-    : `<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;border-radius:18px;background:linear-gradient(135deg,#8B1C1C,#111827);color:#ffffff;font-size:20px;font-weight:800;letter-spacing:0.12em;">F</div>`;
+    ? `<img src="cid:${escapeHtml(brandLogoCid)}" alt="${escapeHtml(companyName)} logo" width="64" style="display:block;width:64px;max-width:64px;height:auto;margin:0;border:0;outline:none;text-decoration:none;background-color:transparent;" />`
+    : `<div style="width:64px;height:64px;line-height:64px;text-align:center;color:#ffffff;font-size:24px;font-weight:800;letter-spacing:0.08em;">F</div>`;
 
   const rows = normalizedItems
     .map((it) => {
@@ -1457,8 +1457,8 @@ function renderEmailHtml({ subject, recipientName, items, daysBefore, bodyHtml, 
           .email-shell { padding: 12px !important; }
           .email-card { border-radius: 18px !important; }
           .email-hero { padding: 18px !important; }
-          .email-hero-row { display: block !important; }
-          .email-logo { width: 56px !important; height: 56px !important; margin-bottom: 12px !important; }
+          .email-logo-cell { width: 54px !important; padding-right: 12px !important; }
+          .email-logo-cell img { width: 54px !important; max-width: 54px !important; height: auto !important; }
           .email-body { padding: 18px !important; }
           .email-heading { font-size: 20px !important; }
           .email-intro { font-size: 14px !important; }
@@ -1474,16 +1474,18 @@ function renderEmailHtml({ subject, recipientName, items, daysBefore, bodyHtml, 
       <div class="email-shell" style="margin:0 auto;padding:24px 16px 32px;max-width:760px;">
         <div class="email-card" style="overflow:hidden;border:1px solid #e5e7eb;border-radius:20px;background:#ffffff;box-shadow:0 18px 40px rgba(15,23,42,0.08);">
           <div class="email-hero" style="padding:22px 24px;background:linear-gradient(135deg,#111827 0%,#7f1d1d 58%,#8B1C1C 100%);color:#ffffff;">
-            <div class="email-hero-row" style="display:flex;align-items:center;gap:16px;">
-              <div class="email-logo" style="width:64px;height:64px;padding:0;border-radius:0;background:transparent;box-sizing:border-box;overflow:hidden;flex:0 0 auto;">
-                ${logoMarkup}
-              </div>
-              <div style="min-width:0;">
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;border-collapse:collapse;background-color:transparent;">
+              <tr>
+                <td class="email-logo-cell" width="80" valign="middle" style="width:64px;padding:0 16px 0 0;vertical-align:middle;line-height:0;font-size:0;background-color:transparent;">
+                  ${logoMarkup}
+                </td>
+                <td valign="middle" style="vertical-align:middle;min-width:0;">
                 <div style="font-size:11px;letter-spacing:0.18em;text-transform:uppercase;color:rgba(255,255,255,0.78);font-weight:700;">${escapeHtml(companyName)}</div>
                 <div class="email-heading" style="font-size:24px;line-height:1.15;font-weight:800;margin-top:4px;">Expiration Notification</div>
                 <div class="email-intro" style="margin-top:6px;font-size:13px;color:rgba(255,255,255,0.88);">${escapeHtml(itemSummary)}</div>
-              </div>
-            </div>
+                </td>
+              </tr>
+            </table>
           </div>
 
           <div class="email-body" style="padding:24px;">
@@ -1653,8 +1655,8 @@ function renderNotificationLetterHtml({
       : '';
 
   const logoMarkup = brandLogoCid
-    ? `<img src="cid:${escapeHtml(brandLogoCid)}" alt="${escapeHtml(companyName)} logo" style="width:100%;height:100%;object-fit:contain;display:block;" />`
-    : `<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;border-radius:14px;background:#8B1C1C;color:#ffffff;font-size:20px;font-weight:800;letter-spacing:0.12em;">F</div>`;
+    ? `<img src="cid:${escapeHtml(brandLogoCid)}" alt="${escapeHtml(companyName)} logo" width="64" style="display:block;width:64px;max-width:64px;height:auto;margin:0;border:0;outline:none;text-decoration:none;background-color:transparent;" />`
+    : `<div style="width:64px;height:64px;line-height:64px;text-align:center;color:#ffffff;font-size:24px;font-weight:800;letter-spacing:0.08em;">F</div>`;
 
   const personnelList = normalizedItems.length
     ? `<ol style="margin:14px 0 0 20px;padding:0;color:#111827;line-height:1.8;">
@@ -1709,7 +1711,8 @@ function renderNotificationLetterHtml({
           .faragon-email-shell { padding: 0 !important; }
           .faragon-email-card { border-left: 0 !important; border-right: 0 !important; border-radius: 0 !important; box-shadow: none !important; }
           .faragon-email-header { padding: 18px 16px !important; }
-          .faragon-email-logo { width: 48px !important; height: 48px !important; }
+          .faragon-email-logo-cell { width: 48px !important; padding-right: 12px !important; }
+          .faragon-email-logo-cell img { width: 48px !important; max-width: 48px !important; height: auto !important; }
           .faragon-email-title { font-size: 18px !important; overflow-wrap: anywhere !important; }
           .faragon-email-content { padding: 20px 16px 24px !important; font-size: 15px !important; }
         }
@@ -1720,13 +1723,15 @@ function renderNotificationLetterHtml({
       <div class="faragon-email-shell" style="margin:0 auto;padding:24px 16px 32px;max-width:720px;">
         <div class="faragon-email-card" style="overflow:hidden;border:1px solid #e5e7eb;border-radius:20px;background:#ffffff;box-shadow:0 18px 40px rgba(15,23,42,0.08);">
           <div class="faragon-email-header" style="padding:20px 24px;background:#8B1C1C;color:#ffffff;">
-            <div style="display:flex;align-items:center;gap:14px;">
-              <div class="faragon-email-logo" style="width:58px;height:58px;padding:0;border-radius:0;background:transparent;box-sizing:border-box;overflow:hidden;flex:0 0 auto;">${logoMarkup}</div>
-              <div style="min-width:0;">
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;border-collapse:collapse;background-color:#8B1C1C;">
+              <tr>
+                <td class="faragon-email-logo-cell" width="80" valign="middle" style="width:64px;padding:0 16px 0 0;vertical-align:middle;line-height:0;font-size:0;background-color:#8B1C1C;">${logoMarkup}</td>
+                <td valign="middle" style="vertical-align:middle;min-width:0;background-color:#8B1C1C;">
                 <div style="font-size:11px;letter-spacing:0.16em;text-transform:uppercase;color:rgba(255,255,255,0.78);font-weight:700;">${escapeHtml(companyName)}</div>
                 <div class="faragon-email-title" style="font-size:22px;line-height:1.2;font-weight:800;margin-top:4px;overflow-wrap:anywhere;">${escapeHtml(heading)}</div>
-              </div>
-            </div>
+                </td>
+              </tr>
+            </table>
           </div>
           <div class="faragon-email-content" style="padding:26px 28px;font-size:15px;line-height:1.75;">
             ${letterHtml}

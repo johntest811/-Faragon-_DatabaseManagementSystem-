@@ -474,8 +474,8 @@ function renderEmailHtml(args: {
     itemCount === 1 ? "1 record requires immediate attention." : `${itemCount} records require immediate attention.`;
   const logoUrl = safeText(Deno.env.get("EMAIL_LOGO_URL"));
   const logoMarkup = logoUrl
-    ? `<img src="${escapeHtml(logoUrl)}" alt="${escapeHtml(companyName)} logo" width="56" height="56" style="display:block;width:56px;height:56px;object-fit:contain;border:0;" />`
-    : `<div style="display:flex;align-items:center;justify-content:center;width:52px;height:52px;border:1px solid rgba(255,255,255,0.35);border-radius:16px;background:rgba(255,255,255,0.12);font-size:22px;font-weight:800;letter-spacing:0.08em;color:#ffffff;">F</div>`;
+    ? `<img src="${escapeHtml(logoUrl)}" alt="${escapeHtml(companyName)} logo" width="64" style="display:block;width:64px;max-width:64px;height:auto;margin:0;border:0;outline:none;text-decoration:none;background-color:transparent;" />`
+    : `<div style="width:64px;height:64px;line-height:64px;text-align:center;color:#ffffff;font-size:24px;font-weight:800;letter-spacing:0.08em;">F</div>`;
 
   function formatDays(value: number | null) {
     const numeric = Number(value);
@@ -551,6 +551,8 @@ function renderEmailHtml(args: {
           .faragon-email-body { padding: 0 !important; }
           .faragon-email-shell { border-left: 0 !important; border-right: 0 !important; border-radius: 0 !important; box-shadow: none !important; }
           .faragon-email-header { padding: 20px 16px !important; }
+          .faragon-email-logo-cell { width: 48px !important; padding-right: 12px !important; }
+          .faragon-email-logo-cell img { width: 48px !important; max-width: 48px !important; height: auto !important; }
           .faragon-email-title { font-size: 19px !important; overflow-wrap: anywhere !important; }
           .faragon-email-content { padding: 20px 16px 24px !important; }
           .faragon-desktop-records { display: none !important; }
@@ -561,13 +563,15 @@ function renderEmailHtml(args: {
     <body class="faragon-email-body" style="margin:0;padding:24px;background:#f8fafc;font-family:Arial,Helvetica,sans-serif;color:#0f172a;">
       <div class="faragon-email-shell" style="max-width:820px;margin:0 auto;background:#ffffff;border:1px solid #e2e8f0;border-radius:24px;overflow:hidden;box-shadow:0 12px 40px rgba(15,23,42,0.08);">
         <div class="faragon-email-header" style="padding:28px 28px 22px;background:linear-gradient(135deg,#8b1c1c 0%,#111827 100%);color:#ffffff;">
-          <div style="display:flex;align-items:center;gap:14px;">
-            <div style="width:56px;height:56px;flex:0 0 auto;background:transparent;">${logoMarkup}</div>
-            <div style="min-width:0;">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;border-collapse:collapse;background-color:transparent;">
+            <tr>
+              <td class="faragon-email-logo-cell" width="80" valign="middle" style="width:64px;padding:0 16px 0 0;vertical-align:middle;line-height:0;font-size:0;background-color:transparent;">${logoMarkup}</td>
+              <td valign="middle" style="vertical-align:middle;min-width:0;background-color:transparent;">
               <div style="font-size:12px;letter-spacing:0.18em;text-transform:uppercase;opacity:0.75;">Automated Notification</div>
               <div class="faragon-email-title" style="margin-top:4px;font-size:24px;font-weight:800;line-height:1.2;overflow-wrap:anywhere;">${escapeHtml(heading)}</div>
-            </div>
-          </div>
+              </td>
+            </tr>
+          </table>
           <div style="margin-top:18px;font-size:14px;line-height:1.6;max-width:620px;opacity:0.92;">${escapeHtml(itemSummary)}</div>
         </div>
 
