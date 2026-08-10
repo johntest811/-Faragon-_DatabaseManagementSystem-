@@ -1467,7 +1467,9 @@ export default function SettingsPage() {
 					preferences: {
 						is_enabled: Boolean(enabled),
 						send_to_employees: Boolean(sendToEmployees),
-						use_supabase_email_sender: false,
+						// Keep the server sender enabled so Vercel notifications continue
+						// even when the Electron application is closed.
+						use_supabase_email_sender: true,
 						include_expired: Boolean(includeExpired),
 						expired_within_days: Math.max(1, Math.min(365, Number(expiredWithinDays || 7))),
 						days_before_expiry: daysBeforeValue,
@@ -1505,7 +1507,7 @@ export default function SettingsPage() {
 						.update({
 							is_enabled: Boolean(enabled),
 							send_to_employees: Boolean(sendToEmployees),
-							use_supabase_email_sender: false,
+							use_supabase_email_sender: true,
 							include_expired: Boolean(includeExpired),
 							expired_within_days: Math.max(1, Math.min(365, Number(expiredWithinDays || 7))),
 							days_before_expiry: daysBeforeValue,
@@ -1522,7 +1524,7 @@ export default function SettingsPage() {
 					const ins = await supabase.from("notification_preferences").insert({
 						is_enabled: Boolean(enabled),
 						send_to_employees: Boolean(sendToEmployees),
-						use_supabase_email_sender: false,
+						use_supabase_email_sender: true,
 						include_expired: Boolean(includeExpired),
 						expired_within_days: Math.max(1, Math.min(365, Number(expiredWithinDays || 7))),
 						days_before_expiry: daysBeforeValue,

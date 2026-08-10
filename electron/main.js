@@ -3400,7 +3400,7 @@ ipcMain.handle('settings:saveNotificationConfig', async (_event, payload) => {
   const prefPayload = {
     is_enabled: Boolean(preferences.is_enabled ?? true),
     send_to_employees: Boolean(preferences.send_to_employees ?? true),
-    use_supabase_email_sender: false,
+    use_supabase_email_sender: Boolean(preferences.use_supabase_email_sender ?? true),
     include_expired: Boolean(preferences.include_expired ?? false),
     expired_within_days: clampInt(preferences.expired_within_days, { min: 1, max: 365, fallback: 7 }),
     days_before_expiry: daysBefore,
@@ -3451,7 +3451,7 @@ ipcMain.handle('settings:saveNotificationConfig', async (_event, payload) => {
       include_security_license: Boolean(prefPayload.include_security_license),
       include_insurance: Boolean(prefPayload.include_insurance),
       send_to_employees: Boolean(prefPayload.send_to_employees),
-      use_supabase_email_sender: false,
+      use_supabase_email_sender: Boolean(prefPayload.use_supabase_email_sender),
       include_expired: Boolean(prefPayload.include_expired),
       expired_within_days: Number(prefPayload.expired_within_days ?? 7),
     },
@@ -4508,6 +4508,8 @@ function computeAutoRunKey(todayKey, email, preferences) {
     preferences?.include_insurance ? 'I1' : 'I0',
     useScheduledSend ? 'T1' : 'T0',
     preferences?.is_enabled ? 'E1' : 'E0',
+    preferences?.send_to_employees !== false ? 'P1' : 'P0',
+    preferences?.use_supabase_email_sender ? 'B1' : 'B0',
     email?.is_active === false ? 'A0' : 'A1',
   ].join('');
 
