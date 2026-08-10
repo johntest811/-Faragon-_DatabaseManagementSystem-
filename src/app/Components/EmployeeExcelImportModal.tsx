@@ -2,9 +2,11 @@
 
 import React, { useMemo, useState } from "react";
 import * as XLSX from "xlsx";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
 import { supabase } from "../Client/SupabaseClients";
 import { readSpreadsheetRows } from "./spreadsheetImportUtils";
-import { buildBrandedWorkbookBuffer } from "../Main_Modules/Components/exportBranding";
+import { addBrandedPdfHeader, buildBrandedWorkbookBuffer } from "../Main_Modules/Components/exportBranding";
 
 export type EmployeeExcelImportModalProps = {
   open: boolean;
@@ -112,16 +114,6 @@ function downloadBlob(filename: string, blob: Blob) {
   a.download = filename;
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
-
-function toCsvLine(cells: (string | number | null | undefined)[]) {
-  const esc = (v: unknown) => {
-    const s = String(v ?? "");
-    const needs = /[\n\r,\"]/g.test(s);
-    const out = s.replace(/\"/g, '""');
-    return needs ? `"${out}"` : out;
-  };
-  return cells.map(esc).join(",");
 }
 
 function normKey(input: string) {
@@ -525,14 +517,6 @@ export default function EmployeeExcelImportModal({
     return out;
   }
 
-  function downloadCsvTemplate() {
-    const templateRow = new Array(TEMPLATE_HEADERS.length).fill("");
-    templateRow[TEMPLATE_HEADERS.length - 1] = normalizedDefaultStatus;
-    const lines = [toCsvLine([...TEMPLATE_HEADERS]), toCsvLine(templateRow)];
-    const blob = new Blob([lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
-    downloadBlob("employee_import_template.csv", blob);
-  }
-
   async function downloadXlsxTemplate() {
     setParsingError("");
     try {
@@ -558,85 +542,81 @@ export default function EmployeeExcelImportModal({
     }
   }
 
+  async function loadAllEmployeeExportRows() {
+    const allApplicants: Array<Record<string, unknown>> = [];
+    const pageSize = 1000;
+    let offset = 0;
+
+    while (true) {
+      const res = await supabase
+        .from("applicants")
+        .select(
+          "applicant_id, created_at, last_name, first_name, middle_name, birth_date, age, gender, education_attainment, date_hired_fsai, security_licensed_num, client_position, sss_number, pagibig_number, philhealth_number, tin_number, detachment, client_contact_num, client_email, present_address, province_address, emergency_contact_person, emergency_contact_num, status"
+        )
+        .eq("is_trashed", false)
+        .range(offset, offset + pageSize - 1);
+
+      if (res.error) throw res.error;
+      const batch = (res.data as Array<Record<string, unknown>>) ?? [];
+      if (!batch.length) break;
+      allApplicants.push(...batch);
+      if (batch.length < pageSize) break;
+      offset += batch.length;
+    }
+
+    const ids = allApplicants.map((row) => String(row.applicant_id ?? "").trim()).filter(Boolean);
+    const licensureMap = new Map<string, { security_expiration: string | null }>();
+    for (let i = 0; i < ids.length; i += 500) {
+      const licRes = await supabase
+        .from("licensure")
+        .select("applicant_id, security_expiration")
+        .in("applicant_id", ids.slice(i, i + 500));
+
+      if (licRes.error) continue;
+      for (const row of ((licRes.data as Array<{ applicant_id: string; security_expiration: string | null }>) ?? [])) {
+        licensureMap.set(String(row.applicant_id), { security_expiration: row.security_expiration ?? null });
+      }
+    }
+
+    return allApplicants.map((row) => {
+      const applicantId = String(row.applicant_id ?? "").trim();
+      const values = [
+        toText(row.created_at),
+        toText(row.last_name),
+        toText(row.first_name),
+        toText(row.middle_name),
+        toText(row.birth_date),
+        toText(row.age),
+        toText(row.gender),
+        toText(row.education_attainment),
+        toText(row.date_hired_fsai),
+        toText(row.security_licensed_num),
+        toText(licensureMap.get(applicantId)?.security_expiration),
+        toText(row.client_position),
+        toText(row.sss_number),
+        toText(row.pagibig_number),
+        toText(row.philhealth_number),
+        toText(row.tin_number),
+        toText(row.detachment),
+        toText(row.client_contact_num),
+        toText(row.client_email),
+        toText(row.present_address),
+        toText(row.province_address),
+        toText(row.emergency_contact_person),
+        toText(row.emergency_contact_num),
+        toText(row.status),
+      ];
+      return Object.fromEntries(TEMPLATE_HEADERS.map((header, index) => [header, values[index]]));
+    });
+  }
+
   async function exportAllEmployeesTemplateXlsx() {
     setExporting(true);
     setParsingError("");
     setResultMsg("");
 
     try {
-      const allApplicants: Array<Record<string, unknown>> = [];
-      const pageSize = 1000;
-      let offset = 0;
-
-      while (true) {
-        const res = await supabase
-          .from("applicants")
-          .select(
-            "applicant_id, created_at, last_name, first_name, middle_name, birth_date, age, gender, education_attainment, date_hired_fsai, security_licensed_num, client_position, sss_number, pagibig_number, philhealth_number, tin_number, detachment, client_contact_num, client_email, present_address, province_address, emergency_contact_person, emergency_contact_num, status"
-          )
-          .eq("is_trashed", false)
-          .range(offset, offset + pageSize - 1);
-
-        if (res.error) throw res.error;
-        const batch = (res.data as Array<Record<string, unknown>>) ?? [];
-        if (!batch.length) break;
-        allApplicants.push(...batch);
-        if (batch.length < pageSize) break;
-        offset += batch.length;
-      }
-
-      const ids = allApplicants
-        .map((r) => String(r.applicant_id ?? "").trim())
-        .filter(Boolean);
-
-      const licensureMap = new Map<string, { security_expiration: string | null }>();
-      for (let i = 0; i < ids.length; i += 500) {
-        const chunk = ids.slice(i, i + 500);
-        const licRes = await supabase
-          .from("licensure")
-          .select("applicant_id, security_expiration")
-          .in("applicant_id", chunk);
-
-        if (licRes.error) continue;
-        for (const row of ((licRes.data as Array<{ applicant_id: string; security_expiration: string | null }>) ?? [])) {
-          licensureMap.set(String(row.applicant_id), { security_expiration: row.security_expiration ?? null });
-        }
-      }
-
-      const bodyRows = allApplicants.map((r) => {
-        const applicantId = String(r.applicant_id ?? "").trim();
-        const securityExpiration = licensureMap.get(applicantId)?.security_expiration ?? "";
-        return [
-          toText(r.created_at),
-          toText(r.last_name),
-          toText(r.first_name),
-          toText(r.middle_name),
-          toText(r.birth_date),
-          toText(r.age),
-          toText(r.gender),
-          toText(r.education_attainment),
-          toText(r.date_hired_fsai),
-          toText(r.security_licensed_num),
-          toText(securityExpiration),
-          toText(r.client_position),
-          toText(r.sss_number),
-          toText(r.pagibig_number),
-          toText(r.philhealth_number),
-          toText(r.tin_number),
-          toText(r.detachment),
-          toText(r.client_contact_num),
-          toText(r.client_email),
-          toText(r.present_address),
-          toText(r.province_address),
-          toText(r.emergency_contact_person),
-          toText(r.emergency_contact_num),
-          toText(r.status),
-        ];
-      });
-
-      const exportRows = bodyRows.map((row) =>
-        Object.fromEntries(TEMPLATE_HEADERS.map((header, index) => [header, row[index]]))
-      );
+      const exportRows = await loadAllEmployeeExportRows();
       const out = await buildBrandedWorkbookBuffer([
         {
           name: "Employees",
@@ -649,9 +629,46 @@ export default function EmployeeExcelImportModal({
         type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       });
       downloadBlob("All_employees_table.xlsx", blob);
-      setResultMsg(`Exported ${bodyRows.length} employee row(s) in template format.`);
+      setResultMsg(`Exported ${exportRows.length} employee row(s) to XLSX.`);
     } catch (e: unknown) {
       setParsingError(e instanceof Error ? e.message : "Failed to export employees");
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  async function exportAllEmployeesPdf() {
+    setExporting(true);
+    setParsingError("");
+    setResultMsg("");
+
+    try {
+      const exportRows = await loadAllEmployeeExportRows();
+      if (!exportRows.length) throw new Error("No employee records are available for export.");
+
+      const headers = [...TEMPLATE_HEADERS];
+      const body = exportRows.map((row) => headers.map((header) => String(row[header] ?? "")));
+      const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a3" });
+      const startY = await addBrandedPdfHeader(
+        doc,
+        "Employees Export",
+        `Employee records exported ${new Date().toLocaleString()}`
+      );
+      autoTable(doc, {
+        startY: startY + 8,
+        head: [headers],
+        body,
+        margin: { left: 24, right: 24, bottom: 24 },
+        styles: { fontSize: 5.5, cellPadding: 2, overflow: "linebreak" },
+        headStyles: { fillColor: [255, 218, 3], textColor: [0, 0, 0], fontStyle: "bold" },
+        horizontalPageBreak: true,
+        horizontalPageBreakRepeat: [0, 1, 2],
+        showHead: "everyPage",
+      });
+      doc.save("All_employees_table.pdf");
+      setResultMsg(`Exported ${exportRows.length} employee row(s) to PDF.`);
+    } catch (e: unknown) {
+      setParsingError(e instanceof Error ? e.message : "Failed to export employees to PDF");
     } finally {
       setExporting(false);
     }
@@ -911,9 +928,9 @@ export default function EmployeeExcelImportModal({
       <div className="w-full max-w-3xl bg-white rounded-3xl border shadow-xl overflow-hidden">
         <div className="px-6 py-4 border-b flex items-center justify-between gap-3">
           <div className="min-w-0">
-            <div className="text-lg font-semibold text-black">Import Employees (Excel/CSV)</div>
+            <div className="text-lg font-semibold text-black">Import Employees (Excel)</div>
             <div className="text-xs text-gray-500 truncate">
-              Upload an Excel (.xlsx/.xls) or CSV (.csv) file with headers like Last Name, First Name, Status, etc.
+              Upload an Excel (.xlsx/.xls) file with headers like Last Name, First Name, Status, etc.
             </div>
           </div>
           <button onClick={onClose} className="px-3 py-2 rounded-xl border bg-white text-black">
@@ -925,20 +942,13 @@ export default function EmployeeExcelImportModal({
           <div className="rounded-2xl border p-4">
             <div className="flex items-center justify-between gap-3 flex-wrap">
               <div>
-                <div className="text-sm font-semibold text-black">Excel/CSV file</div>
+                <div className="text-sm font-semibold text-black">Excel file</div>
                 <div className="text-xs text-gray-500">{fileName || "No file selected"}</div>
               </div>
 
               <div className="flex items-center gap-2">
                 {allowTemplateDownloads ? (
-                  <div className="flex items-center gap-1">
-                    <button
-                      type="button"
-                      onClick={downloadCsvTemplate}
-                      className="px-3 py-2 rounded-xl border bg-white text-black text-sm font-semibold"
-                    >
-                      Template CSV
-                    </button>
+                  <div className="flex flex-wrap items-center justify-end gap-2">
                     <button
                       type="button"
                       onClick={() => void downloadXlsxTemplate()}
@@ -956,6 +966,16 @@ export default function EmployeeExcelImportModal({
                     >
                       {exporting ? "Exporting..." : "Export Employees XLSX"}
                     </button>
+                    <button
+                      type="button"
+                      onClick={() => void exportAllEmployeesPdf()}
+                      disabled={exporting || importing}
+                      className={`px-3 py-2 rounded-xl border bg-white text-black text-sm font-semibold ${
+                        exporting || importing ? "opacity-60" : ""
+                      }`}
+                    >
+                      {exporting ? "Exporting..." : "Export Employees PDF"}
+                    </button>
                   </div>
                 ) : null}
 
@@ -964,7 +984,7 @@ export default function EmployeeExcelImportModal({
                   <input
                     type="file"
                     className="hidden"
-                    accept=".xlsx,.xls,.csv"
+                    accept=".xlsx,.xls"
                     onChange={(e) => onPick(e.target.files?.[0])}
                   />
                 </label>
