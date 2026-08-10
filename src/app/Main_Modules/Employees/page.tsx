@@ -4,7 +4,6 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useRouter } from "next/navigation";
 import { supabase } from "../../Client/SupabaseClients";
 import { Pencil, SlidersHorizontal, Upload, LayoutGrid, Table, Search, FileText } from "lucide-react";
-import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { useAuthRole, useMyColumnAccess, useMyModuleAccess, useMyModuleDeleteAccess, useMyModuleEditAccess } from "../../Client/useRbac";
@@ -15,7 +14,7 @@ import TableZoomWrapper from "@/app/Components/TableZoomWrapper";
 import ImportSummaryModal, { ImportSummaryData } from "../Components/ImportSummaryModal";
 import EmployeeStatusMenu from "../Components/EmployeeStatusMenu";
 import DetachmentHistoryPopover from "../Components/DetachmentHistoryPopover";
-import { addBrandedPdfHeader, buildBrandedAoa, buildBrandedWorkbookBuffer } from "../Components/exportBranding";
+import { addBrandedPdfHeader, buildBrandedWorkbookBuffer } from "../Components/exportBranding";
 import { buildEmployeeStatusUpdatePatch, loadLicensureMap } from "../employeeListData";
 import { useLiveNow } from "../../Client/useLiveNow";
 
@@ -874,20 +873,6 @@ if (hiredMonthFilter !== "ALL") {
 		return `Generated: ${new Date().toLocaleString()} | Hired Month: ${monthLabel} | Years w/ Company: ${serviceExportYearsLabel()} | Hired Date: ${serviceExportDateRangeLabel()}`;
 	}
 
-	function exportServiceCsv() {
-		setError("");
-		if (!serviceExportDataRows.length) {
-			setError("No employees with one year or more in company for the selected filters.");
-			return;
-		}
-
-		const title = serviceExportTitle.trim() || "Employees 1+ Year Export";
-		const worksheet = XLSX.utils.aoa_to_sheet(buildBrandedAoa(serviceExportDataRows, title, serviceExportSubtitle()));
-		const csv = XLSX.utils.sheet_to_csv(worksheet);
-		downloadBlob(`${serviceExportFileBase()}.csv`, new Blob([csv], { type: "text/csv;charset=utf-8;" }));
-		setServiceExportOpen(false);
-	}
-
 	async function exportServiceXlsx() {
 		setError("");
 		if (!serviceExportDataRows.length) {
@@ -1424,15 +1409,6 @@ if (hiredMonthFilter !== "ALL") {
 								<div className="flex items-end justify-start gap-2 sm:col-span-2 xl:col-span-3 xl:justify-end">
 									<button
 										type="button"
-										onClick={exportServiceCsv}
-										className="h-10 px-4 rounded-xl border bg-white text-xs font-semibold hover:bg-white"
-										title="Download CSV"
-										aria-label="Download CSV"
-									>
-										CSV
-									</button>
-									<button
-										type="button"
 										onClick={exportServiceXlsx}
 										className="h-10 px-4 rounded-xl border bg-white text-xs font-semibold hover:bg-white"
 										title="Download XLSX"
@@ -1443,11 +1419,12 @@ if (hiredMonthFilter !== "ALL") {
 									<button
 										type="button"
 										onClick={exportServicePdf}
-										className="h-10 w-10 rounded-xl border bg-white flex items-center justify-center hover:bg-white"
+										className="h-10 px-4 rounded-xl border bg-white flex items-center gap-2 text-xs font-semibold hover:bg-gray-50"
 										title="Download PDF"
 										aria-label="Download PDF"
 									>
 										<FileText className="w-5 h-5 text-gray-800" />
+										PDF
 									</button>
 								</div>
 							</div>

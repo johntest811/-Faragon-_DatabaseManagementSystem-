@@ -10,7 +10,7 @@ type BrandImage = {
 };
 
 const BRAND_SOURCES = {
-	logo: "/Logo.png",
+	logo: "/Logo-ui.png",
 	title: "/Title.png",
 	iso: "/ISO.png",
 } as const;
@@ -149,19 +149,28 @@ export async function buildBrandedWorkbookBuffer(sheets: BrandedWorkbookSheet[])
 		worksheet.getRow(5).height = 24;
 
 		if (logoId != null) {
-			const fit = fitWithin(images.logo as BrandImage, BRAND_LAYOUT.logo.width, BRAND_LAYOUT.logo.height);
-			worksheet.addImage(logoId, { tl: { col: 0, row: 0.1 }, ext: { width: fit.width, height: fit.height } });
+			const fit = fitWithin(images.logo as BrandImage, 72, BRAND_LAYOUT.logo.height);
+			worksheet.addImage(logoId, { tl: { col: 0.05, row: 0.1 }, ext: { width: fit.width, height: fit.height } });
 		}
 		if (titleId != null) {
-			const fit = fitWithin(images.title as BrandImage, BRAND_LAYOUT.title.width, BRAND_LAYOUT.title.height);
+			const pixelsPerColumn = 90;
+			const sideReserveColumns = Math.min(1.2, Math.max(0.7, columnCount * 0.2));
+			const availableColumns = Math.max(1, columnCount - sideReserveColumns * 2);
+			const fit = fitWithin(
+				images.title as BrandImage,
+				Math.min(BRAND_LAYOUT.title.width, availableColumns * pixelsPerColumn),
+				BRAND_LAYOUT.title.height
+			);
+			const centeredColumn = sideReserveColumns + Math.max(0, (availableColumns - fit.width / pixelsPerColumn) / 2);
 			worksheet.addImage(titleId, {
-				tl: { col: Math.max(1, Math.floor(columnCount / 2) - Math.max(1, Math.ceil(fit.width / 80))), row: 0.05 },
+				tl: { col: centeredColumn, row: 0.05 },
 				ext: { width: fit.width, height: fit.height },
 			});
 		}
 		if (isoId != null) {
-			const fit = fitWithin(images.iso as BrandImage, BRAND_LAYOUT.iso.width, BRAND_LAYOUT.iso.height);
-			worksheet.addImage(isoId, { tl: { col: Math.max(0, columnCount - 1), row: 0.1 }, ext: { width: fit.width, height: fit.height } });
+			const fit = fitWithin(images.iso as BrandImage, 72, BRAND_LAYOUT.iso.height);
+			const rightColumn = Math.max(0, columnCount - fit.width / 90 - 0.05);
+			worksheet.addImage(isoId, { tl: { col: rightColumn, row: 0.1 }, ext: { width: fit.width, height: fit.height } });
 		}
 
 		writeCenteredRow(worksheet, 2, columnCount, sheetSpec.title, { size: 16, bold: true });

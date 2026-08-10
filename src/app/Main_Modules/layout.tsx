@@ -83,6 +83,16 @@ type NotificationConfigResponse = {
   } | null;
 };
 
+type WebNotificationPreferences = {
+  days_before_expiry?: number | null;
+  include_driver_license?: boolean | null;
+  include_security_license?: boolean | null;
+  include_insurance?: boolean | null;
+  include_expired?: boolean | null;
+  expired_within_days?: number | null;
+  send_to_employees?: boolean | null;
+};
+
 type PageMeta = {
   title: string;
   description: string;
@@ -151,6 +161,32 @@ function isContractExpiringRow(row: ExpiringSummaryRow) {
   const licenseType = String(row?.license_type ?? "").trim().toUpperCase();
   if (!(row?.source_kind === "contract" || applicantId.startsWith("contract:"))) return false;
   return licenseType === "CONTRACT EXPIRATION";
+}
+
+function clampNotificationDays(value: unknown, fallback: number) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.min(365, Math.max(1, Math.trunc(numeric)));
+}
+
+function daysUntilDateOnly(value: unknown, now = new Date()) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(value ?? "").trim());
+  if (!match) return null;
+  const targetDay = Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  const today = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+  const difference = Math.round((targetDay - today) / 86_400_000);
+  return Number.isFinite(difference) ? difference : null;
+}
+
+function isWithinExpirationWindow(
+  daysUntilExpiry: number | null,
+  daysBeforeExpiry: number,
+  includeExpired: boolean,
+  expiredWithinDays: number
+) {
+  if (daysUntilExpiry === null) return false;
+  if (daysUntilExpiry >= 0 && daysUntilExpiry <= daysBeforeExpiry) return true;
+  return includeExpired && daysUntilExpiry < 0 && Math.abs(daysUntilExpiry) <= expiredWithinDays;
 }
 
 function readDismissedExpiringSummaryKeys() {
@@ -979,7 +1015,13 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
   const refreshNotificationPrefs = useCallback(async () => {
     try {
       if (!api?.settings?.loadNotificationConfig) {
-        setSendToEmployees(true);
+        const { data } = await supabase
+          .from("notification_preferences")
+          .select("send_to_employees")
+          .order("updated_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        setSendToEmployees((data as WebNotificationPreferences | null)?.send_to_employees !== false);
         return;
       }
       const cfg = await api.settings.loadNotificationConfig();
@@ -1207,31 +1249,65 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
       try {
         await refreshNotificationPrefs();
         const rows: ExpiringSummaryRow[] = [];
+        const emailByApplicantId: Record<string, string | null> = {};
         const now = new Date();
+        const preferencesResult = await supabase
+          .from("notification_preferences")
+          .select("days_before_expiry, include_driver_license, include_security_license, include_insurance, include_expired, expired_within_days, send_to_employees")
+          .order("updated_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        const preferences = (preferencesResult.data as WebNotificationPreferences | null) ?? {};
+        const daysBeforeExpiry = clampNotificationDays(preferences.days_before_expiry, 30);
+        const includeExpired = preferences.include_expired === true;
+        const expiredWithinDays = clampNotificationDays(preferences.expired_within_days, 7);
 
         if (canViewExpiringWidget) {
-          const { data: licData } = await supabase
+          const { data: licData, error: licensureError } = await supabase
             .from("licensure")
-            .select("applicant_id, license_name, expiration_date, created_at, updated_at")
-            .not("expiration_date", "is", null)
-            .limit(100);
+            .select("applicant_id, driver_expiration, security_expiration, insurance_expiration")
+            .limit(10000);
 
-          if (licData) {
-            for (const r of licData as Array<Record<string, unknown>>) {
-              if (!r.expiration_date) continue;
-              const expDate = new Date(String(r.expiration_date));
-              const diffDays = Math.ceil((expDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
-              if (diffDays <= 90) {
+          if (!licensureError && licData?.length) {
+            const applicantIds = Array.from(
+              new Set((licData as Array<Record<string, unknown>>).map((row) => String(row.applicant_id ?? "")).filter(Boolean))
+            );
+            const applicantsResult = await supabase
+              .from("applicants")
+              .select("applicant_id, first_name, last_name, client_email, status, is_archived, is_trashed")
+              .in("applicant_id", applicantIds);
+            const applicantsById = new Map(
+              ((applicantsResult.data ?? []) as Array<Record<string, unknown>>).map((row) => [String(row.applicant_id ?? ""), row])
+            );
+
+            const licenseDefinitions = [
+              { key: "driver_expiration", type: "DRIVER_LICENSE", enabled: preferences.include_driver_license === true },
+              { key: "security_expiration", type: "SECURITY_LICENSE", enabled: preferences.include_security_license !== false },
+              { key: "insurance_expiration", type: "INSURANCE", enabled: preferences.include_insurance === true },
+            ] as const;
+
+            for (const licenseRow of licData as Array<Record<string, unknown>>) {
+              const applicantId = String(licenseRow.applicant_id ?? "");
+              const applicant = applicantsById.get(applicantId);
+              if (!applicant) continue;
+              if (String(applicant.status ?? "").trim().toUpperCase() !== "ACTIVE") continue;
+              if (applicant.is_archived === true || applicant.is_trashed === true) continue;
+              emailByApplicantId[applicantId] = String(applicant.client_email ?? "").trim() || null;
+
+              for (const definition of licenseDefinitions) {
+                if (!definition.enabled) continue;
+                const expiresOn = String(licenseRow[definition.key] ?? "").slice(0, 10);
+                const diffDays = daysUntilDateOnly(expiresOn, now);
+                if (!expiresOn || !isWithinExpirationWindow(diffDays, daysBeforeExpiry, includeExpired, expiredWithinDays)) continue;
                 rows.push({
-                  applicant_id: String(r.applicant_id ?? ""),
-                  first_name: null,
-                  last_name: null,
-                  license_type: String(r.license_name ?? "License"),
-                  expires_on: String(r.expiration_date),
-                  days_until_expiry: diffDays,
+                  applicant_id: applicantId,
+                  first_name: applicant.first_name == null ? null : String(applicant.first_name),
+                  last_name: applicant.last_name == null ? null : String(applicant.last_name),
+                  recipient_email: emailByApplicantId[applicantId],
+                  license_type: definition.type,
+                  expires_on: expiresOn,
+                  days_until_expiry: diffDays ?? 0,
                   source_kind: "licensure",
-                  created_at: r.created_at ? String(r.created_at) : null,
-                  updated_at: r.updated_at ? String(r.updated_at) : null,
                 });
               }
             }
@@ -1239,25 +1315,25 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
         }
 
         if (canViewCarInsuranceWidget) {
-          const { data: othData } = await supabase
+          const { data: othData, error: otherExpirationError } = await supabase
             .from("other_expiration_items")
-            .select("id, expiration_type, make, model, plate_number, recipient_email, expires_on, car_registration_to_date, created_at, updated_at")
+            .select("id, item_name, expiration_type, make, model, plate_number, recipient_email, expires_on, car_registration_to_date, days_before_expiry, is_active, created_at, updated_at")
             .eq("expiration_type", "CAR_INSURANCE")
-            .limit(100);
+            .eq("is_active", true)
+            .limit(10000);
 
-          if (othData) {
+          if (!otherExpirationError && othData) {
             for (const r of othData as Array<Record<string, unknown>>) {
-              const title = [r.make, r.model, r.plate_number ? `(${r.plate_number})` : ""].filter(Boolean).join(" ") || "Vehicle Policy";
+              const title = String(r.item_name ?? "").trim() || [r.make, r.model, r.plate_number ? `(${r.plate_number})` : ""].filter(Boolean).join(" ") || "Vehicle Policy";
               const recipientEmail = r.recipient_email ? String(r.recipient_email) : null;
               const baseCreatedAt = r.created_at ? String(r.created_at) : null;
               const baseUpdatedAt = r.updated_at ? String(r.updated_at) : null;
+              const rowDaysBefore = clampNotificationDays(r.days_before_expiry, daysBeforeExpiry);
 
-              // Policy Term expiration row
               const policyExpStr = String(r.expires_on || "");
               if (policyExpStr) {
-                const expDate = new Date(policyExpStr);
-                const diffDays = Math.ceil((expDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
-                if (diffDays <= 90) {
+                const diffDays = daysUntilDateOnly(policyExpStr, now);
+                if (isWithinExpirationWindow(diffDays, rowDaysBefore, includeExpired, expiredWithinDays)) {
                   rows.push({
                     applicant_id: `other:${r.id}`,
                     first_name: null,
@@ -1266,7 +1342,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
                     recipient_email: recipientEmail,
                     license_type: "Other: Policy Term",
                     expires_on: policyExpStr,
-                    days_until_expiry: diffDays,
+                    days_until_expiry: diffDays ?? 0,
                     source_kind: "other",
                     created_at: baseCreatedAt,
                     updated_at: baseUpdatedAt,
@@ -1274,12 +1350,10 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
                 }
               }
 
-              // Car Registration expiration row
               const regExpStr = String(r.car_registration_to_date || "");
               if (regExpStr) {
-                const expDate = new Date(regExpStr);
-                const diffDays = Math.ceil((expDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
-                if (diffDays <= 90) {
+                const diffDays = daysUntilDateOnly(regExpStr, now);
+                if (isWithinExpirationWindow(diffDays, rowDaysBefore, includeExpired, expiredWithinDays)) {
                   rows.push({
                     applicant_id: `other:${r.id}:reg`,
                     first_name: null,
@@ -1288,7 +1362,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
                     recipient_email: recipientEmail,
                     license_type: "Other: Car Registration Date",
                     expires_on: regExpStr,
-                    days_until_expiry: diffDays,
+                    days_until_expiry: diffDays ?? 0,
                     source_kind: "other",
                     created_at: baseCreatedAt,
                     updated_at: baseUpdatedAt,
@@ -1300,29 +1374,38 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
         }
 
         if (canViewContractExpiringWidget) {
-          const { data: conData } = await supabase
+          const { data: conData, error: contractError } = await supabase
             .from("contracts")
-            .select("id, client_name, contract_end, created_at, updated_at")
+            .select("contract_id, contract_no, client_name, specific_area, project_name, contract_end, status, notification_recipient_email, created_at")
             .not("contract_end", "is", null)
-            .limit(100);
+            .limit(10000);
 
-          if (conData) {
+          if (!contractError && conData) {
             for (const r of conData as Array<Record<string, unknown>>) {
               if (!r.contract_end) continue;
-              const expDate = new Date(String(r.contract_end));
-              const diffDays = Math.ceil((expDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
-              if (diffDays <= 90) {
+              const status = String(r.status ?? "").trim().toUpperCase();
+              if (status && status !== "ACTIVE") continue;
+              const expiresOn = String(r.contract_end).slice(0, 10);
+              const diffDays = daysUntilDateOnly(expiresOn, now);
+              if (isWithinExpirationWindow(diffDays, daysBeforeExpiry, includeExpired, expiredWithinDays)) {
+                const contractId = String(r.contract_id ?? "");
+                const recordName = [
+                  r.contract_no ? `Contract ${r.contract_no}` : "",
+                  r.client_name,
+                  r.specific_area,
+                  r.project_name,
+                ].map((value) => String(value ?? "").trim()).filter(Boolean).join(" - ") || "Contract";
                 rows.push({
-                  applicant_id: `contract:${r.id}`,
+                  applicant_id: `contract:${contractId}`,
                   first_name: null,
                   last_name: null,
-                  record_name: String(r.client_name ?? "Contract"),
+                  record_name: recordName,
+                  recipient_email: String(r.notification_recipient_email ?? "").trim() || null,
                   license_type: "Contract Expiration",
-                  expires_on: String(r.contract_end),
-                  days_until_expiry: diffDays,
+                  expires_on: expiresOn,
+                  days_until_expiry: diffDays ?? 0,
                   source_kind: "contract",
                   created_at: r.created_at ? String(r.created_at) : null,
-                  updated_at: r.updated_at ? String(r.updated_at) : null,
                 });
               }
             }
@@ -1331,10 +1414,17 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
 
         const sortedRows = rows.sort((a, b) => a.days_until_expiry - b.days_until_expiry);
         const dismissedKeys = readDismissedExpiringSummaryKeys();
-        const visibleRows = sortedRows.filter((row) => !dismissedKeys.has(getExpiringSummaryRowKey(row)));
+        const visibleRows = sortedRows.filter((row) => !dismissedKeys.has(getExpiringSummaryRowKey(row))).slice(0, 100);
+        for (const row of visibleRows) {
+          if (row.source_kind === "other" || row.source_kind === "contract") {
+            emailByApplicantId[row.applicant_id] = String(row.recipient_email ?? "").trim() || null;
+          }
+        }
+        setExpiringEmailByApplicantId(emailByApplicantId);
         applyVisibleExpiringRows(visibleRows);
       } catch {
         applyVisibleExpiringRows([]);
+        setExpiringEmailByApplicantId({});
       }
       return;
     }
@@ -1413,7 +1503,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
     } catch {
       // ignore
     }
-  }, [api, applyVisibleExpiringRows, canViewCarInsuranceWidget, canViewExpiringWidget, refreshNotificationPrefs]);
+  }, [api, applyVisibleExpiringRows, canViewCarInsuranceWidget, canViewContractExpiringWidget, canViewExpiringWidget, refreshNotificationPrefs]);
 
   const clearExpiringNotifications = useCallback(async (rowsToClear: ExpiringSummaryRow[], label: string) => {
     if (!rowsToClear.length) return;
@@ -1470,8 +1560,11 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
       "notification_email_settings",
       "notification_recipients",
       "car_insurance_notification_recipients",
+      "contract_notification_recipients",
+      "contracts",
       "licensure_notification_log",
       "other_expiration_notification_log",
+      "contract_expiration_notification_log",
       "audit_log",
     ];
 

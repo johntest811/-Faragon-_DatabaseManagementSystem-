@@ -41,6 +41,8 @@ type NotificationConfig = {
   email: NotificationEmailSettingsRow | null;
   preferences: NotificationPreferencesRow;
   recipients: string[];
+  carInsuranceRecipients: string[];
+  contractRecipients: string[];
 };
 
 type LicensureMailItem = {
@@ -67,6 +69,17 @@ type OtherMailItem = {
   recipient_email: string | null;
 };
 
+type ContractMailItem = {
+  contract_id: string;
+  contract_no: string | null;
+  record_name: string;
+  license_type: "CONTRACT EXPIRATION";
+  expires_on: string;
+  days_until_expiry: number | null;
+  days_before_expiry: number;
+  recipient_email: string | null;
+};
+
 type MailRow = {
   record_name: string;
   license_type: string;
@@ -77,6 +90,7 @@ type MailRow = {
 type QueuedNotification = (
   | { kind: "licensure"; item: LicensureMailItem }
   | { kind: "other"; item: OtherMailItem }
+  | { kind: "contract"; item: ContractMailItem }
 ) & { deliveryClaimKey?: string };
 
 type RunSummary = {
@@ -458,6 +472,10 @@ function renderEmailHtml(args: {
   const itemCount = Array.isArray(args.items) ? args.items.length : 0;
   const itemSummary =
     itemCount === 1 ? "1 record requires immediate attention." : `${itemCount} records require immediate attention.`;
+  const logoUrl = safeText(Deno.env.get("EMAIL_LOGO_URL"));
+  const logoMarkup = logoUrl
+    ? `<img src="${escapeHtml(logoUrl)}" alt="${escapeHtml(companyName)} logo" width="56" height="56" style="display:block;width:56px;height:56px;object-fit:contain;border:0;" />`
+    : `<div style="display:flex;align-items:center;justify-content:center;width:52px;height:52px;border:1px solid rgba(255,255,255,0.35);border-radius:16px;background:rgba(255,255,255,0.12);font-size:22px;font-weight:800;letter-spacing:0.08em;color:#ffffff;">F</div>`;
 
   function formatDays(value: number | null) {
     const numeric = Number(value);
@@ -491,6 +509,26 @@ function renderEmailHtml(args: {
     })
     .join("");
 
+  const mobileCards = args.items
+    .map((item) => {
+      const statusLabel = formatDays(item.days_until_expiry);
+      const numericDays = Number(item.days_until_expiry);
+      const statusStyle =
+        Number.isFinite(numericDays) && numericDays < 0
+          ? "background:#fee2e2;color:#991b1b;"
+          : Number.isFinite(numericDays) && numericDays <= 7
+            ? "background:#fef3c7;color:#92400e;"
+            : "background:#dcfce7;color:#166534;";
+      return `
+        <div style="margin-top:12px;border:1px solid #e5e7eb;border-radius:14px;background:#ffffff;padding:14px;">
+          <div style="font-size:14px;font-weight:800;line-height:1.4;color:#111827;overflow-wrap:anywhere;">${escapeHtml(item.record_name)}</div>
+          <div style="margin-top:4px;font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#64748b;">${escapeHtml(item.license_type)}</div>
+          <div style="margin-top:12px;font-size:12px;color:#475569;">Expires on <strong style="color:#111827;">${escapeHtml(item.expires_on)}</strong></div>
+          <div style="margin-top:10px;"><span style="display:inline-block;padding:6px 10px;border-radius:999px;font-size:11px;font-weight:700;${statusStyle}">${escapeHtml(statusLabel)}</span></div>
+        </div>`;
+    })
+    .join("");
+
   const bodyMarkup = safeBody
     ? `<div style="color:#334155;font-size:14px;line-height:1.7;">${safeBody}</div>`
     : legacyMessage
@@ -507,21 +545,33 @@ function renderEmailHtml(args: {
       <meta charset="UTF-8" />
       <meta name="viewport" content="width=device-width, initial-scale=1.0" />
       <title>${escapeHtml(heading)}</title>
+      <style>
+        .faragon-mobile-records { display: none; }
+        @media only screen and (max-width: 640px) {
+          .faragon-email-body { padding: 0 !important; }
+          .faragon-email-shell { border-left: 0 !important; border-right: 0 !important; border-radius: 0 !important; box-shadow: none !important; }
+          .faragon-email-header { padding: 20px 16px !important; }
+          .faragon-email-title { font-size: 19px !important; overflow-wrap: anywhere !important; }
+          .faragon-email-content { padding: 20px 16px 24px !important; }
+          .faragon-desktop-records { display: none !important; }
+          .faragon-mobile-records { display: block !important; }
+        }
+      </style>
     </head>
-    <body style="margin:0;padding:24px;background:#f8fafc;font-family:Arial,Helvetica,sans-serif;color:#0f172a;">
-      <div style="max-width:820px;margin:0 auto;background:#ffffff;border:1px solid #e2e8f0;border-radius:24px;overflow:hidden;box-shadow:0 12px 40px rgba(15,23,42,0.08);">
-        <div style="padding:28px 28px 22px;background:linear-gradient(135deg,#8b1c1c 0%,#111827 100%);color:#ffffff;">
+    <body class="faragon-email-body" style="margin:0;padding:24px;background:#f8fafc;font-family:Arial,Helvetica,sans-serif;color:#0f172a;">
+      <div class="faragon-email-shell" style="max-width:820px;margin:0 auto;background:#ffffff;border:1px solid #e2e8f0;border-radius:24px;overflow:hidden;box-shadow:0 12px 40px rgba(15,23,42,0.08);">
+        <div class="faragon-email-header" style="padding:28px 28px 22px;background:linear-gradient(135deg,#8b1c1c 0%,#111827 100%);color:#ffffff;">
           <div style="display:flex;align-items:center;gap:14px;">
-            <div style="display:flex;align-items:center;justify-content:center;width:56px;height:56px;border-radius:18px;background:rgba(255,255,255,0.14);font-size:24px;font-weight:800;letter-spacing:0.08em;">F</div>
-            <div>
+            <div style="width:56px;height:56px;flex:0 0 auto;background:transparent;">${logoMarkup}</div>
+            <div style="min-width:0;">
               <div style="font-size:12px;letter-spacing:0.18em;text-transform:uppercase;opacity:0.75;">Automated Notification</div>
-              <div style="margin-top:4px;font-size:24px;font-weight:800;line-height:1.2;">${escapeHtml(heading)}</div>
+              <div class="faragon-email-title" style="margin-top:4px;font-size:24px;font-weight:800;line-height:1.2;overflow-wrap:anywhere;">${escapeHtml(heading)}</div>
             </div>
           </div>
           <div style="margin-top:18px;font-size:14px;line-height:1.6;max-width:620px;opacity:0.92;">${escapeHtml(itemSummary)}</div>
         </div>
 
-        <div style="padding:26px 28px 30px;">
+        <div class="faragon-email-content" style="padding:26px 28px 30px;">
           ${greeting}
           ${bodyMarkup}
 
@@ -529,7 +579,7 @@ function renderEmailHtml(args: {
             Reminder window generated by ${escapeHtml(companyName)}. Please coordinate renewals before the listed expiration dates.
           </div>
 
-          <div style="margin-top:20px;border:1px solid #e5e7eb;border-radius:20px;overflow:hidden;">
+          <div class="faragon-desktop-records" style="margin-top:20px;border:1px solid #e5e7eb;border-radius:20px;overflow:hidden;">
             <div style="padding:14px 18px;background:#f8fafc;border-bottom:1px solid #e5e7eb;color:#0f172a;font-size:13px;font-weight:800;letter-spacing:0.08em;text-transform:uppercase;">
               Records
             </div>
@@ -544,6 +594,10 @@ function renderEmailHtml(args: {
               </thead>
               <tbody>${rows || `<tr><td colspan="4" style="padding:16px 10px;color:#6b7280;">No records to display.</td></tr>`}</tbody>
             </table>
+          </div>
+
+          <div class="faragon-mobile-records" style="display:none;margin-top:16px;">
+            ${mobileCards || `<div style="border:1px solid #e5e7eb;border-radius:14px;padding:14px;color:#6b7280;font-size:13px;">No records to display.</div>`}
           </div>
 
           <div style="margin-top:18px;color:#64748b;font-size:12px;line-height:1.6;">This is an automated message from ${escapeHtml(companyName)}. Replies may not be monitored.</div>
@@ -582,8 +636,26 @@ async function loadConfiguredRecipientEmails(admin: SupabaseClient) {
   }
 }
 
+async function loadDedicatedRecipientEmails(
+  admin: SupabaseClient,
+  tableName: "car_insurance_notification_recipients" | "contract_notification_recipients",
+) {
+  try {
+    const result = await admin
+      .from(tableName)
+      .select("email")
+      .eq("is_active", true)
+      .order("created_at", { ascending: true });
+    if (result.error) throw result.error;
+    return normalizeRecipients(((result.data ?? []) as Array<{ email?: string | null }>).map((row) => row.email ?? ""));
+  } catch (errorLike) {
+    if (isMissingTableMessage(extractErrorMessageText(errorLike), tableName)) return [];
+    throw errorLike;
+  }
+}
+
 async function loadNotificationConfig(admin: SupabaseClient): Promise<NotificationConfig> {
-  const [emailRes, recipients] = await Promise.all([
+  const [emailRes, recipients, carInsuranceRecipients, contractRecipients] = await Promise.all([
     admin
       .from("notification_email_settings")
       .select("id, provider, gmail_user, from_email, gmail_app_password, is_active, notes")
@@ -592,6 +664,8 @@ async function loadNotificationConfig(admin: SupabaseClient): Promise<Notificati
       .limit(1)
       .maybeSingle(),
     loadConfiguredRecipientEmails(admin),
+    loadDedicatedRecipientEmails(admin, "car_insurance_notification_recipients"),
+    loadDedicatedRecipientEmails(admin, "contract_notification_recipients"),
   ]);
 
   if (emailRes.error) throw emailRes.error;
@@ -646,6 +720,8 @@ async function loadNotificationConfig(admin: SupabaseClient): Promise<Notificati
     email: (emailRes.data as NotificationEmailSettingsRow | null) ?? null,
     preferences: prefRow,
     recipients,
+    carInsuranceRecipients,
+    contractRecipients,
   };
 }
 
@@ -832,6 +908,75 @@ async function fetchOtherExpiringRows(
   return typeof limit === "number" ? out.slice(0, limit) : out;
 }
 
+async function fetchContractExpiringRows(
+  admin: SupabaseClient,
+  preferences: NotificationPreferencesRow,
+  limit?: number,
+) {
+  const daysBefore = clampInt(preferences.days_before_expiry, {
+    min: 1,
+    max: 365,
+    fallback: DEFAULT_DAYS_BEFORE_EXPIRY,
+  });
+  const includeExpired = Boolean(preferences.include_expired);
+  const expiredWithinDays = clampInt(preferences.expired_within_days, {
+    min: 1,
+    max: 365,
+    fallback: DEFAULT_EXPIRED_WITHIN_DAYS,
+  });
+  const timeZone = safeText(preferences.timezone) || DEFAULT_TIMEZONE;
+
+  const result = await admin
+    .from("contracts")
+    .select("contract_id, contract_no, client_name, specific_area, project_name, contract_end, status, notification_recipient_email")
+    .not("contract_end", "is", null)
+    .limit(10000);
+
+  if (result.error) {
+    if (isMissingTableMessage(extractErrorMessageText(result.error), "contracts")) return [];
+    throw result.error;
+  }
+
+  const rows: ContractMailItem[] = [];
+  for (const contract of result.data ?? []) {
+    const status = safeText(contract.status).toUpperCase();
+    if (status && status !== "ACTIVE") continue;
+
+    const expiresOn = ymd(contract.contract_end);
+    const daysUntilExpiry = daysUntil(expiresOn, timeZone);
+    const isInWindow =
+      daysUntilExpiry !== null && daysUntilExpiry >= 0 && daysUntilExpiry <= daysBefore;
+    const isRecentlyExpired =
+      includeExpired &&
+      daysUntilExpiry !== null &&
+      daysUntilExpiry < 0 &&
+      Math.abs(daysUntilExpiry) <= expiredWithinDays;
+    if (!expiresOn || (!isInWindow && !isRecentlyExpired)) continue;
+
+    const contractNumber = safeText(contract.contract_no);
+    const recordName = [
+      contractNumber ? `Contract ${contractNumber}` : "",
+      safeText(contract.client_name),
+      safeText(contract.specific_area),
+      safeText(contract.project_name),
+    ].filter(Boolean).join(" - ") || "Contract";
+
+    rows.push({
+      contract_id: safeText(contract.contract_id),
+      contract_no: contractNumber || null,
+      record_name: recordName,
+      license_type: "CONTRACT EXPIRATION",
+      expires_on: expiresOn,
+      days_until_expiry: daysUntilExpiry,
+      days_before_expiry: daysBefore,
+      recipient_email: safeText(contract.notification_recipient_email).toLowerCase() || null,
+    });
+  }
+
+  rows.sort((left, right) => (left.days_until_expiry ?? 9999) - (right.days_until_expiry ?? 9999));
+  return typeof limit === "number" ? rows.slice(0, limit) : rows;
+}
+
 function buildLicensureNoticeKey(item: Partial<LicensureMailItem>, recipientEmail: string | null = null) {
   return [
     safeText(item.applicant_id),
@@ -850,23 +995,37 @@ function buildOtherExpirationNoticeKey(item: Partial<OtherMailItem>, recipientEm
   ].join("|");
 }
 
+function buildContractExpirationNoticeKey(item: Partial<ContractMailItem>, recipientEmail: string | null = null) {
+  return [
+    safeText(item.contract_id),
+    "CONTRACT_EXPIRATION",
+    safeText(item.expires_on),
+    safeText(recipientEmail).toLowerCase(),
+  ].join("|");
+}
+
 let notificationDeliveryClaimsAvailable = true;
 
 function buildQueuedNotificationDeliveryClaim(queued: QueuedNotification, recipientEmail: string) {
   const recipient = safeText(recipientEmail).toLowerCase();
-  const isOther = queued.kind === "other";
-  const rawOtherType = isOther ? safeText(queued.item.expiration_type).toUpperCase() : "";
-  const notificationKind = isOther
-    ? rawOtherType.startsWith("CAR_INSURANCE")
-      ? "car_insurance"
-      : "other_expiration"
-    : "licensure";
-  const recordId = isOther
-    ? safeText(queued.item.other_expiration_item_id)
-    : safeText(queued.item.applicant_id);
-  const notificationType = isOther
-    ? safeText(queued.item.expiration_type) || "OTHER_EXPIRATION"
-    : safeText(queued.item.license_type) || "LICENSE";
+  let notificationKind: "licensure" | "other_expiration" | "car_insurance" | "contract";
+  let recordId: string;
+  let notificationType: string;
+
+  if (queued.kind === "contract") {
+    notificationKind = "contract";
+    recordId = safeText(queued.item.contract_id);
+    notificationType = "CONTRACT_EXPIRATION";
+  } else if (queued.kind === "other") {
+    const expirationType = safeText(queued.item.expiration_type).toUpperCase();
+    notificationKind = expirationType.startsWith("CAR_INSURANCE") ? "car_insurance" : "other_expiration";
+    recordId = safeText(queued.item.other_expiration_item_id);
+    notificationType = expirationType || "OTHER_EXPIRATION";
+  } else {
+    notificationKind = "licensure";
+    recordId = safeText(queued.item.applicant_id);
+    notificationType = safeText(queued.item.license_type) || "LICENSE";
+  }
   const expiresOn = safeText(queued.item.expires_on);
   const deliveryKey = [notificationKind, recordId, notificationType, expiresOn, recipient]
     .map((value) => safeText(value).toLowerCase())
@@ -1074,6 +1233,50 @@ async function loadSentOtherExpirationNoticeKeys(admin: SupabaseClient, items: O
   }
 }
 
+async function loadSentContractExpirationNoticeKeys(admin: SupabaseClient, items: ContractMailItem[]) {
+  const contractIds = Array.from(new Set(items.map((item) => safeText(item.contract_id)).filter(Boolean)));
+  if (!contractIds.length) return new Set<string>();
+
+  try {
+    const chunks = chunkArray(contractIds, 200);
+    const rowsByChunk = await mapWithConcurrency(
+      chunks,
+      async (chunk) =>
+        fetchPagedRows<{ contract_id: string; expires_on: string; recipient_email: string | null }>(
+          () =>
+            admin
+              .from("contract_expiration_notification_log")
+              .select("contract_id, expires_on, recipient_email")
+              .eq("status", "SENT")
+              .in("contract_id", chunk) as unknown as RangeCapableQuery<{
+                contract_id: string;
+                expires_on: string;
+                recipient_email: string | null;
+              }>,
+        ),
+      PARALLEL_SUPABASE_QUERY_CONCURRENCY,
+    );
+
+    const sentKeys = new Set<string>();
+    for (const rows of rowsByChunk) {
+      for (const row of rows ?? []) {
+        sentKeys.add(
+          buildContractExpirationNoticeKey(
+            { contract_id: row.contract_id, expires_on: row.expires_on },
+            row.recipient_email,
+          ),
+        );
+      }
+    }
+    return sentKeys;
+  } catch (errorLike) {
+    const message = extractErrorMessageText(errorLike);
+    if (isMissingTableMessage(message, "contract_expiration_notification_log")) return new Set<string>();
+    console.error("[notification-worker] failed to load sent contract-expiration keys:", message);
+    return new Set<string>();
+  }
+}
+
 async function insertLicensureNotificationLog(
   admin: SupabaseClient,
   payload: {
@@ -1109,6 +1312,24 @@ async function insertOtherExpirationNotificationLog(
   }
 }
 
+async function insertContractExpirationNotificationLog(
+  admin: SupabaseClient,
+  payload: {
+    contract_id: string;
+    contract_no: string | null;
+    record_name: string;
+    expires_on: string;
+    recipient_email: string | null;
+    status: string;
+    error_message: string | null;
+  },
+) {
+  const insertResult = await admin.from("contract_expiration_notification_log").insert(payload);
+  if (insertResult.error) {
+    console.error("[notification-worker] failed to insert contract-expiration log:", extractErrorMessageText(insertResult.error));
+  }
+}
+
 async function logQueuedNotificationStatus(
   admin: SupabaseClient,
   queued: QueuedNotification,
@@ -1116,6 +1337,19 @@ async function logQueuedNotificationStatus(
   status: "SENT" | "FAILED" | "SKIPPED",
   errorMessage: string | null,
 ) {
+  if (queued.kind === "contract") {
+    await insertContractExpirationNotificationLog(admin, {
+      contract_id: queued.item.contract_id,
+      contract_no: queued.item.contract_no,
+      record_name: queued.item.record_name,
+      expires_on: queued.item.expires_on,
+      recipient_email: recipientEmail,
+      status,
+      error_message: errorMessage,
+    });
+    return;
+  }
+
   if (queued.kind === "other") {
     await insertOtherExpirationNotificationLog(admin, {
       other_expiration_item_id: queued.item.other_expiration_item_id,
@@ -1158,6 +1392,15 @@ function pushRecipientBucket(
 }
 
 function toMailRowFromQueuedItem(queuedItem: QueuedNotification): MailRow {
+  if (queuedItem.kind === "contract") {
+    return {
+      record_name: queuedItem.item.record_name,
+      license_type: queuedItem.item.license_type,
+      expires_on: queuedItem.item.expires_on,
+      days_until_expiry: queuedItem.item.days_until_expiry,
+    };
+  }
+
   if (queuedItem.kind === "other") {
     return {
       record_name: safeText(queuedItem.item.item_name) || "Other Record",
@@ -1264,7 +1507,7 @@ async function executeAutomaticNotificationRun(
     maxRecipients?: number | null;
   },
 ) {
-  const { email, preferences, recipients } = await loadNotificationConfig(admin);
+  const { email, preferences, recipients, carInsuranceRecipients, contractRecipients } = await loadNotificationConfig(admin);
   if (args.requireSupabaseMode && !preferences.use_supabase_email_sender) {
     return {
       ok: true,
@@ -1305,9 +1548,10 @@ async function executeAutomaticNotificationRun(
   const includeExpired = Boolean(preferences.include_expired);
   const now = new Date();
 
-  const [expiringRows, otherExpiringRows] = await Promise.all([
+  const [expiringRows, otherExpiringRows, contractExpiringRows] = await Promise.all([
     fetchExpiringRows(admin, preferences),
     fetchOtherExpiringRows(admin, preferences),
+    fetchContractExpiringRows(admin, preferences),
   ]);
 
   const licensureItems = args.sendAllEligible
@@ -1342,15 +1586,31 @@ async function executeAutomaticNotificationRun(
         })
       );
 
-  const [sentLicensureKeys, sentOtherKeys] = args.sendAllEligible
-    ? [new Set<string>(), new Set<string>()]
+  const contractItems = args.sendAllEligible
+    ? contractExpiringRows
+    : contractExpiringRows.filter((item) =>
+        isEligibleToSendNow({
+          expiresOnYmd: item.expires_on,
+          daysBefore: item.days_before_expiry,
+          sendTimeLocal,
+          timeZone,
+          includeExpired,
+          expiredWithinDays,
+          now,
+        })
+      );
+
+  const [sentLicensureKeys, sentOtherKeys, sentContractKeys] = args.sendAllEligible
+    ? [new Set<string>(), new Set<string>(), new Set<string>()]
     : await Promise.all([
         loadSentLicensureNoticeKeys(admin, licensureItems),
         loadSentOtherExpirationNoticeKeys(admin, otherItems),
+        loadSentContractExpirationNoticeKeys(admin, contractItems),
       ]);
 
   const configuredRecipients = normalizeRecipients(recipients);
-  const useConfiguredRecipients = configuredRecipients.length > 0;
+  const configuredCarInsuranceRecipients = normalizeRecipients(carInsuranceRecipients);
+  const configuredContractRecipients = normalizeRecipients(contractRecipients);
   const sendToEmployees = preferences.send_to_employees !== false;
   const maxRecipients = clampInt(args.maxRecipients, { min: 0, max: 2000, fallback: 0 });
 
@@ -1365,15 +1625,13 @@ async function executeAutomaticNotificationRun(
   }
 
   for (const item of licensureItems) {
-    if (useConfiguredRecipients) {
-      for (const recipient of configuredRecipients) {
-        if (!args.sendAllEligible && sentLicensureKeys.has(buildLicensureNoticeKey(item, recipient))) continue;
-        enqueue(recipient, { kind: "licensure", item });
-      }
-      continue;
+    const targetEmails = new Set(configuredRecipients);
+    if (sendToEmployees) {
+      const employeeEmail = safeText(item.client_email).toLowerCase();
+      if (employeeEmail) targetEmails.add(employeeEmail);
     }
 
-    if (!sendToEmployees) {
+    if (!targetEmails.size) {
       await insertLicensureNotificationLog(admin, {
         applicant_id: item.applicant_id,
         license_type: item.license_type,
@@ -1381,36 +1639,23 @@ async function executeAutomaticNotificationRun(
         recipient_email: null,
         status: "SKIPPED",
         error_message:
-          "Employee email sending is disabled (send_to_employees=false) and no active notification recipient is configured.",
+          sendToEmployees
+            ? "Missing recipient email (client_email) and no active notification recipient is configured."
+            : "Employee email sending is disabled and no active notification recipient is configured.",
       });
       skipped += 1;
       continue;
     }
 
-    const recipient = safeText(item.client_email).toLowerCase();
-    if (!recipient) {
-      await insertLicensureNotificationLog(admin, {
-        applicant_id: item.applicant_id,
-        license_type: item.license_type,
-        expires_on: item.expires_on,
-        recipient_email: null,
-        status: "SKIPPED",
-        error_message: "Missing recipient email (client_email) and no active notification recipient is configured.",
-      });
-      skipped += 1;
-      continue;
+    for (const recipient of targetEmails) {
+      if (!args.sendAllEligible && sentLicensureKeys.has(buildLicensureNoticeKey(item, recipient))) continue;
+      enqueue(recipient, { kind: "licensure", item });
     }
-
-    if (!args.sendAllEligible && sentLicensureKeys.has(buildLicensureNoticeKey(item, recipient))) continue;
-
-    enqueue(recipient, { kind: "licensure", item });
   }
 
   for (const item of otherItems) {
-    const targetEmails = new Set<string>();
-    if (useConfiguredRecipients) {
-      for (const recipient of configuredRecipients) targetEmails.add(recipient);
-    }
+    const isCarInsurance = safeText(item.expiration_type).toUpperCase().startsWith("CAR_INSURANCE");
+    const targetEmails = new Set(isCarInsurance ? configuredCarInsuranceRecipients : configuredRecipients);
 
     const itemRecipient = safeText(item.recipient_email).toLowerCase();
     if (itemRecipient) targetEmails.add(itemRecipient);
@@ -1423,7 +1668,9 @@ async function executeAutomaticNotificationRun(
         expires_on: item.expires_on,
         recipient_email: null,
         status: "SKIPPED",
-        error_message: "Missing recipient_email and no active notification recipient is configured.",
+        error_message: isCarInsurance
+          ? "Missing recipient_email and no active car insurance notification recipient is configured."
+          : "Missing recipient_email and no active notification recipient is configured.",
       });
       skipped += 1;
       continue;
@@ -1432,6 +1679,30 @@ async function executeAutomaticNotificationRun(
     for (const recipient of targetEmails) {
       if (!args.sendAllEligible && sentOtherKeys.has(buildOtherExpirationNoticeKey(item, recipient))) continue;
       enqueue(recipient, { kind: "other", item });
+    }
+  }
+
+  for (const item of contractItems) {
+    const targetEmails = new Set(configuredContractRecipients);
+    if (!targetEmails.size && item.recipient_email) targetEmails.add(item.recipient_email);
+
+    if (!targetEmails.size) {
+      await insertContractExpirationNotificationLog(admin, {
+        contract_id: item.contract_id,
+        contract_no: item.contract_no,
+        record_name: item.record_name,
+        expires_on: item.expires_on,
+        recipient_email: null,
+        status: "SKIPPED",
+        error_message: "No active Client contract notification recipient is configured.",
+      });
+      skipped += 1;
+      continue;
+    }
+
+    for (const recipient of targetEmails) {
+      if (!args.sendAllEligible && sentContractKeys.has(buildContractExpirationNoticeKey(item, recipient))) continue;
+      enqueue(recipient, { kind: "contract", item });
     }
   }
 

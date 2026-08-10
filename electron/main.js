@@ -1298,6 +1298,11 @@ function resolveBrandLogoPath() {
   if (cachedBrandLogoPathResolved) return cachedBrandLogoPath;
 
   const candidates = [
+    path.join(__dirname, '..', 'public', 'Logo-ui.png'),
+    path.join(__dirname, '..', 'out', 'Logo-ui.png'),
+    path.join(process.resourcesPath || '', 'app.asar', 'out', 'Logo-ui.png'),
+    path.join(process.resourcesPath || '', 'app.asar.unpacked', 'out', 'Logo-ui.png'),
+    path.join(process.resourcesPath || '', 'out', 'Logo-ui.png'),
     path.join(__dirname, '..', 'public', 'Logo.png'),
     path.join(__dirname, '..', 'out', 'Logo.png'),
     path.join(process.resourcesPath || '', 'app.asar', 'out', 'Logo.png'),
@@ -1470,7 +1475,7 @@ function renderEmailHtml({ subject, recipientName, items, daysBefore, bodyHtml, 
         <div class="email-card" style="overflow:hidden;border:1px solid #e5e7eb;border-radius:20px;background:#ffffff;box-shadow:0 18px 40px rgba(15,23,42,0.08);">
           <div class="email-hero" style="padding:22px 24px;background:linear-gradient(135deg,#111827 0%,#7f1d1d 58%,#8B1C1C 100%);color:#ffffff;">
             <div class="email-hero-row" style="display:flex;align-items:center;gap:16px;">
-              <div class="email-logo" style="width:64px;height:64px;padding:8px;border-radius:18px;background:#ffffff;box-sizing:border-box;overflow:hidden;flex:0 0 auto;">
+              <div class="email-logo" style="width:64px;height:64px;padding:0;border-radius:0;background:transparent;box-sizing:border-box;overflow:hidden;flex:0 0 auto;">
                 ${logoMarkup}
               </div>
               <div style="min-width:0;">
@@ -1639,8 +1644,9 @@ function renderNotificationLetterHtml({
   const contractsOnly = recordLabel === 'contracts';
   const recipientRecordNoun = contractsOnly ? 'contracts' : recordLabel === 'records' ? 'records' : 'personnel';
   const safeBody = safeText(bodyHtml) ? sanitizeEmailBodyHtml(bodyHtml) : '';
+  const safeBodyText = safeBody ? stripHtmlToPlainText(safeBody).trim() : '';
   const msg = safeText(legacyMessage);
-  const extraMessageHtml = safeBody
+  const extraMessageHtml = safeBody && safeBodyText
     ? `<div style="margin-top:18px;padding:14px 16px;border:1px solid #e5e7eb;border-radius:14px;background:#f9fafb;color:#111827;line-height:1.7;">${safeBody}</div>`
     : msg
       ? `<div style="margin-top:18px;padding:14px 16px;border:1px solid #e5e7eb;border-radius:14px;background:#f9fafb;color:#111827;line-height:1.7;white-space:pre-line;">${escapeHtml(msg)}</div>`
@@ -1698,21 +1704,31 @@ function renderNotificationLetterHtml({
     <head>
       <meta charset="utf-8" />
       <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+      <style>
+        @media only screen and (max-width: 640px) {
+          .faragon-email-shell { padding: 0 !important; }
+          .faragon-email-card { border-left: 0 !important; border-right: 0 !important; border-radius: 0 !important; box-shadow: none !important; }
+          .faragon-email-header { padding: 18px 16px !important; }
+          .faragon-email-logo { width: 48px !important; height: 48px !important; }
+          .faragon-email-title { font-size: 18px !important; overflow-wrap: anywhere !important; }
+          .faragon-email-content { padding: 20px 16px 24px !important; font-size: 15px !important; }
+        }
+      </style>
     </head>
     <body style="margin:0;padding:0;background:#f4f6f8;font-family:Arial,Helvetica,sans-serif;color:#111827;">
       <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;">${escapeHtml(heading)}</div>
-      <div style="margin:0 auto;padding:24px 16px 32px;max-width:720px;">
-        <div style="overflow:hidden;border:1px solid #e5e7eb;border-radius:20px;background:#ffffff;box-shadow:0 18px 40px rgba(15,23,42,0.08);">
-          <div style="padding:20px 24px;background:#8B1C1C;color:#ffffff;">
+      <div class="faragon-email-shell" style="margin:0 auto;padding:24px 16px 32px;max-width:720px;">
+        <div class="faragon-email-card" style="overflow:hidden;border:1px solid #e5e7eb;border-radius:20px;background:#ffffff;box-shadow:0 18px 40px rgba(15,23,42,0.08);">
+          <div class="faragon-email-header" style="padding:20px 24px;background:#8B1C1C;color:#ffffff;">
             <div style="display:flex;align-items:center;gap:14px;">
-              <div style="width:58px;height:58px;padding:7px;border-radius:16px;background:#ffffff;box-sizing:border-box;overflow:hidden;flex:0 0 auto;">${logoMarkup}</div>
-              <div>
+              <div class="faragon-email-logo" style="width:58px;height:58px;padding:0;border-radius:0;background:transparent;box-sizing:border-box;overflow:hidden;flex:0 0 auto;">${logoMarkup}</div>
+              <div style="min-width:0;">
                 <div style="font-size:11px;letter-spacing:0.16em;text-transform:uppercase;color:rgba(255,255,255,0.78);font-weight:700;">${escapeHtml(companyName)}</div>
-                <div style="font-size:22px;line-height:1.2;font-weight:800;margin-top:4px;">${escapeHtml(heading)}</div>
+                <div class="faragon-email-title" style="font-size:22px;line-height:1.2;font-weight:800;margin-top:4px;overflow-wrap:anywhere;">${escapeHtml(heading)}</div>
               </div>
             </div>
           </div>
-          <div style="padding:26px 28px;font-size:15px;line-height:1.75;">
+          <div class="faragon-email-content" style="padding:26px 28px;font-size:15px;line-height:1.75;">
             ${letterHtml}
             ${extraMessageHtml}
             <div style="margin-top:22px;color:#64748b;font-size:12px;line-height:1.6;">This is an automated message from ${escapeHtml(companyName)}. Replies may not be monitored.</div>

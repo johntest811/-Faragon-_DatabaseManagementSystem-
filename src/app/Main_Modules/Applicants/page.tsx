@@ -406,20 +406,22 @@ export default function ApplicantsPage() {
 								<button
 									type="button"
 									onClick={exportApplicantsXlsx}
-									className="h-10 w-10 rounded-xl border bg-white flex items-center justify-center"
+									className="h-10 rounded-xl border bg-white px-3 flex items-center gap-2 text-xs font-semibold hover:bg-gray-50"
 									aria-label="Export XLSX"
 									title="Export XLSX"
 								>
 									<FileDown className="w-5 h-5 text-gray-800" />
+									<span className="hidden sm:inline">XLSX</span>
 								</button>
 								<button
 									type="button"
 									onClick={exportApplicantsPdf}
-									className="h-10 w-10 rounded-xl border bg-white flex items-center justify-center"
+									className="h-10 rounded-xl border bg-white px-3 flex items-center gap-2 text-xs font-semibold hover:bg-gray-50"
 									aria-label="Export PDF"
 									title="Export PDF"
 								>
 									<FileText className="w-5 h-5 text-gray-800" />
+									<span className="hidden sm:inline">PDF</span>
 								</button>
 							</>
 						) : null}
