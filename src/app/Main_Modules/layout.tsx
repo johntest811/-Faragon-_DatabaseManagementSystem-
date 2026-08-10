@@ -36,6 +36,46 @@ import {
 
 type LayoutProps = Readonly<{ children: React.ReactNode }>;
 
+function canConsumeVerticalWheel(element: HTMLElement, deltaY: number) {
+  if (element.scrollHeight <= element.clientHeight + 1) return false;
+  if (deltaY < 0) return element.scrollTop > 1;
+  return element.scrollTop + element.clientHeight < element.scrollHeight - 1;
+}
+
+function routeTableWheelToPage(event: React.WheelEvent<HTMLElement>) {
+  if (event.ctrlKey || event.shiftKey || event.deltaY === 0) return;
+  if (Math.abs(event.deltaY) < Math.abs(event.deltaX)) return;
+
+  const pageScroller = event.currentTarget;
+  const target = event.target instanceof HTMLElement ? event.target : null;
+  if (!target) return;
+
+  let nestedHorizontalScroller = false;
+  let current: HTMLElement | null = target;
+  while (current && current !== pageScroller) {
+    const style = window.getComputedStyle(current);
+    if (style.position === "fixed") return;
+    const allowsHorizontalScroll = style.overflowX === "auto" || style.overflowX === "scroll";
+    const allowsVerticalScroll = style.overflowY === "auto" || style.overflowY === "scroll";
+
+    if (allowsVerticalScroll && canConsumeVerticalWheel(current, event.deltaY)) return;
+    if (allowsHorizontalScroll && current.scrollWidth > current.clientWidth + 1) {
+      nestedHorizontalScroller = true;
+    }
+    current = current.parentElement;
+  }
+
+  if (!nestedHorizontalScroller) return;
+
+  const multiplier = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? pageScroller.clientHeight : 1;
+  const maxScrollTop = Math.max(0, pageScroller.scrollHeight - pageScroller.clientHeight);
+  const nextScrollTop = Math.min(maxScrollTop, Math.max(0, pageScroller.scrollTop + event.deltaY * multiplier));
+  if (Math.abs(nextScrollTop - pageScroller.scrollTop) < 0.5) return;
+
+  event.preventDefault();
+  pageScroller.scrollTop = nextScrollTop;
+}
+
 type LegacyAdminSession = {
   id?: string;
   username?: string;
@@ -3242,7 +3282,11 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
             <p className="mt-2 max-w-4xl text-sm leading-6 text-slate-500">{pageMeta.description}</p>
           </div>
 
-          <main className="app-page-scroll relative flex-1 min-h-0 overflow-x-hidden px-4 pb-10 pt-6 sm:px-6 lg:px-8">
+          <main
+            className="app-page-scroll relative flex-1 min-h-0 overflow-x-hidden px-4 pb-10 pt-6 sm:px-6 lg:px-8"
+            data-app-scroll-container
+            onWheelCapture={routeTableWheelToPage}
+          >
             <div className="mx-auto flex w-full max-w-[1680px] flex-col gap-6">{children}</div>
           </main>
         </div>
