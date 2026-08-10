@@ -105,11 +105,25 @@ body {
   }
 }
 
-/* Keep large tables scrollable without forcing every panel into a GPU layer. */
-.overflow-x-auto,
+/* Keep table panning on its own axis without trapping page scrolling. */
+.overflow-x-auto {
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+  overscroll-behavior-y: auto;
+}
+
 .overflow-y-auto {
   -webkit-overflow-scrolling: touch;
-  overscroll-behavior: contain;
+  overscroll-behavior-x: auto;
+  overscroll-behavior-y: contain;
+}
+
+.app-page-scroll {
+  overflow-y: auto;
+  overscroll-behavior-y: auto;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
+  scrollbar-gutter: stable;
 }
 
 /* ==========================================================================

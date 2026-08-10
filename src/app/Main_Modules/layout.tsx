@@ -3242,7 +3242,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
             <p className="mt-2 max-w-4xl text-sm leading-6 text-slate-500">{pageMeta.description}</p>
           </div>
 
-          <main className="relative flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-4 pb-10 pt-6 sm:px-6 lg:px-8">
+          <main className="app-page-scroll relative flex-1 min-h-0 overflow-x-hidden px-4 pb-10 pt-6 sm:px-6 lg:px-8">
             <div className="mx-auto flex w-full max-w-[1680px] flex-col gap-6">{children}</div>
           </main>
         </div>
