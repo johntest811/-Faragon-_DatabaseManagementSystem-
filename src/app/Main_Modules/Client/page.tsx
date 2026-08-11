@@ -15,6 +15,7 @@ import ImportSummaryModal, { ImportSummaryData } from "../Components/ImportSumma
 import SpreadsheetImportModal from "@/app/Components/SpreadsheetImportModal";
 import { readSpreadsheetRows } from "@/app/Components/spreadsheetImportUtils";
 import { addBrandedPdfHeader, buildBrandedAoa, buildBrandedWorkbookBuffer } from "../Components/exportBranding";
+import { downloadBlob, downloadCsv, downloadPdf } from "@/app/Components/fileDownload";
 
 
 
@@ -250,17 +251,6 @@ function isActiveEmployeeStatus(value: unknown) {
   return normalizeStatus(value) === "ACTIVE";
 }
 
-function downloadBlob(filename: string, blob: Blob) {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
-}
-
 function firstOrNull<T>(value: T | T[] | null | undefined): T | null {
   if (!value) return null;
   if (Array.isArray(value)) return value[0] ?? null;
@@ -422,7 +412,7 @@ export default function ClientsPage() {
 
     const ws = XLSX.utils.aoa_to_sheet(buildBrandedAoa([sample], "Client Import Template", "Sample contract data for import"));
     const csv = XLSX.utils.sheet_to_csv(ws);
-    downloadBlob("client_import_template.csv", new Blob([csv], { type: "text/csv;charset=utf-8;" }));
+    downloadCsv("client_import_template.csv", csv);
   }
 
   async function handleImportFile(file: File) {
@@ -492,17 +482,24 @@ export default function ClientsPage() {
 
     if (!importedPayloads.length) throw new Error("No valid rows found. Ensure file has identifiable contract/client columns.");
 
-    const { data: existingRows, error: existingErr } = await supabase
-      .from("contracts")
-      .select("contract_id, contract_no, client_name, project_name, contract_start")
-      .limit(10000);
-    if (existingErr) throw existingErr;
+    const existingRows: Array<Record<string, unknown>> = [];
+    const fetchPageSize = 500;
+    for (let offset = 0; ; offset += fetchPageSize) {
+      const existingResult = await supabase
+        .from("contracts")
+        .select("contract_id, contract_no, client_name, project_name, contract_start")
+        .range(offset, offset + fetchPageSize - 1);
+      if (existingResult.error) throw existingResult.error;
+      const batch = (existingResult.data as Array<Record<string, unknown>>) ?? [];
+      existingRows.push(...batch);
+      if (batch.length < fetchPageSize) break;
+    }
 
     const byContractNo = new Map<string, string>();
     const byComposite = new Map<string, string>();
     const byClientProject = new Map<string, string>();
     const clientProjectCounts = new Map<string, number>();
-    for (const row of ((existingRows ?? []) as Array<Record<string, unknown>>)) {
+    for (const row of existingRows) {
       const id = String(row.contract_id ?? "");
       if (!id) continue;
       const contractNo = normalizeImportKey(row.contract_no);
@@ -1382,7 +1379,7 @@ export default function ClientsPage() {
 
     const ws = XLSX.utils.aoa_to_sheet(buildBrandedAoa(rowsForExport, "Client Export", "Contracts, clients, and project details"));
     const csv = XLSX.utils.sheet_to_csv(ws);
-    downloadBlob(`${clientExportFileBase()}.csv`, new Blob([csv], { type: "text/csv;charset=utf-8;" }));
+    downloadCsv(`${clientExportFileBase()}.csv`, csv);
   }
 
   async function exportClientPdf() {
@@ -1396,16 +1393,20 @@ export default function ClientsPage() {
     const headers = Object.keys(rowsForExport[0]);
     const body = rowsForExport.map((row) => headers.map((h) => String(row[h as keyof typeof row] ?? "")));
 
-    const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
+    const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a3" });
     const startY = await addBrandedPdfHeader(doc, "Client Export", "Contracts, clients, and project details");
     autoTable(doc, {
       startY: startY + 10,
       head: [headers],
       body,
-      styles: { fontSize: 7, cellPadding: 2 },
+      margin: { left: 24, right: 24, bottom: 24 },
+      styles: { fontSize: 7, cellPadding: 2, overflow: "linebreak" },
       headStyles: { fillColor: [255, 218, 3], textColor: [0, 0, 0] },
+      horizontalPageBreak: true,
+      horizontalPageBreakRepeat: [0, 1, 2],
+      showHead: "everyPage",
     });
-    doc.save(`${clientExportFileBase()}.pdf`);
+    downloadPdf(doc, `${clientExportFileBase()}.pdf`);
   }
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));

@@ -16,6 +16,7 @@ import { useToast } from "@/app/Components/ToastProvider";
 import { addBrandedPdfHeader, buildBrandedAoa, buildBrandedWorkbookBuffer } from "../../Components/exportBranding";
 import AssignmentHistoryPopover from "../../Components/AssignmentHistoryPopover";
 import * as XLSX from "xlsx";
+import { downloadBlob, downloadCsv, downloadPdf } from "@/app/Components/fileDownload";
 
 type CarInsuranceRow = {
   id: number;
@@ -269,6 +270,7 @@ function renderDateGroup(label: string, fromLabel: string, fromValue: string | n
 function normalizeHeader(value: unknown) {
   return String(value ?? "")
     .trim()
+    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "_")
     .replace(/^_+|_+$/g, "");
@@ -308,17 +310,6 @@ function normalizeDateValue(value: unknown) {
   return `${yyyy}-${mm}-${dd}`;
 }
 
-function downloadBlob(filename: string, blob: Blob) {
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = filename;
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-  URL.revokeObjectURL(url);
-}
-
 function buildExportRows(rows: CarInsuranceRow[]) {
   return rows.map((row) => ({
     "No.": row.record_no ?? "",
@@ -347,12 +338,20 @@ function parseSpreadsheetRow(row: Record<string, unknown>, idx: number) {
   const color = toNullableText(pickByAliases(row, ["color"]));
   const plateNumber = toNullableText(pickByAliases(row, ["plate_number", "plate number", "plate"]));
   const insuranceCompany = toNullableText(pickByAliases(row, ["insurance_company", "insurance company", "insurer"]));
-  const policyFromDate = normalizeDateValue(pickByAliases(row, ["policy_from_date", "policy from date", "from date"]));
+  const policyFromDate = normalizeDateValue(
+    pickByAliases(row, ["policy_from_date", "policy from date", "policy term date registered", "from date"])
+  );
   const policyToDate = normalizeDateValue(
     pickByAliases(row, ["expires_on", "policy term expiration", "policy to date expiration", "policy to date", "expiry date", "expiration date"])
   );
   const carRegistrationFromDate = normalizeDateValue(
-    pickByAliases(row, ["car_registration_from_date", "car registration from date", "car registration date register", "date register"])
+    pickByAliases(row, [
+      "car_registration_from_date",
+      "car registration from date",
+      "car registration date register",
+      "car registration date date register",
+      "date register",
+    ])
   );
   const carRegistrationToDate = normalizeDateValue(
     pickByAliases(row, ["car_registration_to_date", "car registration to date", "car registration expiration", "car registration date expiration"])
@@ -956,10 +955,27 @@ export default function CarInsuranceExpirationPage() {
       throw new Error("You do not have permission to import car insurance records.");
     }
 
+    const existingRows: CarInsuranceRow[] = [];
+    const fetchPageSize = 500;
+    for (let offset = 0; ; offset += fetchPageSize) {
+      const existingResult = await supabase
+        .from("other_expiration_items")
+        .select(
+          "id, item_name, expiration_type, record_no, patrol, post_distributions, make, model, color, plate_number, insurance_company, policy_from_date, expires_on, car_registration_from_date, car_registration_to_date, days_before_expiry, recipient_email, notes, is_active, created_at, updated_at"
+        )
+        .eq("expiration_type", EXPIRATION_TYPE)
+        .order("id", { ascending: true })
+        .range(offset, offset + fetchPageSize - 1);
+      if (existingResult.error) throw existingResult.error;
+      const batch = (existingResult.data as CarInsuranceRow[]) ?? [];
+      existingRows.push(...batch);
+      if (batch.length < fetchPageSize) break;
+    }
+
     const existingByRecordNo = new Map<number, CarInsuranceRow>();
     const existingByPlate = new Map<string, CarInsuranceRow>();
 
-    for (const row of rows) {
+    for (const row of existingRows) {
       if (Number.isFinite(Number(row.record_no)) && Number(row.record_no) > 0) {
         existingByRecordNo.set(Number(row.record_no), row);
       }
@@ -968,7 +984,7 @@ export default function CarInsuranceExpirationPage() {
     }
 
     const seenKeys = new Set<string>();
-    let nextGeneratedRecordNo = getNextRecordNo(rows);
+    let nextGeneratedRecordNo = getNextRecordNo(existingRows);
     let inserted = 0;
     let updated = 0;
     let skipped = 0;
@@ -1069,6 +1085,10 @@ export default function CarInsuranceExpirationPage() {
 
   async function downloadExport(format: "xlsx" | "csv" | "pdf") {
     const exportRows = buildExportRows(rows);
+    if (!exportRows.length) {
+      setError("No car insurance records are available for export.");
+      return;
+    }
     const brandedRows = buildBrandedAoa(exportRows, "Car Insurance Expiration Export", "Vehicle policy tracking");
     const worksheet = XLSX.utils.aoa_to_sheet(brandedRows);
 
@@ -1086,7 +1106,7 @@ export default function CarInsuranceExpirationPage() {
     }
 
     if (format === "pdf") {
-      const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
+      const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a3" });
       const startY = await addBrandedPdfHeader(doc, "Car Insurance Expiration Export", "Vehicle policy tracking");
       const headers = Object.keys(exportRows[0] ?? {});
       const body = exportRows.map((row) => headers.map((key) => String(row[key as keyof typeof row] ?? "")));
@@ -1095,16 +1115,20 @@ export default function CarInsuranceExpirationPage() {
         startY: startY + 10,
         head: [headers],
         body,
-        styles: { fontSize: 7, cellPadding: 2 },
+        margin: { left: 24, right: 24, bottom: 24 },
+        styles: { fontSize: 6, cellPadding: 2, overflow: "linebreak" },
         headStyles: { fillColor: [255, 218, 3], textColor: [0, 0, 0] },
+        horizontalPageBreak: true,
+        horizontalPageBreakRepeat: [0, 1, 2],
+        showHead: "everyPage",
       });
 
-      doc.save("car_insurance_expiration.pdf");
+      downloadPdf(doc, "car_insurance_expiration.pdf");
       return;
     }
 
     const csv = XLSX.utils.sheet_to_csv(worksheet);
-    downloadBlob("car_insurance_expiration.csv", new Blob([csv], { type: "text/csv;charset=utf-8;" }));
+    downloadCsv("car_insurance_expiration.csv", csv);
   }
 
   async function deleteRecord(row: CarInsuranceRow) {

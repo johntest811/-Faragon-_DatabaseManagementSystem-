@@ -16,6 +16,7 @@ import { addBrandedPdfHeader, buildBrandedAoa, buildBrandedWorkbookBuffer } from
 import SearchDropdownInput from "@/app/Components/SearchDropdownInput";
 import AssignmentHistoryPopover from "../Components/AssignmentHistoryPopover";
 import { useSignedStorageUrlMap } from "@/app/Client/useSignedStorageUrls";
+import { downloadBlob, downloadCsv, downloadPdf } from "@/app/Components/fileDownload";
 import {
   EQUIPMENT_CATALOG,
   EQUIPMENT_GROUPS,
@@ -947,7 +948,7 @@ export default function LogisticsInventoryPage() {
 
     const ws = XLSX.utils.aoa_to_sheet(buildBrandedAoa([sample], "Inventory Import Template", "Sample inventory data for import"));
     const csv = XLSX.utils.sheet_to_csv(ws);
-    downloadBlob("inventory_import_template.csv", new Blob([csv], { type: "text/csv;charset=utf-8;" }));
+    downloadCsv("inventory_import_template.csv", csv);
   }
 
   function downloadInventoryTemplateCsv() {
@@ -1087,11 +1088,18 @@ function downloadInventoryTemplateXlsx() {
 
     if (!importedRows.length) throw new Error("No valid inventory rows found in file.");
 
-    const { data: existingRows, error: existingErr } = await supabase
-      .from("inventory_fixed_asset")
-      .select("id, date, particular, equipment, control_number")
-      .limit(10000);
-    if (existingErr) throw existingErr;
+    const existingRows: Array<Record<string, unknown>> = [];
+    const fetchPageSize = 500;
+    for (let offset = 0; ; offset += fetchPageSize) {
+      const existingResult = await supabase
+        .from("inventory_fixed_asset")
+        .select("id, date, particular, equipment, control_number")
+        .range(offset, offset + fetchPageSize - 1);
+      if (existingResult.error) throw existingResult.error;
+      const batch = (existingResult.data as Array<Record<string, unknown>>) ?? [];
+      existingRows.push(...batch);
+      if (batch.length < fetchPageSize) break;
+    }
 
     const byComposite = new Map<string, string>();
     const byControlNumber = new Map<string, string>();
@@ -1099,7 +1107,7 @@ function downloadInventoryTemplateXlsx() {
     const byEquipmentUnique = new Map<string, string>();
     const particularCounts = new Map<string, number>();
     const equipmentCounts = new Map<string, number>();
-    for (const row of ((existingRows ?? []) as Array<Record<string, unknown>>)) {
+    for (const row of existingRows) {
       const id = String(row.id ?? "");
       if (!id) continue;
       const controlKey = normalizeControlNumber(row.control_number);
@@ -1442,22 +1450,25 @@ function downloadInventoryTemplateXlsx() {
   function inventoryExportRows() {
     return filtered.map((row) => {
       const out: Record<string, string | number> = {};
-      if (showEquipmentColumn) out.Equipment = row.equipment ?? "-";
-      if (showControlNumberColumn) out.CONTROLNUMBER = row.control_number ?? "-";
-      if (showSerialPlateColumn) out["Serial # / Plate #"] = row.serial_plate_number ?? "-";
-      if (showMakerColumn) out.Maker = row.maker ?? "-";
-      if (showModelColumn) out["Model #"] = row.model_number ?? "-";
-      if (showDetachmentColumn) out.Detachment = row.detachment ?? "-";
-      if (showRemarksColumn) out.Remarks = row.remarks ?? "-";
+      if (showEquipmentColumn) out.Equipment = row.equipment ?? "";
+      if (showControlNumberColumn) out.CONTROLNUMBER = row.control_number ?? "";
+      if (showSerialPlateColumn) out["Serial # / Plate #"] = row.serial_plate_number ?? "";
+      if (showMakerColumn) out.Maker = row.maker ?? "";
+      if (showModelColumn) out["Model #"] = row.model_number ?? "";
+      if (showDetachmentColumn) out.Detachment = row.detachment ?? "";
+      if (showRemarksColumn) out.Remarks = row.remarks ?? "";
       if (showUnitCostColumn) out["Unit Cost"] = row.unit_cost ?? "";
-      if (showDatePurchasedColumn) out["Date of Purchased"] = row.date_purchased ?? "-";
-      if (showExpirationColumn) out.Expiration = row.expiration ?? "-";
-      if (showLastMaintenanceColumn) out["Last Maintenance"] = row.last_maintenance ?? "-";
-      if (showUserColumn) out.User = [row.user_text, row.user_attachment].filter(Boolean).join(" | ") || "-";
-      if (showDateColumn) out.Date = row.date ?? "—";
-      if (showParticularColumn) out.Particular = row.particular ?? "—";
+      if (showDatePurchasedColumn) out["Date of Purchased"] = row.date_purchased ?? "";
+      if (showExpirationColumn) out.Expiration = row.expiration ?? "";
+      if (showLastMaintenanceColumn) out["Last Maintenance"] = row.last_maintenance ?? "";
+      if (showUserColumn) {
+        out["User Text"] = row.user_text ?? "";
+        out["User Attachment"] = row.user_attachment ?? "";
+      }
+      if (showDateColumn) out.Date = row.date ?? "";
+      if (showParticularColumn) out.Particular = row.particular ?? "";
       for (const cfg of visibleCategoryConfigs) {
-        const name = String(row[cfg.nameRowField] ?? "").trim() || "—";
+        const name = String(row[cfg.nameRowField] ?? "").trim();
         const qty = Number(row[cfg.qtyRowField] ?? 0) || 0;
         const price = Number(row[cfg.priceRowField] ?? 0) || 0;
         out[`${cfg.label} Name`] = name;
@@ -1501,7 +1512,7 @@ function downloadInventoryTemplateXlsx() {
     }
     const ws = XLSX.utils.aoa_to_sheet(buildBrandedAoa(exportRows, "Inventory Export", "Inventory snapshots and totals"));
     const csv = XLSX.utils.sheet_to_csv(ws);
-    downloadBlob(`${inventoryExportFileBase()}.csv`, new Blob([csv], { type: "text/csv;charset=utf-8;" }));
+    downloadCsv(`${inventoryExportFileBase()}.csv`, csv);
   }
 
   async function exportInventoryPdf() {
@@ -1512,16 +1523,20 @@ function downloadInventoryTemplateXlsx() {
     }
     const headers = Object.keys(exportRows[0]);
     const body = exportRows.map((row) => headers.map((h) => String(row[h] ?? "")));
-    const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
+    const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a3" });
     const startY = await addBrandedPdfHeader(doc, "Inventory Export", "Inventory snapshots and totals");
     autoTable(doc, {
       startY: startY + 10,
       head: [headers],
       body,
-      styles: { fontSize: 7, cellPadding: 2 },
+      margin: { left: 24, right: 24, bottom: 24 },
+      styles: { fontSize: 5.5, cellPadding: 2, overflow: "linebreak" },
       headStyles: { fillColor: [255, 218, 3], textColor: [0, 0, 0] },
+      horizontalPageBreak: true,
+      horizontalPageBreakRepeat: [0, 1, 2],
+      showHead: "everyPage",
     });
-    doc.save(`${inventoryExportFileBase()}.pdf`);
+    downloadPdf(doc, `${inventoryExportFileBase()}.pdf`);
   }
 
   function rowToForm(row: InventoryRow): InventoryForm {
@@ -3124,15 +3139,4 @@ function pickByAliases(row: Record<string, unknown>, aliases: string[]) {
     if (v !== undefined && String(v ?? "").trim() !== "") return String(v);
   }
   return "";
-}
-
-function downloadBlob(filename: string, blob: Blob) {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
 }

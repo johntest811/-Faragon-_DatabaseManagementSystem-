@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import * as XLSX from "xlsx";
 import { readSpreadsheetRows } from "./spreadsheetImportUtils";
+import { downloadBlob, downloadCsv } from "./fileDownload";
 
 export type SpreadsheetImportModalProps = {
   open: boolean;
@@ -30,15 +31,6 @@ type PreviewItem = {
   payload: Record<string, unknown> | null;
 };
 
-function downloadBlob(filename: string, blob: Blob) {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
-
 export default function SpreadsheetImportModal({
   open,
   onClose,
@@ -59,6 +51,7 @@ export default function SpreadsheetImportModal({
   const [parsingError, setParsingError] = useState<string>("");
   const [importing, setImporting] = useState(false);
   const [resultMsg, setResultMsg] = useState<string>("");
+  const [resultErrors, setResultErrors] = useState<string[]>([]);
 
   useEffect(() => {
     setMounted(true);
@@ -76,7 +69,7 @@ export default function SpreadsheetImportModal({
     if (!templateSampleData) return;
     const ws = XLSX.utils.json_to_sheet([templateSampleData]);
     const csv = XLSX.utils.sheet_to_csv(ws);
-    downloadBlob(`${templateFileName}.csv`, new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    downloadCsv(`${templateFileName}.csv`, csv);
   }
 
   function downloadTemplateXlsxInternal() {
@@ -117,6 +110,7 @@ export default function SpreadsheetImportModal({
     if (!file) return;
     setParsingError("");
     setResultMsg("");
+    setResultErrors([]);
     setFileName(file.name);
 
     try {
@@ -131,11 +125,13 @@ export default function SpreadsheetImportModal({
     if (importing || preview.ok === 0) return;
     setImporting(true);
     setResultMsg("");
+    setResultErrors([]);
 
     try {
       const result = await onImport(rows);
       const msg = `Imported ${result.inserted} • Updated ${result.updated} • Skipped ${result.skipped}.`;
       setResultMsg(msg);
+      setResultErrors(result.errors);
     } catch (e: unknown) {
       setResultMsg(e instanceof Error ? e.message : "Import failed");
     } finally {
@@ -148,6 +144,7 @@ export default function SpreadsheetImportModal({
     setFileName("");
     setParsingError("");
     setResultMsg("");
+    setResultErrors([]);
   }
 
   function handleClose() {
@@ -174,7 +171,7 @@ export default function SpreadsheetImportModal({
           <div className="rounded-2xl border p-4">
             <div className="flex items-center justify-between gap-3 flex-wrap">
               <div>
-                <div className="text-sm font-semibold text-black">Excel/CSV file</div>
+                <div className="text-sm font-semibold text-black">Excel or CSV file</div>
                 <div className="text-xs text-gray-500">{fileName || "No file selected"}</div>
               </div>
 
@@ -210,7 +207,19 @@ export default function SpreadsheetImportModal({
             </div>
 
             {parsingError ? <div className="mt-3 text-sm text-red-600">{parsingError}</div> : null}
-            {resultMsg ? <div className="mt-3 text-sm text-green-700">{resultMsg}</div> : null}
+            {resultMsg ? (
+              <div className={`mt-3 text-sm ${resultErrors.length ? "text-amber-700" : "text-green-700"}`}>
+                {resultMsg}
+              </div>
+            ) : null}
+            {resultErrors.length ? (
+              <div className="mt-2 max-h-28 overflow-y-auto rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                {resultErrors.slice(0, 50).map((message, index) => (
+                  <div key={`${index}-${message}`}>{message}</div>
+                ))}
+                {resultErrors.length > 50 ? <div>And {resultErrors.length - 50} more issue(s).</div> : null}
+              </div>
+            ) : null}
 
             <div className="mt-3 text-sm text-black">
               Duplicate-safe import is enabled: existing records are matched and updated, new records are inserted.
@@ -278,7 +287,7 @@ export default function SpreadsheetImportModal({
             </div>
 
             <div className="mt-3 text-xs text-gray-500">
-              Tip: Make sure the first row contains headers matching the template columns.
+              Tip: Keep the template column names unchanged. Branded title rows are detected automatically.
             </div>
           </div>
         </div>

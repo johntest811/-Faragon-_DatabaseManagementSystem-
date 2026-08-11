@@ -7,6 +7,7 @@ import autoTable from "jspdf-autotable";
 import { supabase } from "../Client/SupabaseClients";
 import { readSpreadsheetRows } from "./spreadsheetImportUtils";
 import { addBrandedPdfHeader, buildBrandedWorkbookBuffer } from "../Main_Modules/Components/exportBranding";
+import { downloadBlob, downloadPdf } from "./fileDownload";
 
 export type EmployeeExcelImportModalProps = {
   open: boolean;
@@ -106,15 +107,6 @@ const TEMPLATE_HEADERS = [
   "Contact Number",
   "STATUS",
 ] as const;
-
-function downloadBlob(filename: string, blob: Blob) {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
 
 function normKey(input: string) {
   return String(input || "")
@@ -665,7 +657,7 @@ export default function EmployeeExcelImportModal({
         horizontalPageBreakRepeat: [0, 1, 2],
         showHead: "everyPage",
       });
-      doc.save("All_employees_table.pdf");
+      downloadPdf(doc, "All_employees_table.pdf");
       setResultMsg(`Exported ${exportRows.length} employee row(s) to PDF.`);
     } catch (e: unknown) {
       setParsingError(e instanceof Error ? e.message : "Failed to export employees to PDF");

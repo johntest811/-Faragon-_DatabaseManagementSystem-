@@ -20,6 +20,7 @@ import {
 } from "../Components/equipmentCatalog";
 import * as XLSX from "xlsx";
 import { useSignedStorageUrlMap } from "@/app/Client/useSignedStorageUrls";
+import { downloadBlob, downloadCsv, downloadPdf } from "@/app/Components/fileDownload";
 
 type InventoryKind = "SEC" | "OFFICE";
 type EntryKind = "stockIn" | "stockOut";
@@ -394,17 +395,6 @@ function formatDateTime(value: unknown) {
   const d = new Date(text);
   if (Number.isNaN(d.getTime())) return text;
   return d.toLocaleString();
-}
-
-function downloadBlob(filename: string, blob: Blob) {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
 }
 
 function defaultItemCategory(itemName: unknown): InventoryKind {
@@ -2365,31 +2355,47 @@ export default function ParaphernaliaPage() {
       ...inventoryExportRows(filteredOfficeInventory).map((row) => ({ Section: "Office Supply Inventory", ...row })),
     ];
     const ws = XLSX.utils.aoa_to_sheet(buildBrandedAoa(rows, "Paraphernalia Stock Export", "Combined stock-in, stock-out, and inventory summary"));
-    downloadBlob(`paraphernalia_stock_${new Date().toISOString().slice(0, 10)}.csv`, new Blob([XLSX.utils.sheet_to_csv(ws)], { type: "text/csv;charset=utf-8;" }));
+    downloadCsv(`paraphernalia_stock_${new Date().toISOString().slice(0, 10)}.csv`, XLSX.utils.sheet_to_csv(ws));
   }
 
   async function exportPdf() {
     if (!canExport) return;
-    const doc = new jsPDF({ orientation: "landscape" });
+    const hasRows =
+      filteredMainInventory.length > 0 ||
+      filteredMainStockIn.length > 0 ||
+      filteredMainTransfers.length > 0 ||
+      filteredStockOut.length > 0 ||
+      filteredSecInventory.length > 0 ||
+      filteredOfficeInventory.length > 0;
+    if (!hasRows) {
+      setInfoMessage("No paraphernalia records are available for export.");
+      return;
+    }
+
+    const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a3" });
     let y = await addBrandedPdfHeader(doc, "Paraphernalia Stock Export", "Combined stock-in, stock-out, and inventory summary");
 
     function addTable(title: string, rows: Record<string, unknown>[]) {
       doc.setFontSize(12);
-      doc.text(title, 14, y);
-      y += 4;
+      doc.text(title, 24, y);
+      y += 8;
       const headers = Object.keys(rows[0] ?? { Message: "No rows" });
       const body = rows.length ? rows.map((row) => headers.map((header) => String(row[header] ?? ""))) : [["No rows"]];
       autoTable(doc, {
         startY: y,
         head: [headers],
         body,
-        styles: { fontSize: 7 },
-        headStyles: { fillColor: [139, 28, 28] },
+        margin: { left: 24, right: 24, bottom: 24 },
+        styles: { fontSize: 6, cellPadding: 2, overflow: "linebreak" },
+        headStyles: { fillColor: [255, 218, 3], textColor: [0, 0, 0] },
+        horizontalPageBreak: true,
+        horizontalPageBreakRepeat: [0, 1],
+        showHead: "everyPage",
       });
       y = ((doc as unknown as { lastAutoTable?: { finalY?: number } }).lastAutoTable?.finalY ?? y) + 10;
-      if (y > 180) {
+      if (y > doc.internal.pageSize.getHeight() - 40) {
         doc.addPage();
-        y = 20;
+        y = 30;
       }
     }
 
@@ -2399,7 +2405,7 @@ export default function ParaphernaliaPage() {
     addTable("Paraphernalia Stock Out", stockOutExportRows(filteredStockOut));
     addTable("Security Inventory", inventoryExportRows(filteredSecInventory));
     addTable("Office Supply Inventory", inventoryExportRows(filteredOfficeInventory));
-    doc.save(`paraphernalia_stock_${new Date().toISOString().slice(0, 10)}.pdf`);
+    downloadPdf(doc, `paraphernalia_stock_${new Date().toISOString().slice(0, 10)}.pdf`);
   }
 
   function renderActions(row: StockInRow | StockOutRow, kind: EntryKind, transfer = false) {

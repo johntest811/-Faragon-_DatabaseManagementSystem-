@@ -33,6 +33,14 @@ function safeText(value: unknown) {
 	return String(value);
 }
 
+function workbookValue(value: unknown): ExcelJS.CellValue {
+	if (value == null) return "";
+	if (value instanceof Date) return value;
+	if (typeof value === "number" && Number.isFinite(value)) return value;
+	if (typeof value === "boolean") return value;
+	return safeText(value);
+}
+
 function loadImage(src: string): Promise<BrandImage | null> {
 	return new Promise((resolve) => {
 		if (typeof Image === "undefined" || typeof document === "undefined") {
@@ -63,7 +71,8 @@ function loadImage(src: string): Promise<BrandImage | null> {
 			}
 		};
 		image.onerror = () => resolve(null);
-		image.src = src;
+		image.crossOrigin = "anonymous";
+		image.src = typeof window === "undefined" ? src : new URL(src, window.location.href).href;
 	});
 }
 
@@ -137,7 +146,8 @@ export async function buildBrandedWorkbookBuffer(sheets: BrandedWorkbookSheet[])
 	for (const sheetSpec of sheets) {
 		const sheetName = normalizeSheetName(sheetSpec.name);
 		const worksheet = workbook.addWorksheet(sheetName);
-		const headers = Object.keys(sheetSpec.rows[0] ?? {});
+		const sourceRows = sheetSpec.rows.length ? sheetSpec.rows : [{ Message: "No records available" }];
+		const headers = Object.keys(sourceRows[0] ?? {});
 		const normalizedHeaders = headers.length ? headers : [""];
 		const columnCount = Math.max(normalizedHeaders.length, 3);
 
@@ -188,12 +198,12 @@ export async function buildBrandedWorkbookBuffer(sheets: BrandedWorkbookSheet[])
 
 		const columnWidths = normalizedHeaders.map((header) => Math.min(Math.max(header.length + 2, 12), 36));
 
-		for (const row of sheetSpec.rows) {
-			const rowValues = normalizedHeaders.map((header) => safeText(row[header]));
+		for (const row of sourceRows) {
+			const rowValues = normalizedHeaders.map((header) => workbookValue(row[header]));
 			const addedRow = worksheet.addRow(rowValues);
 			addedRow.alignment = { vertical: "top", wrapText: true };
 			rowValues.forEach((value, index) => {
-				columnWidths[index] = Math.min(Math.max(columnWidths[index], value.length + 2), 36);
+				columnWidths[index] = Math.min(Math.max(columnWidths[index], safeText(value).length + 2), 36);
 			});
 		}
 

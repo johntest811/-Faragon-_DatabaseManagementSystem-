@@ -18,6 +18,7 @@ import DetachmentHistoryPopover from "../Components/DetachmentHistoryPopover";
 import { addBrandedPdfHeader, buildBrandedWorkbookBuffer } from "../Components/exportBranding";
 import { buildEmployeeStatusUpdatePatch, loadLicensureMap } from "../employeeListData";
 import { useLiveNow } from "../../Client/useLiveNow";
+import { downloadBlob, downloadPdf } from "@/app/Components/fileDownload";
 
 type Applicant = {
 	applicant_id: string;
@@ -163,17 +164,6 @@ function ymd(value: string | null) {
 	const date = new Date(value);
 	if (Number.isNaN(date.getTime())) return null;
 	return date.toISOString().slice(0, 10);
-}
-
-function downloadBlob(filename: string, blob: Blob) {
-	const url = URL.createObjectURL(blob);
-	const a = document.createElement("a");
-	a.href = url;
-	a.download = filename;
-	document.body.appendChild(a);
-	a.click();
-	a.remove();
-	URL.revokeObjectURL(url);
 }
 
 const HIRE_MONTH_OPTIONS = [
@@ -921,7 +911,7 @@ if (hiredMonthFilter !== "ALL") {
 			headStyles: { fillColor: [255, 218, 3], textColor: [0, 0, 0] },
 		});
 
-		doc.save(`${serviceExportFileBase()}.pdf`);
+		downloadPdf(doc, `${serviceExportFileBase()}.pdf`);
 		setServiceExportOpen(false);
 	}
 

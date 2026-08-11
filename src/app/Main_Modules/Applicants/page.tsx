@@ -16,6 +16,7 @@ import EmployeeStatusMenu from "../Components/EmployeeStatusMenu";
 import { buildEmployeeStatusUpdatePatch } from "../employeeListData";
 import { addBrandedPdfHeader, buildBrandedWorkbookBuffer } from "../Components/exportBranding";
 import { buildPersonnelDetailExportRows } from "../Components/personnelExport";
+import { downloadBlob, downloadPdf } from "@/app/Components/fileDownload";
 
 type ApplicantRow = {
 	applicant_id: string;
@@ -61,17 +62,6 @@ function getFullName(row: ApplicantRow) {
 
 function shortCode(id: string) {
 	return `APP-${id.slice(0, 2).toUpperCase()}-${id.slice(2, 5).toUpperCase()}`;
-}
-
-function downloadBlob(filename: string, blob: Blob) {
-	const url = URL.createObjectURL(blob);
-	const a = document.createElement("a");
-	a.href = url;
-	a.download = filename;
-	document.body.appendChild(a);
-	a.click();
-	a.remove();
-	URL.revokeObjectURL(url);
 }
 
 function badgeClass(status: string) {
@@ -296,16 +286,20 @@ export default function ApplicantsPage() {
 
 		const headers = Object.keys(exportRows[0]);
 		const body = exportRows.map((row) => headers.map((key) => String(row[key as keyof typeof row] ?? "")));
-		const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
+		const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a3" });
 		const startY = await addBrandedPdfHeader(doc, "Applicants Export", "Applicant pipeline records");
 		autoTable(doc, {
 			startY: startY + 10,
 			head: [headers],
 			body,
-			styles: { fontSize: 7, cellPadding: 2 },
+			margin: { left: 24, right: 24, bottom: 24 },
+			styles: { fontSize: 5.5, cellPadding: 2, overflow: "linebreak" },
 			headStyles: { fillColor: [255, 218, 3], textColor: [0, 0, 0] },
+			horizontalPageBreak: true,
+			horizontalPageBreakRepeat: [0, 1, 2, 3],
+			showHead: "everyPage",
 		});
-		doc.save(`${exportFileBase()}.pdf`);
+		downloadPdf(doc, `${exportFileBase()}.pdf`);
 	}
 
 	if (totalLoading) {
