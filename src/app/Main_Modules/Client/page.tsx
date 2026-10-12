@@ -9,6 +9,7 @@ import autoTable from "jspdf-autotable";
 import { supabase } from "@/app/Client/SupabaseClients";
 import { useAuthRole, useMyColumnAccess, useMyModuleAccess } from "@/app/Client/useRbac";
 import LoadingCircle from "@/app/Components/LoadingCircle";
+import PageLoading from "@/app/Components/PageLoading";
 import TableZoomWrapper from "@/app/Components/TableZoomWrapper";
 import { useToast } from "@/app/Components/ToastProvider";
 import ImportSummaryModal, { ImportSummaryData } from "../Components/ImportSummaryModal";
@@ -306,8 +307,8 @@ function omitBlankCreatedAt<T extends Record<string, unknown>>(payload: T) {
 
 export default function ClientsPage() {
   const { role } = useAuthRole();
-  const { canAccess: canAccessClient } = useMyModuleAccess("client");
-  const { allowedColumns, restricted } = useMyColumnAccess("client");
+  const { canAccess: canAccessClient, loading: accessLoading } = useMyModuleAccess("client");
+  const { allowedColumns, restricted, loading: columnLoading, error: columnError } = useMyColumnAccess("client");
   const toast = useToast();
   const lastToastRef = useRef<{ error: string; save: string }>({ error: "", save: "" });
 
@@ -720,9 +721,9 @@ export default function ClientsPage() {
   }
 
   async function loadConnectedData() {
-    setLoading(true);
     setError("");
 
+    async function fetchConnectedData() {
     const wideSelect =
       "contract_id, applicant_id, contract_no, status, created_at, contract_no_date, cluster, client_name, specific_area, project_name, contract_start, contract_end, notification_recipient_email, contracted_manpower, deployed_guards, remarks";
 
@@ -773,9 +774,7 @@ export default function ClientsPage() {
 
     if (loadError) {
       const msg = (loadError as { message?: string })?.message ?? "Failed to load contracts";
-      setLoading(false);
       setError(msg);
-      setRows([]);
       return;
     }
 
@@ -914,7 +913,15 @@ export default function ClientsPage() {
     });
 
     setRows(merged);
-    setLoading(false);
+    }
+
+    try {
+      await fetchConnectedData();
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Failed to load contracts");
+    } finally {
+      setLoading(false);
+    }
   }
 
   async function deleteContract(contractId: string) {
@@ -1435,6 +1442,9 @@ export default function ClientsPage() {
     const hasCurrent = current && CLIENT_SECTORS.some((sector) => clusterMatchesSector(current, sector.value));
     return hasCurrent || !current ? CLIENT_SECTORS : [{ value: current, label: `Current: ${current}` }, ...CLIENT_SECTORS];
   }, [contractForm.cluster]);
+
+  if (accessLoading || columnLoading) return <PageLoading label="Loading clients..." />;
+  if (columnError) return <section role="alert">Unable to verify client permissions.</section>;
 
   if (!canAccessClient) {
     return (

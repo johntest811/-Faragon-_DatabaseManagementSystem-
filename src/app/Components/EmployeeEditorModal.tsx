@@ -1,12 +1,12 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
-import JSZip from "jszip";
 import { supabase } from "../Client/SupabaseClients";
 import { StorageUrlRequest, useSignedStorageUrls } from "../Client/useSignedStorageUrls";
-import * as XLSX from "xlsx";
 import LoadingCircle from "./LoadingCircle";
+import { loadJobTitles, saveJobTitle, removeJobTitle, normalizeJobTitle, type JobTitleRow } from "../Client/jobTitles";
 
 type Mode = "create" | "edit";
 
@@ -187,11 +187,6 @@ type OtherDocumentRow = {
   label: string | null;
   bucket: string | null;
   file_path: string | null;
-};
-
-type JobTitleRow = {
-  title_id: string;
-  title: string;
 };
 
 type DetachmentOption = {
@@ -673,6 +668,7 @@ async function recompressOfficeDocument(file: File) {
   if (!canRepackOfficeDocument(extension)) return file;
 
   try {
+    const { default: JSZip } = await import("jszip");
     const zip = await JSZip.loadAsync(await file.arrayBuffer());
     const blob = await zip.generateAsync({
       type: "blob",
@@ -695,6 +691,7 @@ async function recompressSpreadsheet(file: File) {
   if (!canRewriteSpreadsheet(extension)) return file;
 
   try {
+    const XLSX = await import("xlsx");
     const workbook = XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: true });
     const output = XLSX.write(workbook, {
       type: "array",
@@ -773,7 +770,9 @@ export default function EmployeeEditorModal({
   const [detachmentOptions, setDetachmentOptions] = useState<DetachmentOption[]>([]);
   const [detachmentOptionsLoading, setDetachmentOptionsLoading] = useState(false);
   const [newJobTitle, setNewJobTitle] = useState("");
-  const [jobTitlesSource, setJobTitlesSource] = useState<"table" | "applicants">("table");
+  const [jobTitlesLoading, setJobTitlesLoading] = useState(true);
+  const [jobTitleBusy, setJobTitleBusy] = useState(false);
+  const [jobTitleError, setJobTitleError] = useState("");
 
   const highSchoolEducation = splitEducationNameYear(certs.highschool_when_where);
   const collegeEducation = splitEducationNameYear(certs.college_when_where);
@@ -843,81 +842,39 @@ export default function EmployeeEditorModal({
     setError("");
   }
 
-function normalizeJobTitle(value: string) {
-    return value.trim().replace(/\s+/g, " ");
-  }
-
   async function addJobTitleOption() {
     const title = normalizeJobTitle(newJobTitle);
-    if (!title) {
+    if (!title || jobTitleBusy || jobTitlesLoading) return;
+    setJobTitleBusy(true);
+    setJobTitleError("");
+    try {
+      const row = await saveJobTitle(supabase, title);
+      setJobTitleOptions((prev) => [...prev.filter((x) => normalizeJobTitle(x.title) !== title), row]
+        .sort((a, b) => a.title.localeCompare(b.title)));
+      setApp((d) => ({ ...d, client_position: row.title }));
       setNewJobTitle("");
-      return;
+    } catch (err) {
+      setJobTitleError(err instanceof Error ? err.message : "Unable to save job title. Please try again.");
+    } finally {
+      setJobTitleBusy(false);
     }
-
-    const exists = jobTitleOptions.some((x) => x.title.toLowerCase() === title.toLowerCase());
-    if (exists) {
-      setApp((d) => ({ ...d, client_position: title }));
-      setNewJobTitle("");
-      return;
-    }
-
-    if (jobTitlesSource !== "table") {
-      setJobTitleOptions((prev) => {
-        const next = [...prev, { title_id: title, title }];
-        return next.sort((a, b) => a.title.localeCompare(b.title));
-      });
-      setApp((d) => ({ ...d, client_position: title }));
-      setNewJobTitle("");
-      setError("");
-      return;
-    }
-
-    const insertRes = await supabase
-      .from("job_titles")
-      .insert({ title })
-      .select("title_id, title")
-      .single();
-
-    if (insertRes.error) {
-      setError(insertRes.error.message || "Failed to save new job title");
-      return;
-    }
-
-    setJobTitleOptions((prev) => {
-      const next = [...prev, insertRes.data as JobTitleRow];
-      return next.sort((a, b) => a.title.localeCompare(b.title));
-    });
-    setApp((d) => ({ ...d, client_position: title }));
-    setNewJobTitle("");
-    setError("");
   }
 
   async function deleteSelectedJobTitle() {
     const title = normalizeJobTitle(app.client_position);
-    if (!title) return;
-
-    const target = jobTitleOptions.find((x) => x.title.toLowerCase() === title.toLowerCase());
-    if (!target) {
-      setApp((d) => ({ ...d, client_position: "" }));
-      return;
+    const target = jobTitleOptions.find((x) => normalizeJobTitle(x.title) === title);
+    if (!target || jobTitleBusy || jobTitlesLoading) return;
+    setJobTitleBusy(true);
+    setJobTitleError("");
+    try {
+      await removeJobTitle(supabase, target.title_id);
+      setJobTitleOptions((prev) => prev.filter((x) => x.title_id !== target.title_id));
+      if (mode === "create") setApp((d) => ({ ...d, client_position: "" }));
+    } catch (err) {
+      setJobTitleError(err instanceof Error ? err.message : "Unable to remove job title. Please try again.");
+    } finally {
+      setJobTitleBusy(false);
     }
-
-    if (jobTitlesSource !== "table") {
-      setJobTitleOptions((prev) => prev.filter((x) => x.title.toLowerCase() !== title.toLowerCase()));
-      setApp((d) => ({ ...d, client_position: "" }));
-      setError("");
-      return;
-    }
-
-    const delRes = await supabase.from("job_titles").delete().eq("title_id", target.title_id);
-    if (delRes.error) {
-      setError(delRes.error.message || "Failed to delete job title");
-      return;
-    }
-
-    setJobTitleOptions((prev) => prev.filter((x) => x.title_id !== target.title_id));
-    setApp((d) => ({ ...d, client_position: "" }));
-    setError("");
   }
 
   const docPreviewRequests = useMemo<StorageUrlRequest[]>(() => [
@@ -1154,55 +1111,25 @@ function normalizeJobTitle(value: string) {
     if (!open) return;
     let cancelled = false;
 
-    async function loadJobTitles() {
-      const tableRes = await supabase
-        .from("job_titles")
-        .select("title_id, title")
-        .order("title", { ascending: true })
-        .limit(1000);
-
-      if (!tableRes.error) {
-        if (!cancelled) {
-          setJobTitlesSource("table");
-          setJobTitleOptions((tableRes.data as JobTitleRow[]) ?? []);
-        }
-        return;
-      }
-
-      const fallbackRes = await supabase
-        .from("applicants")
-        .select("client_position")
-        .not("client_position", "is", null)
-        .limit(1000);
-
-      if (fallbackRes.error || cancelled) return;
-      const rows = (fallbackRes.data ?? []) as Array<{ client_position: string | null }>;
-      const titles = Array.from(
-        new Set(rows.map((r) => normalizeJobTitle(r.client_position ?? "")).filter(Boolean))
-      ).sort((a, b) => a.localeCompare(b));
-
-      if (!cancelled) {
-        setJobTitlesSource("applicants");
-        setJobTitleOptions(titles.map((title) => ({ title_id: title, title })));
+    async function refreshJobTitles() {
+      setJobTitlesLoading(true);
+      setJobTitleError("");
+      setJobTitleOptions([]);
+      try {
+        const rows = await loadJobTitles(supabase);
+        if (!cancelled) setJobTitleOptions(rows.filter((row) => row.is_active));
+      } catch (err) {
+        if (!cancelled) setJobTitleError(err instanceof Error ? err.message : "Unable to load job titles.");
+      } finally {
+        if (!cancelled) setJobTitlesLoading(false);
       }
     }
 
-    loadJobTitles();
+    void refreshJobTitles();
     return () => {
       cancelled = true;
     };
   }, [open]);
-
-  useEffect(() => {
-    const current = normalizeJobTitle(app.client_position);
-    if (!current) return;
-
-    setJobTitleOptions((prev) => {
-      const exists = prev.some((x) => x.title.toLowerCase() === current.toLowerCase());
-      if (exists) return prev;
-      return [...prev, { title_id: current, title: current }].sort((a, b) => a.title.localeCompare(b.title));
-    });
-  }, [app.client_position]);
 
   useEffect(() => {
     if (!open) return;
@@ -1656,14 +1583,14 @@ function normalizeJobTitle(value: string) {
     }
   }
 
-  if (!open) return null;
+  if (!open || typeof document === "undefined") return null;
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-5xl bg-white rounded-3xl border shadow-xl overflow-hidden">
-        <div className="px-6 py-4 border-b flex items-center justify-between gap-3">
+  return createPortal(
+    <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/40 p-3">
+      <div role="dialog" aria-modal="true" aria-labelledby="employee-editor-title" className="employee-editor-dialog flex w-full max-w-5xl flex-col bg-white rounded-3xl border shadow-xl overflow-hidden">
+        <div className="shrink-0 px-4 sm:px-6 py-4 border-b flex items-center justify-between gap-3">
           <div className="min-w-0">
-            <div className="text-lg font-semibold text-black">
+            <div id="employee-editor-title" className="text-lg font-semibold text-black">
               {title ?? (mode === "create" ? "New Employee" : "Edit Employee")}
             </div>
             {subtitle ? <div className="text-xs text-gray-500 truncate">{subtitle}</div> : null}
@@ -1673,12 +1600,12 @@ function normalizeJobTitle(value: string) {
               </div>
             ) : null}
           </div>
-          <button onClick={onClose} className="px-3 py-2 rounded-xl border bg-white text-black">
+          <button onClick={onClose} disabled={jobTitleBusy} className="px-3 py-2 rounded-xl border bg-white text-black">
             Close
           </button>
         </div>
 
-        <div className="px-6 py-3 border-b flex flex-wrap gap-2">
+        <div className="shrink-0 px-4 sm:px-6 py-3 border-b flex gap-2 overflow-x-auto">
           <button className={sectionButton(tab === "personal")} onClick={() => goToStep("personal")}
             type="button">
             Personal
@@ -1707,7 +1634,7 @@ function normalizeJobTitle(value: string) {
 
         {error ? <div className="px-6 pt-4 text-sm text-red-600">{error}</div> : null}
 
-        <div className="employee-editor-uppercase p-6 max-h-[70vh] overflow-auto">
+        <div className="employee-editor-uppercase min-h-0 flex-1 p-4 sm:p-6 overflow-auto overscroll-contain">
           {loading ? (
             <div className="text-sm text-gray-500">Loading…</div>
           ) : tab === "personal" ? (
@@ -1901,46 +1828,56 @@ function normalizeJobTitle(value: string) {
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                <label className="text-sm text-black">
-                  <div className="text-gray-600 mb-1">Job Title</div>
+                <div className="min-w-0 text-sm text-black">
+                  <label htmlFor="employee-job-title" className="block text-gray-600 mb-1">Job Title</label>
                   <select
+                    id="employee-job-title"
+                    disabled={jobTitlesLoading || jobTitleBusy}
                     value={app.client_position}
                     onChange={(e) => setApp((d) => ({ ...d, client_position: e.target.value }))}
                     className="w-full border rounded-xl px-3 py-2 bg-white"
                   >
                     <option value="">— Select Job Title —</option>
+                    {app.client_position && !jobTitleOptions.some((row) => row.title === app.client_position) && (
+                      <option value={app.client_position}>{app.client_position} (current record only)</option>
+                    )}
                     {jobTitleOptions.map((row) => (
                       <option key={row.title_id} value={row.title}>
                         {row.title}
                       </option>
                     ))}
                   </select>
-                  <div className="mt-2 flex items-center gap-2">
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
                     <input
                       value={newJobTitle}
                       onChange={(e) => setNewJobTitle(e.target.value)}
                       placeholder="Add new job title"
-                      className="w-full border rounded-xl px-3 py-2"
+                      aria-label="New job title"
+                      disabled={jobTitleBusy || jobTitlesLoading}
+                      className="w-full min-w-0 border rounded-xl px-3 py-2"
                     />
                     <button
                       type="button"
                       onClick={addJobTitleOption}
-                      className="px-3 py-2 rounded-xl border bg-white text-black text-sm"
+                      disabled={jobTitleBusy || jobTitlesLoading || !normalizeJobTitle(newJobTitle)}
+                      className="px-3 py-2 rounded-xl border bg-white text-black text-sm disabled:opacity-50"
                     >
                       Add
                     </button>
                     <button
                       type="button"
                       onClick={deleteSelectedJobTitle}
-                      disabled={!normalizeJobTitle(app.client_position)}
-                      className={`px-3 py-2 rounded-xl border bg-white text-black text-sm ${
-                        !normalizeJobTitle(app.client_position) ? "opacity-60" : ""
-                      }`}
+                      disabled={jobTitleBusy || jobTitlesLoading || !jobTitleOptions.some((row) => normalizeJobTitle(row.title) === normalizeJobTitle(app.client_position))}
+                      className="px-3 py-2 rounded-xl border bg-white text-black text-sm disabled:opacity-50"
                     >
                       Delete
                     </button>
                   </div>
-                </label>
+                  {jobTitleError && <p role="alert" className="mt-2 text-sm text-red-700">{jobTitleError}</p>}
+                  <p role="status" className="mt-2 text-xs text-gray-600">
+                    {jobTitlesLoading ? "Loading job titles..." : jobTitleBusy ? "Saving job title choices..." : "Delete removes a choice, not the title saved on existing employee records."}
+                  </p>
+                </div>
                 <label className="text-sm text-black">
                   <div className="text-gray-600 mb-1">Detachment</div>
                   <select
@@ -2627,12 +2564,12 @@ function normalizeJobTitle(value: string) {
           )}
         </div>
 
-        <div className="px-6 pb-6 flex items-center justify-between gap-2">
+        <div className="shrink-0 border-t px-4 py-3 sm:px-6 flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             {mode === "create" ? (
               <button
                 type="button"
-                disabled={saving || currentStepIndex === 0}
+                disabled={saving || jobTitleBusy || currentStepIndex === 0}
                 onClick={goBack}
                 className={`px-4 py-2 rounded-xl border bg-white text-black ${
                   saving || currentStepIndex === 0 ? "opacity-60" : ""
@@ -2643,11 +2580,11 @@ function normalizeJobTitle(value: string) {
             ) : null}
           </div>
 
-          <div className="flex items-center justify-end gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2">
             {mode === "edit" && effectiveId ? (
               <button
                 type="button"
-                disabled={saving || deleting}
+                disabled={saving || deleting || jobTitleBusy}
                 onClick={() => void deleteEmployee()}
                 className={`px-4 py-2 rounded-xl border border-red-200 bg-white text-red-600 font-semibold ${
                   saving || deleting ? "opacity-60" : ""
@@ -2656,11 +2593,11 @@ function normalizeJobTitle(value: string) {
                 {deleting ? "Deleting…" : "Delete"}
               </button>
             ) : null}
-            <button onClick={onClose} disabled={saving || deleting} className="px-4 py-2 rounded-xl border bg-white text-black">
+            <button onClick={onClose} disabled={saving || deleting || jobTitleBusy} className="px-4 py-2 rounded-xl border bg-white text-black">
               Cancel
             </button>
             <button
-              disabled={saving || deleting}
+              disabled={saving || deleting || jobTitleBusy}
               onClick={() => {
                 if (mode === "create" && !isLastStep) {
                   goNext();
@@ -2684,7 +2621,8 @@ function normalizeJobTitle(value: string) {
           text-transform: none;
         }
       `}</style>
-    </div>
+    </div>,
+    document.body
   );
 }
 

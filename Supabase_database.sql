@@ -11,12 +11,16 @@ CREATE TABLE public.admins (
   employee_number character varying,
   full_name text,
   is_active boolean DEFAULT true,
-  password text NOT NULL,
   profile_image_path text,
   assigned_detachment text,
   applicant_id uuid,
+  auth_user_id uuid NOT NULL,
+  auth_email text NOT NULL,
+  must_change_password boolean NOT NULL DEFAULT false,
+  password_migrated_at timestamp with time zone,
   CONSTRAINT admins_pkey PRIMARY KEY (id),
-  CONSTRAINT admins_applicant_id_fkey FOREIGN KEY (applicant_id) REFERENCES public.applicants(applicant_id)
+  CONSTRAINT admins_applicant_id_fkey FOREIGN KEY (applicant_id) REFERENCES public.applicants(applicant_id),
+  CONSTRAINT admins_auth_user_id_fkey FOREIGN KEY (auth_user_id) REFERENCES auth.users(id)
 );
 CREATE TABLE public.applicants (
   applicant_id uuid NOT NULL DEFAULT gen_random_uuid(),
@@ -722,4 +726,18 @@ CREATE TABLE public.notification_delivery_claims (
   sent_at timestamp with time zone,
   last_error text,
   CONSTRAINT notification_delivery_claims_pkey PRIMARY KEY (delivery_key)
+);
+CREATE TABLE public.admin_auth_rate_limits (
+  attempt_key text NOT NULL,
+  failure_count integer NOT NULL DEFAULT 0 CHECK (failure_count >= 0),
+  window_started_at timestamp with time zone NOT NULL DEFAULT now(),
+  blocked_until timestamp with time zone,
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT admin_auth_rate_limits_pkey PRIMARY KEY (attempt_key)
+);
+CREATE TABLE public.job_titles (
+  title_id uuid NOT NULL DEFAULT gen_random_uuid(),
+  title text NOT NULL,
+  is_active boolean NOT NULL DEFAULT true,
+  CONSTRAINT job_titles_pkey PRIMARY KEY (title_id)
 );

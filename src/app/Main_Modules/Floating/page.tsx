@@ -7,6 +7,7 @@ import { supabase } from "../../Client/SupabaseClients";
 import { useAuthRole, useMyModuleAccess, useMyModuleDeleteAccess } from "../../Client/useRbac";
 import EmployeeEditorModal from "../../Components/EmployeeEditorModal";
 import LoadingCircle from "../../Components/LoadingCircle";
+import PageLoading from "../../Components/PageLoading";
 import TableZoomWrapper from "@/app/Components/TableZoomWrapper";
 import DetachmentHistoryPopover from "../Components/DetachmentHistoryPopover";
 import EmployeeStatusMenu from "../Components/EmployeeStatusMenu";
@@ -50,7 +51,7 @@ function displayDate(value: string | null) {
 export default function FloatingPage() {
   const router = useRouter();
   const { role } = useAuthRole();
-  const { canAccess } = useMyModuleAccess("floating");
+  const { canAccess, loading: accessLoading } = useMyModuleAccess("floating");
   const { canDelete } = useMyModuleDeleteAccess("floating");
   const [employees, setEmployees] = useState<Applicant[]>([]);
   const profileUrls = useSignedStorageUrlMap("applicants", employees.map((row) => row.profile_image_path));
@@ -67,27 +68,32 @@ export default function FloatingPage() {
 
   const fetchEmployees = useCallback(async () => {
     const runId = ++fetchRunRef.current;
-    setLoading(true);
     setError("");
-    const result = await supabase
-      .from("applicants")
-      .select(
-        "applicant_id, created_at, custom_id, first_name, middle_name, last_name, client_position, date_hired_fsai, detachment, status, gender, client_contact_num, client_email, profile_image_path, is_archived, is_trashed"
-      )
-      .eq("is_archived", false)
-      .eq("is_trashed", false)
-      .eq("status", "FLOATING")
-      .order("created_at", { ascending: false })
-      .limit(1000);
+    try {
+      const result = await supabase
+        .from("applicants")
+        .select(
+          "applicant_id, created_at, custom_id, first_name, middle_name, last_name, client_position, date_hired_fsai, detachment, status, gender, client_contact_num, client_email, profile_image_path, is_archived, is_trashed"
+        )
+        .eq("is_archived", false)
+        .eq("is_trashed", false)
+        .eq("status", "FLOATING")
+        .order("created_at", { ascending: false })
+        .limit(1000);
 
-    if (fetchRunRef.current !== runId) return;
-    if (result.error) {
-      setEmployees([]);
-      setError(result.error.message || "Failed to load Floating employees.");
-    } else {
-      setEmployees((result.data as Applicant[]) || []);
+      if (fetchRunRef.current !== runId) return;
+      if (result.error) {
+        setError(result.error.message || "Failed to load Floating employees.");
+      } else {
+        setEmployees((result.data as Applicant[]) || []);
+      }
+    } catch (e: unknown) {
+      if (fetchRunRef.current === runId) {
+        setError(e instanceof Error ? e.message : "Failed to load Floating employees.");
+      }
+    } finally {
+      if (fetchRunRef.current === runId) setLoading(false);
     }
-    setLoading(false);
   }, []);
 
   useEffect(() => {
@@ -176,6 +182,8 @@ export default function FloatingPage() {
     }
     await fetchEmployees();
   }
+
+  if (accessLoading) return <PageLoading label="Loading floating employees..." />;
 
   if (!canAccess) {
     return (

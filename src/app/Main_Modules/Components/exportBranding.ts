@@ -1,7 +1,7 @@
 "use client";
 
-import ExcelJS from "exceljs";
-import jsPDF from "jspdf";
+import type ExcelJS from "exceljs";
+import type jsPDF from "jspdf";
 
 type BrandImage = {
 	dataUrl: string;
@@ -132,6 +132,7 @@ export type BrandedWorkbookSheet = {
 };
 
 export async function buildBrandedWorkbookBuffer(sheets: BrandedWorkbookSheet[]) {
+	const { default: ExcelJS } = await import("exceljs");
 	const workbook = new ExcelJS.Workbook();
 	workbook.creator = "Faragon Database";
 	workbook.lastModifiedBy = "Faragon Database";

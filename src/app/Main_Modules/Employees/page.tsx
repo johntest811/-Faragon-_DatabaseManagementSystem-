@@ -11,6 +11,7 @@ import { useAuthRole, useMyColumnAccess, useMyModuleAccess, useMyModuleDeleteAcc
 import EmployeeEditorModal from "../../Components/EmployeeEditorModal";
 import EmployeeExcelImportModal from "../../Components/EmployeeExcelImportModal";
 import LoadingCircle from "../../Components/LoadingCircle";
+import PageLoading from "../../Components/PageLoading";
 import TableZoomWrapper from "@/app/Components/TableZoomWrapper";
 import ImportSummaryModal, { ImportSummaryData } from "../Components/ImportSummaryModal";
 import EmployeeStatusMenu from "../Components/EmployeeStatusMenu";
@@ -185,7 +186,7 @@ const HIRE_MONTH_OPTIONS = [
 export default function EmployeesPage() {
 	const router = useRouter();
 	const { role: sessionRole } = useAuthRole();
-	const { canAccess: canAccessEmployees } = useMyModuleAccess("employees");
+	const { canAccess: canAccessEmployees, loading: accessLoading } = useMyModuleAccess("employees");
 	const { canEdit: canEditEmployees } = useMyModuleEditAccess("employees");
 	const {
 		allowedColumns: allowedEmployeeColumns,
@@ -272,11 +273,9 @@ export default function EmployeesPage() {
 	const fetchEmployees = useCallback(async () => {
 		const fetchRunId = ++fetchRunIdRef.current;
 		if (loadingEmployeeColumns) {
-			setLoading(true);
 			return;
 		}
 
-		setLoading(true);
 		setError(employeeColumnsError || "");
 		try {
 			const selectFields = new Set<string>(["applicant_id", "created_at", "is_archived", "is_trashed"]);
@@ -299,9 +298,6 @@ export default function EmployeesPage() {
 			if (fetchError) {
 				console.error(fetchError);
 				setError(fetchError.message || "Failed to load employees");
-				setEmployees([]);
-				setLicensureByApplicantId({});
-				setExpiringSummaryByApplicantId({});
 			} else {
 				const list = ((data ?? []) as unknown as Applicant[]);
 				setEmployees(list);
@@ -345,6 +341,8 @@ export default function EmployeesPage() {
 					}
 				})();
 			}
+		} catch (e: unknown) {
+			setError(e instanceof Error ? e.message : "Failed to load employees");
 		} finally {
 			if (fetchRunIdRef.current === fetchRunId) setLoading(false);
 		}
@@ -915,6 +913,9 @@ if (hiredMonthFilter !== "ALL") {
 		setServiceExportOpen(false);
 	}
 
+	if (accessLoading || loadingEmployeeColumns) return <PageLoading label="Loading employees..." />;
+	if (employeeColumnsError) return <section role="alert">Unable to verify employee permissions.</section>;
+
 	if (!canAccessEmployees) {
 		return (
 			<section className="glass-panel animate-fade-in rounded-3xl p-6 space-y-3">
@@ -934,7 +935,7 @@ if (hiredMonthFilter !== "ALL") {
 
 	return (
 		<div className="space-y-5">
-			<div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+			<div className="flex flex-col xl:flex-row xl:flex-wrap xl:items-center xl:justify-between gap-3">
 				<div className="flex items-center gap-3 text-black">
 					<div className="relative w-full md:w-[360px]">
 						<Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
@@ -954,7 +955,7 @@ if (hiredMonthFilter !== "ALL") {
 						<SlidersHorizontal className="w-5 h-5 text-gray-700" />
 					</button>
 				</div>
-				<div className="flex items-center gap-3 justify-between md:justify-end">
+				<div className="flex flex-wrap items-center gap-3 justify-between xl:justify-end">
 					<div className="flex items-center gap-2">
 						<div className="text-xs text-gray-500">Sort By:</div>
 						<select
@@ -996,7 +997,7 @@ if (hiredMonthFilter !== "ALL") {
 					</div>
 
 						{canAccessEmployees ? (
-						<div className="flex items-center gap-2">
+						<div className="flex flex-wrap items-center gap-2">
 							{canExportEmployees ? (
 								<button
 									type="button"

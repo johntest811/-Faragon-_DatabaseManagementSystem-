@@ -10,6 +10,7 @@ import { useSignedStorageUrlMap } from "../../Client/useSignedStorageUrls";
 import { useAuthRole, useMyColumnAccess, useMyModuleAccess, useMyModuleEditAccess } from "../../Client/useRbac";
 import EmployeeEditorModal from "../../Components/EmployeeEditorModal";
 import LoadingCircle from "../../Components/LoadingCircle";
+import PageLoading from "../../Components/PageLoading";
 import TableZoomWrapper from "@/app/Components/TableZoomWrapper";
 import DetachmentHistoryPopover from "../Components/DetachmentHistoryPopover";
 import EmployeeStatusMenu from "../Components/EmployeeStatusMenu";
@@ -117,29 +118,30 @@ export default function ApplicantsPage() {
 	const [editorApplicantId, setEditorApplicantId] = useState<string | null>(null);
 
 	const fetchApplicants = useCallback(async () => {
-		setLoading(true);
 		setError("");
+		try {
+			const { data, error: fetchError } = await supabase
+				.from("applicants")
+				.select(
+					"applicant_id, created_at, custom_id, first_name, middle_name, last_name, client_position, detachment, status, gender, birth_date, age, client_contact_num, client_email, profile_image_path, is_archived, is_trashed"
+				)
+				.eq("is_archived", false)
+				.eq("is_trashed", false)
+				.order("created_at", { ascending: false })
+				.limit(2000);
 
-		const { data, error: fetchError } = await supabase
-			.from("applicants")
-			.select(
-				"applicant_id, created_at, custom_id, first_name, middle_name, last_name, client_position, detachment, status, gender, birth_date, age, client_contact_num, client_email, profile_image_path, is_archived, is_trashed"
-			)
-			.eq("is_archived", false)
-			.eq("is_trashed", false)
-			.order("created_at", { ascending: false })
-			.limit(2000);
+			if (fetchError) {
+				console.error(fetchError);
+				setError(fetchError.message || "Failed to load applicants.");
+				return;
+			}
 
-		if (fetchError) {
-			console.error(fetchError);
-			setError(fetchError.message || "Failed to load applicants.");
-			setApplicants([]);
+			setApplicants(((data ?? []) as ApplicantRow[]) || []);
+		} catch (e: unknown) {
+			setError(e instanceof Error ? e.message : "Failed to load applicants.");
+		} finally {
 			setLoading(false);
-			return;
 		}
-
-		setApplicants(((data ?? []) as ApplicantRow[]) || []);
-		setLoading(false);
 	}, []);
 
 	useEffect(() => {
@@ -303,13 +305,7 @@ export default function ApplicantsPage() {
 	}
 
 	if (totalLoading) {
-		return (
-			<section className="glass-panel animate-fade-in rounded-3xl p-6">
-				<div className="py-12 flex justify-center">
-					<LoadingCircle />
-				</div>
-			</section>
-		);
+		return <PageLoading label="Loading applicants..." />;
 	}
 
 	if (!canAccessApplicants) {
@@ -330,9 +326,11 @@ export default function ApplicantsPage() {
 		);
 	}
 
+	if (columnError) return <section role="alert">Unable to verify applicant permissions.</section>;
+
 	return (
 		<section className="space-y-5 pb-6">
-			<div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+			<div className="flex flex-col xl:flex-row xl:flex-wrap xl:items-center xl:justify-between gap-3">
 				<div className="flex items-center gap-3 text-black">
 					<div className="relative w-full md:w-[360px]">
 						<Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
@@ -345,7 +343,7 @@ export default function ApplicantsPage() {
 					</div>
 				</div>
 
-				<div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-end">
+				<div className="flex flex-wrap items-center gap-3 xl:justify-end">
 					<div className="flex items-center gap-2">
 						<div className="text-xs text-gray-500">Status:</div>
 						<select
@@ -384,7 +382,7 @@ export default function ApplicantsPage() {
 						</button>
 					</div>
 
-					<div className="flex items-center gap-2">
+					<div className="flex flex-wrap items-center gap-2">
 						{canExportApplicants ? (
 							<>
 								<button

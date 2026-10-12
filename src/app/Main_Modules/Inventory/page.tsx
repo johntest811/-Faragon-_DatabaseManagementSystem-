@@ -5,6 +5,7 @@ import { Boxes, Download, FileDown, FileText, Pencil, Search, Upload, X } from "
 import { supabase } from "@/app/Client/SupabaseClients";
 import { useAuthRole, useMyColumnAccess, useMyModuleAccess } from "@/app/Client/useRbac";
 import LoadingCircle from "@/app/Components/LoadingCircle";
+import PageLoading from "@/app/Components/PageLoading";
 import TableZoomWrapper from "@/app/Components/TableZoomWrapper";
 import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
@@ -470,7 +471,7 @@ function formatTimestamp(value: string | null) {
 
 export default function LogisticsInventoryPage() {
   const { role } = useAuthRole();
-  const { canAccess: canAccessInventory } = useMyModuleAccess("inventory");
+  const { canAccess: canAccessInventory, loading: accessLoading } = useMyModuleAccess("inventory");
   const {
     allowedColumns: allowedInventoryColumns,
     restricted: inventoryColumnsRestricted,
@@ -858,36 +859,36 @@ export default function LogisticsInventoryPage() {
 
   const loadData = useCallback(async () => {
     if (loadingInventoryColumns) {
-      setLoading(true);
       return;
     }
 
-    setLoading(true);
     setError(inventoryColumnsError || "");
-
-    const selectFields = new Set<string>(["id", "last_updated_at"]);
-    for (const [columnKey, dbFields] of Object.entries(INVENTORY_COLUMN_TO_DB_FIELDS)) {
-      const canViewColumn = !inventoryColumnsRestricted || allowedInventoryColumns.has(columnKey);
-      if (!canViewColumn) continue;
-      for (const field of dbFields) {
-        selectFields.add(field);
+    try {
+      const selectFields = new Set<string>(["id", "last_updated_at"]);
+      for (const [columnKey, dbFields] of Object.entries(INVENTORY_COLUMN_TO_DB_FIELDS)) {
+        const canViewColumn = !inventoryColumnsRestricted || allowedInventoryColumns.has(columnKey);
+        if (!canViewColumn) continue;
+        for (const field of dbFields) {
+          selectFields.add(field);
+        }
       }
+
+      const res = await supabase
+        .from("inventory_fixed_asset")
+        .select(Array.from(selectFields).join(", "))
+        .order("date", { ascending: false })
+        .limit(1000);
+
+      if (res.error) {
+        setError(res.error.message || "Failed to load inventory");
+      } else {
+        setRows((res.data as unknown as InventoryRow[]) || []);
+      }
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Failed to load inventory");
+    } finally {
+      setLoading(false);
     }
-
-    const res = await supabase
-      .from("inventory_fixed_asset")
-      .select(Array.from(selectFields).join(", "))
-      .order("date", { ascending: false })
-      .limit(1000);
-
-    if (res.error) {
-      setError(res.error.message || "Failed to load inventory");
-      setRows([]);
-    } else {
-      setRows((res.data as unknown as InventoryRow[]) || []);
-    }
-
-    setLoading(false);
   }, [loadingInventoryColumns, inventoryColumnsError, inventoryColumnsRestricted, allowedInventoryColumns]);
 
   async function downloadTemplate(format: "xlsx" | "csv") {
@@ -1787,6 +1788,9 @@ function downloadInventoryTemplateXlsx() {
 
   const mainInventoryHeaderCell = (align = "text-left", rounded = "") =>
     `sticky top-0 z-20 bg-[#FFDA03] px-4 py-3 ${align} font-semibold text-black whitespace-nowrap shadow-[0_2px_0_rgba(0,0,0,0.16)] ${rounded}`;
+
+  if (accessLoading || loadingInventoryColumns) return <PageLoading label="Loading inventory..." />;
+  if (inventoryColumnsError) return <section role="alert">Unable to verify inventory permissions.</section>;
 
   if (!canAccessInventory) {
     return (

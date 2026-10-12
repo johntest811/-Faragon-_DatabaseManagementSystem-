@@ -6,6 +6,7 @@ import { createPortal } from "react-dom";
 import { supabase } from "../../Client/SupabaseClients";
 import { useAuthRole, useMyModules, useMyModuleDeleteAccess, useMyModuleEditAccess } from "../../Client/useRbac";
 import LoadingCircle from "../../Components/LoadingCircle";
+import PageLoading from "../../Components/PageLoading";
 import TableZoomWrapper from "@/app/Components/TableZoomWrapper";
 import { useToast } from "../../Components/ToastProvider";
 import {
@@ -400,6 +401,7 @@ function RequestsPageContent() {
 
   const [modules, setModules] = useState<ModuleRow[]>([]);
   const [loadingModules, setLoadingModules] = useState(true);
+  const [initialLoading, setInitialLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string>("");
   const [success, setSuccess] = useState<string>("");
@@ -530,7 +532,6 @@ function RequestsPageContent() {
   }, []);
 
   const loadMyRequests = useCallback(async () => {
-    setLoadingRequests(true);
     try {
       const session = await supabase.auth.getSession();
       const userId = String(session.data.session?.user?.id ?? "").trim();
@@ -675,8 +676,7 @@ function RequestsPageContent() {
         }
       }
     } catch {
-      // Don't block the page if the table doesn't exist yet.
-      setMyRequests([]);
+      // Keep previous requests visible if a background refresh fails.
     } finally {
       setLoadingRequests(false);
     }
@@ -709,10 +709,11 @@ function RequestsPageContent() {
   }, [canReviewRequests]);
 
   useEffect(() => {
-    loadModules();
-    loadApplicants();
-    loadApprovers();
-    loadMyRequests();
+    let cancelled = false;
+    void Promise.allSettled([loadModules(), loadApplicants(), loadApprovers(), loadMyRequests()]).then(() => {
+      if (!cancelled) setInitialLoading(false);
+    });
+    return () => { cancelled = true; };
   }, [loadModules, loadApplicants, loadApprovers, loadMyRequests]);
 
   useEffect(() => {
@@ -1405,6 +1406,10 @@ function RequestsPageContent() {
     }
   }
 
+  if (initialLoading) {
+    return <PageLoading label="Loading requests..." />;
+  }
+
   return (
     <section className="glass-panel animate-slide-up rounded-2xl shadow-2xl p-5 border-none">
       <div className="flex items-start justify-between gap-3 mb-3">
@@ -1854,9 +1859,7 @@ export default function RequestsPage() {
   return (
     <Suspense
       fallback={
-        <section className="glass-panel rounded-2xl shadow-sm p-5 animate-slide-up border-none">
-          <LoadingCircle label="Loading requests..." />
-        </section>
+        <PageLoading label="Loading requests..." />
       }
     >
       <RequestsPageContent />

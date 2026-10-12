@@ -60,7 +60,7 @@ export default function TableZoomWrapper({
   }
 
   return (
-    <div className="space-y-3" onWheel={handleWheel}>
+    <div className="min-w-0 max-w-full space-y-3" onWheel={handleWheel}>
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#e5dcc7] bg-white/90 px-4 py-3 shadow-sm">
         <div>
           <div className="text-sm font-semibold text-black">Table Zoom</div>
@@ -99,7 +99,7 @@ export default function TableZoomWrapper({
         </div>
       </div>
 
-      <div style={{ zoom }} className="origin-top-left">
+      <div style={{ zoom }} className="min-w-0 origin-top-left">
         {children}
       </div>
     </div>

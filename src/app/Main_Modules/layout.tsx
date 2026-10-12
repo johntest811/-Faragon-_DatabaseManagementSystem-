@@ -665,6 +665,8 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
   }, [currentAdmin.profileImagePath, currentProfileUrls]);
   const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
+  const shellRef = useRef<HTMLDivElement>(null);
+  const headerRef = useRef<HTMLElement>(null);
   const [workforceOpen, setWorkforceOpen] = useState(false);
   const [workforceFlyoutOpen, setWorkforceFlyoutOpen] = useState(false);
   const [workforceFlyoutPosition, setWorkforceFlyoutPosition] = useState<{ top: number; left: number } | null>(null);
@@ -1714,23 +1716,31 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
   useEffect(() => {
     let cancelled = false;
     let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+    let refreshing = false;
+    let lastRefresh = 0;
+    type Widget = "activity" | "expiring" | "preview";
+    const pending = new Set<Widget>();
+    const refreshers = { activity: refreshActivity, expiring: refreshExpiring, preview: refreshPreview };
+    const permitted: Widget[] = [];
+    if (canViewRecentActivitiesWidget) permitted.push("activity");
+    if (canViewExpiringWidget || canViewCarInsuranceWidget || canViewContractExpiringWidget) permitted.push("expiring");
+    if (canViewPreviewWidget) permitted.push("preview");
 
-    const scheduleRefresh = () => {
-      if (typeof document !== "undefined" && document.visibilityState === "hidden") {
-        return;
-      }
-
-      if (refreshTimer) {
-        clearTimeout(refreshTimer);
-      }
-
+    const scheduleRefresh = (widgets: Widget[] = permitted) => {
+      widgets.forEach((widget) => { if (permitted.includes(widget)) pending.add(widget); });
+      if (cancelled || refreshing || refreshTimer || !pending.size || document.visibilityState === "hidden" || !navigator.onLine) return;
       refreshTimer = setTimeout(() => {
         refreshTimer = null;
-        if (cancelled) return;
-        void refreshActivity();
-        void refreshExpiring();
-        void refreshPreview();
-      }, 600);
+        if (cancelled || document.visibilityState === "hidden" || !navigator.onLine) return;
+        const batch = Array.from(pending);
+        pending.clear();
+        refreshing = true;
+        lastRefresh = Date.now();
+        void Promise.allSettled(batch.map((widget) => refreshers[widget]())).finally(() => {
+          refreshing = false;
+          if (pending.size) scheduleRefresh([]);
+        });
+      }, Math.max(600, 5_000 - (Date.now() - lastRefresh)));
     };
 
     const tables = [
@@ -1749,16 +1759,22 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
       "audit_log",
     ];
 
-    const channels = tables.map((table) =>
-      supabase
-        .channel(`realtime:topnav:${table}`)
-        .on("postgres_changes", { event: "*", schema: "public", table }, scheduleRefresh)
-        .subscribe()
-    );
-
-    const intervalId = window.setInterval(() => {
-      scheduleRefresh();
-    }, 15 * 1000);
+    // A single channel, and only refresh the widgets affected by each table.
+    const widgetsForTable = (table: string): Widget[] => table === "audit_log" ? ["activity"]
+      : table === "applicants" ? ["preview", "expiring"] : ["expiring"];
+    const watched = tables.filter((table) => widgetsForTable(table).some((widget) => permitted.includes(widget)));
+    const channel = watched.length ? watched.reduce((current, table) => current.on(
+      "postgres_changes", { event: "*", schema: "public", table },
+      () => scheduleRefresh(widgetsForTable(table))
+    ), supabase.channel("realtime:topnav")).subscribe() : null;
+    // Realtime supplies prompt updates; polling is only a recovery fallback.
+    const intervalId = window.setInterval(() => scheduleRefresh(), 120_000);
+    const resume = () => {
+      if (pending.size || Date.now() - lastRefresh >= 30_000) scheduleRefresh();
+    };
+    document.addEventListener("visibilitychange", resume);
+    window.addEventListener("online", resume);
+    scheduleRefresh();
 
     return () => {
       cancelled = true;
@@ -1767,34 +1783,11 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
         clearTimeout(refreshTimer);
         refreshTimer = null;
       }
-      channels.forEach((channel) => supabase.removeChannel(channel));
+      if (channel) void supabase.removeChannel(channel);
+      document.removeEventListener("visibilitychange", resume);
+      window.removeEventListener("online", resume);
     };
-  }, [refreshActivity, refreshExpiring, refreshPreview]);
-
-  useEffect(() => {
-    refreshActivity();
-    refreshExpiring();
-    refreshPreview();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [api]);
-
-  useEffect(() => {
-    if (canViewRecentActivitiesWidget) {
-      void refreshActivity();
-    }
-  }, [canViewRecentActivitiesWidget, refreshActivity]);
-
-  useEffect(() => {
-    if (canViewExpiringWidget || canViewCarInsuranceWidget || canViewContractExpiringWidget) {
-      void refreshExpiring();
-    }
-  }, [canViewExpiringWidget, canViewCarInsuranceWidget, canViewContractExpiringWidget, refreshExpiring]);
-
-  useEffect(() => {
-    if (canViewPreviewWidget) {
-      void refreshPreview();
-    }
-  }, [canViewPreviewWidget, refreshPreview]);
+  }, [refreshActivity, refreshExpiring, refreshPreview, canViewRecentActivitiesWidget, canViewExpiringWidget, canViewCarInsuranceWidget, canViewContractExpiringWidget, canViewPreviewWidget]);
 
   const fromParam = searchParams?.get("from") ?? null;
 
@@ -2224,27 +2217,52 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
   const canUsePortal = typeof document !== "undefined";
 
   useEffect(() => {
-    if (typeof window !== "undefined" && window.innerWidth < 768) {
-      setCollapsed(true);
-    }
+    const media = window.matchMedia("(max-width: 1023px)");
+    const closeDrawer = () => { if (media.matches) setCollapsed(true); };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") closeDrawer();
+    };
+    closeDrawer();
+    media.addEventListener("change", closeDrawer);
+    window.addEventListener("keydown", escape);
+    return () => {
+      media.removeEventListener("change", closeDrawer);
+      window.removeEventListener("keydown", escape);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (window.innerWidth < 1024) setCollapsed(true);
+  }, [pathname]);
+
+  useEffect(() => {
+    const header = headerRef.current;
+    if (!header) return;
+    const update = () => shellRef.current?.style.setProperty("--app-header-height", `${header.getBoundingClientRect().height}px`);
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(header);
+    return () => observer.disconnect();
   }, []);
 
   return (
-    <div className="flex h-screen overflow-hidden bg-gray-50 text-gray-900 font-sans">
+    <div ref={shellRef} className="app-shell flex h-screen overflow-hidden bg-gray-50 text-gray-900 font-sans">
       {/* Mobile Sidebar Backdrop */}
       {!collapsed ? (
         <div
           onClick={() => setCollapsed(true)}
-          className="fixed inset-0 z-40 bg-slate-900/50 backdrop-blur-xs md:hidden animate-fade-in"
+          className="fixed inset-0 z-[45] bg-slate-900/50 lg:hidden animate-fade-in"
         />
       ) : null}
 
       {/* Sidebar */}
       <aside
+        id="app-sidebar"
+        aria-label="Main navigation"
         className={`bg-white border-r flex flex-col min-h-0 z-50
           transition-all duration-300 ease-in-out
-          fixed inset-y-0 left-0 md:static
-          ${collapsed ? "-translate-x-full md:translate-x-0 md:w-20" : "translate-x-0 w-72"}`}
+          fixed inset-y-0 left-0 lg:static max-w-[85vw]
+          ${collapsed ? "invisible -translate-x-full lg:visible lg:translate-x-0 lg:w-20" : "translate-x-0 w-72"}`}
       >
         <div className="px-5 pt-6 pb-4">
           <div className={`flex items-center gap-3 ${collapsed ? "justify-center" : ""}`}>
@@ -2260,7 +2278,10 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
           </div>
         </div>
 
-        <nav className="flex-1 min-h-0 overflow-y-auto px-3 space-y-2 pb-3">
+        <nav className="flex-1 min-h-0 overflow-y-auto px-3 space-y-2 pb-3"
+          onClick={(event) => {
+            if (window.innerWidth < 1024 && (event.target as HTMLElement).closest("a")) setCollapsed(true);
+          }}>
           {menu.map((item) => {
             // Render the workforce group once at the first workforce item.
             const isFirstWorkforce = firstWorkforceKey && item.key === firstWorkforceKey;
@@ -2491,15 +2512,17 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
 
       <div className="flex-1 min-w-0 flex flex-col min-h-0">
         {/* Top Navigation */}
-        <header className="bg-white sticky top-0 z-40">
+        <header ref={headerRef} className="app-header shrink-0 bg-white sticky top-0 z-40 pb-3">
           <div className="px-4 sm:px-6 pt-4 sm:pt-6">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-3">
                 <button
                   type="button"
                   onClick={() => setCollapsed((v) => !v)}
-                  className="md:hidden p-2 rounded-xl border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 active:scale-95 transition-all shadow-sm"
+                  className="lg:hidden p-2 rounded-xl border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 active:scale-95 transition-all shadow-sm"
                   aria-label="Toggle navigation menu"
+                  aria-expanded={!collapsed}
+                  aria-controls="app-sidebar"
                 >
                   <Menu className="w-5 h-5" />
                 </button>
@@ -2511,7 +2534,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
                 </div>
               </div>
 
-              <div className="flex items-center gap-3">
+              <div className="app-notification-actions flex min-w-0 flex-wrap items-center gap-2 sm:gap-3">
                 {/* Desktop App Updater Dropdown */}
                 {typeof window !== "undefined" && Boolean((globalThis as any).electronAPI?.app) ? (
                   <div className="relative" data-update-menu>
@@ -3246,7 +3269,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
                       <span className="text-xs font-semibold text-gray-600">{adminInitials}</span>
                     )}
                   </div>
-                  <div className="hidden sm:block min-w-0">
+                  <div className="hidden sm:block min-w-0 max-w-40">
                     <div className="text-sm font-semibold text-gray-900 truncate">{adminDisplayName}</div>
                     <div className="text-[11px] text-gray-500 truncate">{currentAdmin.username || (sessionRole ?? "Admin")}</div>
                   </div>
@@ -3257,13 +3280,18 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
         </header>
 
         <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden bg-[linear-gradient(180deg,rgba(255,255,255,0.82)_0%,rgba(248,244,236,0.76)_40%,rgba(236,242,249,0.84)_100%)]">
-          <div className="pointer-events-none absolute inset-0 overflow-hidden">
+          <div className="app-atmosphere pointer-events-none absolute inset-0 overflow-hidden">
             <div className="absolute -right-20 top-10 h-64 w-64 rounded-full bg-[#FFDA03]/15 blur-3xl" />
             <div className="absolute bottom-8 left-6 h-72 w-72 rounded-full bg-[#8B1C1C]/10 blur-3xl" />
             <div className="absolute inset-x-0 top-0 h-24 bg-gradient-to-b from-white/80 to-transparent" />
           </div>
 
-          <div className="relative border-b border-white/70 bg-white/75 px-6 py-4 backdrop-blur-xl animate-fade-in">
+          <main
+            className="app-page-scroll relative flex-1 min-h-0 min-w-0 overflow-x-hidden px-3 pb-10 pt-4 sm:px-6 lg:px-8"
+            data-app-scroll-container
+            onWheelCapture={routeTableWheelToPage}
+          >
+          <div className="relative mb-4 border-b border-white/70 bg-white/75 px-3 py-4 sm:px-6 animate-fade-in">
             <div className="flex flex-wrap items-start gap-4">
               <div className="flex items-center gap-3">
                 <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#8B1C1C] text-white shadow-lg shadow-[#8B1C1C]/20">
@@ -3282,12 +3310,7 @@ function MainModulesLayoutInner({ children }: LayoutProps) {
             <p className="mt-2 max-w-4xl text-sm leading-6 text-slate-500">{pageMeta.description}</p>
           </div>
 
-          <main
-            className="app-page-scroll relative flex-1 min-h-0 overflow-x-hidden px-4 pb-10 pt-6 sm:px-6 lg:px-8"
-            data-app-scroll-container
-            onWheelCapture={routeTableWheelToPage}
-          >
-            <div className="mx-auto flex w-full max-w-[1680px] flex-col gap-6">{children}</div>
+            <div className="app-page-content mx-auto flex w-full min-w-0 max-w-[1680px] flex-col gap-6">{children}</div>
           </main>
         </div>
       </div>

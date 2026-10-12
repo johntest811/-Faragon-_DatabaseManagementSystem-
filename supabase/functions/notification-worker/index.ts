@@ -40,9 +40,6 @@ type WorkerSettingsRow = {
 type NotificationConfig = {
   email: NotificationEmailSettingsRow | null;
   preferences: NotificationPreferencesRow;
-  recipients: string[];
-  carInsuranceRecipients: string[];
-  contractRecipients: string[];
 };
 
 type LicensureMailItem = {
@@ -688,18 +685,13 @@ async function loadDedicatedRecipientEmails(
 }
 
 async function loadNotificationConfig(admin: SupabaseClient): Promise<NotificationConfig> {
-  const [emailRes, recipients, carInsuranceRecipients, contractRecipients] = await Promise.all([
-    admin
-      .from("notification_email_settings")
-      .select("id, provider, gmail_user, from_email, gmail_app_password, is_active, notes")
-      .eq("provider", "gmail")
-      .order("updated_at", { ascending: false })
-      .limit(1)
-      .maybeSingle(),
-    loadConfiguredRecipientEmails(admin),
-    loadDedicatedRecipientEmails(admin, "car_insurance_notification_recipients"),
-    loadDedicatedRecipientEmails(admin, "contract_notification_recipients"),
-  ]);
+  const emailRes = await admin
+    .from("notification_email_settings")
+    .select("id, provider, gmail_user, from_email, gmail_app_password, is_active, notes")
+    .eq("provider", "gmail")
+    .order("updated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
 
   if (emailRes.error) throw emailRes.error;
 
@@ -752,9 +744,6 @@ async function loadNotificationConfig(admin: SupabaseClient): Promise<Notificati
   return {
     email: (emailRes.data as NotificationEmailSettingsRow | null) ?? null,
     preferences: prefRow,
-    recipients,
-    carInsuranceRecipients,
-    contractRecipients,
   };
 }
 
@@ -1540,7 +1529,7 @@ async function executeAutomaticNotificationRun(
     maxRecipients?: number | null;
   },
 ) {
-  const { email, preferences, recipients, carInsuranceRecipients, contractRecipients } = await loadNotificationConfig(admin);
+  const { email, preferences } = await loadNotificationConfig(admin);
   if (args.requireSupabaseMode && !preferences.use_supabase_email_sender) {
     return {
       ok: true,
@@ -1632,6 +1621,27 @@ async function executeAutomaticNotificationRun(
           now,
         })
       );
+
+  if (!licensureItems.length && !otherItems.length && !contractItems.length) {
+    return {
+      ok: true,
+      message: args.sendAllEligible ? "Resend all finished." : "Run complete.",
+      summary: { sent: 0, failed: 0, skipped: 0 } satisfies RunSummary,
+    };
+  }
+
+  // Read recipients only for eligible categories; never cache recipient settings.
+  const [recipients, carInsuranceRecipients, contractRecipients] = await Promise.all([
+    licensureItems.length || otherItems.some((item) => !safeText(item.expiration_type).toUpperCase().startsWith("CAR_INSURANCE"))
+      ? loadConfiguredRecipientEmails(admin)
+      : Promise.resolve([] as string[]),
+    otherItems.some((item) => safeText(item.expiration_type).toUpperCase().startsWith("CAR_INSURANCE"))
+      ? loadDedicatedRecipientEmails(admin, "car_insurance_notification_recipients")
+      : Promise.resolve([] as string[]),
+    contractItems.length
+      ? loadDedicatedRecipientEmails(admin, "contract_notification_recipients")
+      : Promise.resolve([] as string[]),
+  ]);
 
   const [sentLicensureKeys, sentOtherKeys, sentContractKeys] = args.sendAllEligible
     ? [new Set<string>(), new Set<string>(), new Set<string>()]
@@ -1756,6 +1766,23 @@ async function executeAutomaticNotificationRun(
     message: args.sendAllEligible ? "Resend all finished." : "Run complete.",
     summary: { sent, failed, skipped: skipped + claimSkipped } satisfies RunSummary,
   };
+}
+
+let automaticNotificationRun: Promise<Awaited<ReturnType<typeof executeAutomaticNotificationRun>>> | null = null;
+
+async function runAutomaticNotificationsSingleFlight(admin: SupabaseClient) {
+  // Same-isolate requests share work. Database delivery claims still protect
+  // against other isolates and senders; completed results are never cached.
+  if (automaticNotificationRun) return automaticNotificationRun;
+  automaticNotificationRun = executeAutomaticNotificationRun(admin, {
+    sendAllEligible: false,
+    requireSupabaseMode: true,
+  });
+  try {
+    return await automaticNotificationRun;
+  } finally {
+    automaticNotificationRun = null;
+  }
 }
 
 async function sendTestEmail(admin: SupabaseClient, payload: JsonRecord) {
@@ -1967,10 +1994,7 @@ Deno.serve(async (req) => {
     }
 
     if (mode === "run_now") {
-      const result = await executeAutomaticNotificationRun(admin, {
-        sendAllEligible: false,
-        requireSupabaseMode: true,
-      });
+      const result = await runAutomaticNotificationsSingleFlight(admin);
       return buildJsonResponse(200, { success: true, mode, ...result });
     }
 
@@ -1983,10 +2007,7 @@ Deno.serve(async (req) => {
       return buildJsonResponse(200, { success: true, mode, ...result });
     }
 
-    const result = await executeAutomaticNotificationRun(admin, {
-      sendAllEligible: false,
-      requireSupabaseMode: true,
-    });
+    const result = await runAutomaticNotificationsSingleFlight(admin);
     return buildJsonResponse(200, { success: true, mode, ...result });
   } catch (errorLike) {
     const message = extractErrorMessageText(errorLike) || "Notification worker failed.";

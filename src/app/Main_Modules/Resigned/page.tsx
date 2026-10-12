@@ -7,6 +7,7 @@ import { Pencil, LayoutGrid, Table, SlidersHorizontal, Search } from "lucide-rea
 import { useAuthRole, useMyModuleAccess, useMyModuleDeleteAccess } from "../../Client/useRbac";
 import EmployeeEditorModal from "../../Components/EmployeeEditorModal";
 import LoadingCircle from "../../Components/LoadingCircle";
+import PageLoading from "../../Components/PageLoading";
 import TableZoomWrapper from "@/app/Components/TableZoomWrapper";
 import DetachmentHistoryPopover from "../Components/DetachmentHistoryPopover";
 import EmployeeStatusMenu from "../Components/EmployeeStatusMenu";
@@ -128,7 +129,7 @@ function ymd(value: string | null) {
 export default function ResignedPage() {
   const router = useRouter();
   const { role: sessionRole } = useAuthRole();
-  const { canAccess: canAccessResigned } = useMyModuleAccess("resigned");
+  const { canAccess: canAccessResigned, loading: accessLoading } = useMyModuleAccess("resigned");
   const { canDelete: canDeleteResigned } = useMyModuleDeleteAccess("resigned");
 
   const [viewMode, setViewMode] = useState<"grid" | "table">(() => {
@@ -160,7 +161,6 @@ export default function ResignedPage() {
 
   async function fetchEmployees() {
     const fetchRunId = ++fetchRunIdRef.current;
-    setLoading(true);
     setError("");
     try {
       const { data, error: fetchError } = await supabase
@@ -176,11 +176,12 @@ export default function ResignedPage() {
       if (fetchError) {
         console.error(fetchError);
         setError(fetchError.message || "Failed to load Resigned list");
-        setEmployees([]);
       } else {
         const list = (data as Applicant[]) || [];
         setEmployees(list);
       }
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Failed to load Resigned list");
     } finally {
       if (fetchRunIdRef.current === fetchRunId) setLoading(false);
     }
@@ -371,6 +372,8 @@ export default function ResignedPage() {
 
     await fetchEmployees();
   }
+
+  if (accessLoading) return <PageLoading label="Loading resigned employees..." />;
 
   if (!canAccessResigned) {
     return (

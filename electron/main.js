@@ -4505,7 +4505,23 @@ async function startApp() {
 }
 
 let notificationTimer = null;
+let notificationPollInFlight = false;
 let lastAutoRunKey = null;
+
+async function pollNotifications() {
+  if (notificationPollInFlight) return;
+  notificationPollInFlight = true;
+  try {
+    // Wait for every task, including a slow cleanup, before allowing another tick.
+    await Promise.allSettled([
+      maybeAutoSendNotifications(),
+      maybeAutoPurgeNotificationLogs(),
+      maybeAutoPurgeAuditLogs(),
+    ]);
+  } finally {
+    notificationPollInFlight = false;
+  }
+}
 
 function computeAutoRunKey(todayKey, email, preferences) {
   const useScheduledSend = preferences?.use_scheduled_send !== false;
@@ -4624,7 +4640,9 @@ async function maybeAutoSendNotifications() {
     const result = await runNotificationSend(admin);
     if (result?.ok && Number(result?.summary?.failed ?? 0) === 0) {
       lastAutoRunKey = runKey;
-      console.log('[notifications] auto-run:', result?.summary ?? {});
+      if (Number(result?.summary?.sent ?? 0) > 0) {
+        console.log('[notifications] auto-run:', result.summary);
+      }
     }
   } catch (e) {
     if (isTransientNetworkError(e)) {
@@ -4666,13 +4684,9 @@ if (gotSingleInstanceLock) {
     // Scheduler: checks frequently while the app is open so due emails send promptly.
     if (notificationTimer) clearInterval(notificationTimer);
     notificationTimer = setInterval(() => {
-      void maybeAutoSendNotifications();
-      void maybeAutoPurgeNotificationLogs();
-      void maybeAutoPurgeAuditLogs();
+      void pollNotifications();
     }, NOTIFICATION_TIMER_INTERVAL_MS);
-    void maybeAutoSendNotifications();
-    void maybeAutoPurgeNotificationLogs();
-    void maybeAutoPurgeAuditLogs();
+    void pollNotifications();
   });
 
   app.on('window-all-closed', () => {

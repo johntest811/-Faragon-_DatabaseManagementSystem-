@@ -7,6 +7,7 @@ import autoTable from "jspdf-autotable";
 import { supabase } from "@/app/Client/SupabaseClients";
 import { useAuthRole, useMyColumnAccess, useMyModuleAccess, useMyParaphernaliaDetachmentAccess } from "@/app/Client/useRbac";
 import LoadingCircle from "@/app/Components/LoadingCircle";
+import PageLoading from "@/app/Components/PageLoading";
 import ImportSummaryModal, { ImportSummaryData } from "../Components/ImportSummaryModal";
 import SpreadsheetImportModal from "@/app/Components/SpreadsheetImportModal";
 import TableZoomWrapper from "@/app/Components/TableZoomWrapper";
@@ -545,8 +546,8 @@ function DataTable<T>({
 
 export default function ParaphernaliaPage() {
   const { role } = useAuthRole();
-  const { canAccess: canAccessParaphernalia } = useMyModuleAccess("paraphernalia");
-  const { allowedColumns, restricted } = useMyColumnAccess("paraphernalia");
+  const { canAccess: canAccessParaphernalia, loading: accessLoading } = useMyModuleAccess("paraphernalia");
+  const { allowedColumns, restricted, loading: columnLoading, error: columnError } = useMyColumnAccess("paraphernalia");
   const detachmentAccess = useMyParaphernaliaDetachmentAccess();
   const isAdmin = role === "admin" || role === "superadmin";
   const canManageInventory = !detachmentAccess.restricted && (isAdmin || detachmentAccess.faragonAccess);
@@ -811,7 +812,6 @@ export default function ParaphernaliaPage() {
   }
 
   async function loadAll() {
-    setLoading(true);
     setError("");
     setSchemaWarning("");
 
@@ -1016,20 +1016,21 @@ export default function ParaphernaliaPage() {
       );
     } catch (e: unknown) {
       setError(getErrorMessage(e, "Failed to load paraphernalia data."));
-      setContracts([]);
-      setStockInRows([]);
-      setStockOutRows([]);
     } finally {
-      const removedRes = await supabase.from("removed_paraphernalia_items").select("item_name");
-      if (!removedRes.error && removedRes.data) {
-        const dbSet = new Set(removedRes.data.map((r: { item_name: string }) => normalizeItem(r.item_name)).filter(Boolean));
-        setRemovedItemNames(dbSet);
-        try {
-          localStorage.setItem("removed_paraphernalia_items", JSON.stringify(Array.from(dbSet)));
-        } catch {}
+      try {
+        const removedRes = await supabase.from("removed_paraphernalia_items").select("item_name");
+        if (!removedRes.error && removedRes.data) {
+          const dbSet = new Set(removedRes.data.map((r: { item_name: string }) => normalizeItem(r.item_name)).filter(Boolean));
+          setRemovedItemNames(dbSet);
+          try {
+            localStorage.setItem("removed_paraphernalia_items", JSON.stringify(Array.from(dbSet)));
+          } catch {}
+        }
+      } catch (e: unknown) {
+        setError(getErrorMessage(e, "Failed to load removed paraphernalia items."));
+      } finally {
+        setLoading(false);
       }
-
-      setLoading(false);
     }
   }
 
@@ -2590,6 +2591,11 @@ export default function ParaphernaliaPage() {
       </ModalShell>
     );
   }
+
+  if (loading || accessLoading || columnLoading || detachmentAccess.loading) {
+    return <PageLoading label="Loading paraphernalia..." />;
+  }
+  if (columnError || detachmentAccess.error) return <section role="alert">Unable to verify paraphernalia permissions.</section>;
 
   if (!canAccessParaphernalia) {
     return (

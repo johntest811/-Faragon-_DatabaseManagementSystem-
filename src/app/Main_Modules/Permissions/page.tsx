@@ -4,7 +4,7 @@ import React, { Suspense, useCallback, useEffect, useMemo, useState } from "reac
 import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "../../Client/SupabaseClients";
 import { useAuthRole } from "../../Client/useRbac";
-import LoadingCircle from "../../Components/LoadingCircle";
+import PageLoading from "../../Components/PageLoading";
 import { AccessTabs } from "../Components/AccessTabs";
 import {
 	columnsForModule,
@@ -96,7 +96,7 @@ function getLegacyAdminDisplayName() {
 function PermissionsPageContent() {
 	const router = useRouter();
 	const searchParams = useSearchParams();
-	const { role } = useAuthRole();
+	const { role, loading: roleLoading } = useAuthRole();
 	const api = getElectronApi();
 	const preselectedAdminId = String(searchParams?.get("admin") ?? "").trim();
 
@@ -111,6 +111,8 @@ function PermissionsPageContent() {
 	const [adminSearch, setAdminSearch] = useState("");
 	const [loadingAdmins, setLoadingAdmins] = useState(false);
 	const [loadingAccess, setLoadingAccess] = useState(false);
+	const [initialLoading, setInitialLoading] = useState(true);
+	const [accessReadyAdminId, setAccessReadyAdminId] = useState<string | null>(null);
 	const [detachmentOptions, setDetachmentOptions] = useState<string[]>(["FARAGON"]);
 	const [savingDetachment, setSavingDetachment] = useState(false);
 
@@ -173,8 +175,8 @@ function PermissionsPageContent() {
 				if (prev && rows.some((r) => r.id === prev)) return prev;
 				return rows[0]?.id ?? "";
 			});
-		} catch {
-			setAdmins([]);
+		} catch (e: unknown) {
+			setError(getErrorMessage(e));
 		} finally {
 			setLoadingAdmins(false);
 		}
@@ -341,9 +343,13 @@ function PermissionsPageContent() {
 	}, [modules]);
 
 	useEffect(() => {
-		loadModules();
-		loadAdmins();
-		loadDetachments();
+		let cancelled = false;
+		void Promise.allSettled([loadModules(), loadAdmins(), loadDetachments()]).then((results) => {
+			if (cancelled) return;
+			const failure = results.find((result) => result.status === "rejected");
+			if (failure?.status === "rejected") setError(getErrorMessage(failure.reason));
+			setInitialLoading(false);
+		});
 
 		const channel = supabase
 			.channel("realtime:rbac-permissions")
@@ -354,6 +360,7 @@ function PermissionsPageContent() {
 			.subscribe();
 
 		return () => {
+			cancelled = true;
 			supabase.removeChannel(channel);
 		};
 	}, [loadAdmins, loadDetachments, loadModules]);
@@ -387,12 +394,12 @@ function PermissionsPageContent() {
 	}
 
 	useEffect(() => {
-		if (!selectedAdminId) {
-			void loadSelectedAdminAccess(null);
-			return;
-		}
+		let cancelled = false;
 		const admin = admins.find((row) => row.id === selectedAdminId) ?? null;
-		void loadSelectedAdminAccess(admin);
+		void loadSelectedAdminAccess(admin).finally(() => {
+			if (!cancelled) setAccessReadyAdminId(selectedAdminId);
+		});
+		return () => { cancelled = true; };
 	}, [admins, loadSelectedAdminAccess, selectedAdminId]);
 
 	async function toggleAdminModule(moduleKey: string) {
@@ -694,7 +701,10 @@ function PermissionsPageContent() {
 		);
 	}, [adminSearch, admins]);
 
-	const accessDenied = role !== null && role !== "superadmin" && role !== "admin";
+	const accessDenied = role !== "superadmin" && role !== "admin";
+	if (roleLoading || (!accessDenied && (initialLoading || accessReadyAdminId !== selectedAdminId))) {
+		return <PageLoading label="Loading permissions..." />;
+	}
 	if (accessDenied) {
 		return (
 			<section className="bg-white rounded-2xl shadow-sm border p-5">
@@ -999,9 +1009,7 @@ export default function PermissionsPage() {
 	return (
 		<Suspense
 			fallback={
-				<section className="bg-white rounded-2xl shadow-sm border p-5">
-					<LoadingCircle label="Loading permissions..." />
-				</section>
+				<PageLoading label="Loading permissions..." />
 			}
 		>
 			<PermissionsPageContent />

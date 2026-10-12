@@ -23,7 +23,7 @@ async function readAdminSession(): Promise<AdminSession | null> {
     .select("id, username, role, full_name, is_active")
     .eq("auth_user_id", sessionData.session.user.id)
     .maybeSingle();
-  if (adminError || !admin || admin.is_active === false) return null;
+  if (adminError || !admin || admin.is_active !== true) return null;
 
   const verified: AdminSession = {
     id: String(admin.id),
@@ -53,84 +53,41 @@ export function useAuthRole() {
 
   useEffect(() => {
     let cancelled = false;
+    let verificationId = 0;
 
     async function run() {
+      if (cancelled) return;
+      const currentVerification = ++verificationId;
+      const isCurrent = () => !cancelled && currentVerification === verificationId;
       setLoading(true);
       setError("");
+      setRole(null);
 
-      const legacySession = await readAdminSession();
-      if (legacySession) {
-        try {
-          const { data: adminRow, error: adminErr } = await supabase
-            .from("admins")
-            .select("role, is_active")
-            .eq("id", legacySession.id)
-            .single();
-
-          if (!cancelled) {
-            if (adminErr) {
-              setError(adminErr.message);
-              setRole(null);
-              setLoading(false);
-              return;
-            }
-
-            if (adminRow && adminRow.is_active === false) {
-              localStorage.removeItem("adminSession");
-              setRole(null);
-              setLoading(false);
-              return;
-            }
-
-            const dbRole = normalizeRoleName(adminRow?.role);
-            const sessionRole = normalizeRoleName(legacySession.role);
-
-            // Keep role in sync if DB was changed after login.
-            if (dbRole && dbRole !== sessionRole) {
-              const merged = { ...legacySession, role: dbRole };
-              localStorage.setItem("adminSession", JSON.stringify(merged));
-            }
-
-            setRole(dbRole ?? sessionRole);
-            setLoading(false);
-          }
-        } catch (authError) {
-          if (!cancelled) {
-            setError(authError instanceof Error ? authError.message : "Unable to verify the active account.");
-            setRole(null);
-            setLoading(false);
-          }
+      try {
+        const verifiedSession = await readAdminSession();
+        if (!isCurrent()) return;
+        if (verifiedSession) {
+          // readAdminSession already checked the Auth-linked row through RLS.
+          setRole(normalizeRoleName(verifiedSession.role));
+          return;
         }
-        return;
-      }
 
-      const { data: sessionData, error: sessErr } = await supabase.auth.getSession();
-      if (sessErr) {
-        if (!cancelled) {
-          setError(sessErr.message);
+        const { data: sessionData, error: sessErr } = await supabase.auth.getSession();
+        if (!isCurrent()) return;
+        if (sessErr) throw new Error(sessErr.message);
+        if (!sessionData.session) return;
+
+        const { data, error: rpcErr } = await supabase.rpc("current_role_name");
+        if (!isCurrent()) return;
+        if (rpcErr) throw new Error(rpcErr.message);
+        setRole(normalizeRoleName(data));
+      } catch (authError) {
+        if (isCurrent()) {
+          setError(authError instanceof Error ? authError.message : "Unable to verify the active account.");
           setRole(null);
-          setLoading(false);
         }
-        return;
-      }
-
-      if (!sessionData.session) {
-        if (!cancelled) {
-          setRole(null);
-          setLoading(false);
-        }
-        return;
-      }
-
-      const { data, error: rpcErr } = await supabase.rpc("current_role_name");
-      if (!cancelled) {
-        if (rpcErr) {
-          setError(rpcErr.message);
-          setRole(null);
-        } else {
-          setRole(normalizeRoleName(data));
-        }
-        setLoading(false);
+      } finally {
+        if (isCurrent()) setLoading(false);
       }
     }
 
@@ -246,7 +203,17 @@ export function useMyModules() {
       setLoading(true);
       setError("");
 
-      const legacySession = await readAdminSession();
+      let legacySession: AdminSession | null;
+      try {
+        legacySession = await readAdminSession();
+      } catch (authError) {
+        if (!cancelled) {
+          setError(authError instanceof Error ? authError.message : "Unable to verify the active account.");
+          setModules([]);
+          setLoading(false);
+        }
+        return;
+      }
       if (legacySession) {
         try {
           const legacyRole = normalizeRoleName(legacySession.role);

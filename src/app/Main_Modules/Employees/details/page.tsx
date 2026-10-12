@@ -21,7 +21,7 @@ import {
 import { supabase } from "../../../Client/SupabaseClients";
 import { useMyApplicantColumnAccess, useMyApplicantRowAccess, useMyColumnAccess, useMyModuleEditAccess } from "../../../Client/useRbac";
 import EmployeeEditorModal from "../../../Components/EmployeeEditorModal";
-import LoadingCircle from "../../../Components/LoadingCircle";
+import PageLoading from "../../../Components/PageLoading";
 import DetachmentHistoryPopover from "../../Components/DetachmentHistoryPopover";
 import { StorageUrlRequest, useSignedStorageUrls } from "../../../Client/useSignedStorageUrls";
 
@@ -376,16 +376,19 @@ function EmployeeDetailsInner() {
     allowedColumns: allowedEmployeeColumns,
     restricted: employeeColumnsRestricted,
     loading: loadingEmployeeColumns,
+    error: employeeColumnsError,
   } = useMyColumnAccess(accessModuleKey);
   const {
     allowedColumns: allowedApplicantColumns,
     restricted: applicantColumnsRestricted,
     loading: loadingApplicantColumns,
+    error: applicantColumnsError,
   } = useMyApplicantColumnAccess(accessModuleKey, id);
   const {
     hasAccess: hasApplicantRowAccess,
     restricted: applicantRowsRestricted,
     loading: loadingApplicantRows,
+    error: applicantRowsError,
   } = useMyApplicantRowAccess(accessModuleKey, id);
   const canEdit = canEditModule;
 
@@ -439,7 +442,10 @@ function EmployeeDetailsInner() {
   const currentStatus = useMemo(() => normalizeEmployeeStatus(applicant?.status ?? null), [applicant?.status]);
 
   useEffect(() => {
+    let cancelled = false;
+    let runId = 0;
     const run = async () => {
+      const requestId = ++runId;
       if (loadingEmployeeColumns || loadingApplicantColumns || loadingApplicantRows) return;
 
       if (applicantRowsRestricted && !hasApplicantRowAccess) {
@@ -449,18 +455,11 @@ function EmployeeDetailsInner() {
         return;
       }
 
-      setLoading(true);
       setError("");
-      setApplicant(null);
-      setCerts(null);
-      setEmployment([]);
-      setOtherDocs([]);
-      setLic(null);
-      setBio(null);
 
       if (!id) {
         setLoading(false);
-          setError(`Missing ${detailLabelLower} id`);
+        setError(`Missing ${detailLabelLower} id`);
         return;
       }
 
@@ -504,6 +503,7 @@ function EmployeeDetailsInner() {
             .order("created_at", { ascending: true }),
         ]);
 
+        if (cancelled || requestId !== runId) return;
         if (aRes.error) throw aRes.error;
         setApplicant((aRes.data as Applicant) || null);
 
@@ -516,6 +516,7 @@ function EmployeeDetailsInner() {
             .select("company_name, position, leave_reason")
             .eq("applicant_id", id)
             .maybeSingle();
+          if (cancelled || requestId !== runId) return;
           if (!legacy.error && legacy.data) {
             const legacyRow = legacy.data as unknown as EmploymentRecordRow;
             setEmployment([
@@ -530,10 +531,10 @@ function EmployeeDetailsInner() {
         if (lRes.error) console.warn(lRes.error);
         if (bRes.error) console.warn(bRes.error);
 
-        setCerts((cRes.data as Certificates) || null);
+        if (!cRes.error) setCerts((cRes.data as Certificates) || null);
         if (!eRes.error) setEmployment(((eRes.data as EmploymentItem[]) || []) ?? []);
-        setLic((lRes.data as Licensure) || null);
-        setBio((bRes.data as Biodata) || null);
+        if (!lRes.error) setLic((lRes.data as Licensure) || null);
+        if (!bRes.error) setBio((bRes.data as Biodata) || null);
         if (!odRes.error) {
           setOtherDocs(((odRes.data as OtherDocumentRow[]) || []) ?? []);
         } else {
@@ -541,13 +542,13 @@ function EmployeeDetailsInner() {
           if (!/applicant_other_documents|does not exist/i.test(message)) {
             console.warn(odRes.error);
           }
-          setOtherDocs([]);
         }
       } catch (e: unknown) {
-       
+        if (!cancelled && requestId === runId) {
           setError(e instanceof Error ? e.message : `Failed to load ${detailLabelLower}`);
+        }
       } finally {
-        setLoading(false);
+        if (!cancelled && requestId === runId) setLoading(false);
       }
     };
 
@@ -590,6 +591,7 @@ function EmployeeDetailsInner() {
       .subscribe();
 
     return () => {
+      cancelled = true;
       supabase.removeChannel(channel);
     };
   }, [
@@ -686,15 +688,14 @@ function EmployeeDetailsInner() {
     setViewerOpen(true);
   }
 
-  if (loading) {
-    return (
-      <div className="bg-white rounded-3xl border shadow-sm p-8">
-          <LoadingCircle label={`Loading ${detailLabelLower} details...`} />
-      </div>
-    );
+  if (loading || loadingEmployeeColumns || loadingApplicantColumns || loadingApplicantRows) {
+    return <PageLoading label={`Loading ${detailLabelLower} details...`} />;
+  }
+  if (employeeColumnsError || applicantColumnsError || applicantRowsError || (applicantRowsRestricted && !hasApplicantRowAccess)) {
+    return <section role="alert">Unable to verify access to this personnel record.</section>;
   }
 
-  if (error) {
+  if (error && !applicant) {
     return (
       <div className="bg-white rounded-3xl border shadow-sm p-8">
         <div className="text-red-600 font-semibold">{error}</div>
@@ -722,6 +723,7 @@ function EmployeeDetailsInner() {
 
   return (
     <div className="space-y-6">
+      {error ? <div role="alert" className="text-red-600 font-semibold">{error}</div> : null}
       <div className="flex items-center justify-between gap-3">
         <Link
           href={backHref}
@@ -1079,6 +1081,12 @@ function EmployeeDetailsInner() {
   );
 }
 
+function EmployeeDetailsContent() {
+  const params = useSearchParams();
+  const pathname = usePathname();
+  return <EmployeeDetailsInner key={`${pathname}:${params.get("id") ?? ""}`} />;
+}
+
 export default function EmployeeDetailsPage() {
   const pathname = usePathname() ?? "";
   const detailLabelLower = pathname.startsWith("/Main_Modules/Applicants/") ? "applicant" : "employee";
@@ -1086,12 +1094,10 @@ export default function EmployeeDetailsPage() {
   return (
     <Suspense
       fallback={
-        <div className="bg-white rounded-3xl border shadow-sm p-8 text-center text-gray-500">
-            Loading {detailLabelLower} details...
-        </div>
+        <PageLoading label={`Loading ${detailLabelLower} details...`} />
       }
     >
-      <EmployeeDetailsInner />
+      <EmployeeDetailsContent />
     </Suspense>
   );
 }

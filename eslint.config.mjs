@@ -13,14 +13,13 @@ const eslintConfig = defineConfig([
     "build/**",
     "dist/**",
     "dist-win7/**",
-    "android/app/build/**",
-    "android/app/src/main/assets/public/**",
+    "android/**",
     "next-env.d.ts",
   ]),
 
   // Electron main/preload are CommonJS and intentionally use require().
   {
-    files: ["electron/**/*.js"],
+    files: ["electron/**/*.js", "scripts/**/*.cjs"],
     rules: {
       "@typescript-eslint/no-require-imports": "off",
     },

@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { supabase } from '../../Client/SupabaseClients';
 import { useAuthRole } from '../../Client/useRbac';
+import { createRefreshQueue } from '../../Client/refreshQueue';
 import LoadingCircle from '../../Components/LoadingCircle';
 import { ArrowRight, Activity, Building2, ShieldCheck, Sparkles, Users } from 'lucide-react';
 
@@ -110,7 +111,6 @@ export default function DashboardPage() {
   const canUsePortal = typeof document !== 'undefined';
 
   const fetchAdmins = useCallback(async () => {
-    setLoading(true);
     setError('');
     try {
       const { data, error: fetchError } = await supabase
@@ -135,7 +135,6 @@ export default function DashboardPage() {
   }, []);
 
   const fetchEmployeeStats = useCallback(async () => {
-    setEmployeesLoading(true);
     try {
       const countRes = await supabase
         .from('applicants')
@@ -159,9 +158,10 @@ export default function DashboardPage() {
           .eq('is_archived', false)
           .eq('is_trashed', false)
           .or(employeeScopeFilter)
+          .order('applicant_id', { ascending: true })
           .range(offset, offset + pageSize - 1);
 
-        if (res.error) break;
+        if (res.error) throw res.error;
         const rows = (res.data as Array<{ client_position: string | null }>) ?? [];
         if (!rows.length) break;
 
@@ -179,13 +179,15 @@ export default function DashboardPage() {
         .map(([position, count]) => ({ position, count }))
         .sort((a, b) => b.count - a.count || a.position.localeCompare(b.position));
       setPositionCounts(list);
+    } catch (err) {
+      console.error(err);
+      setError('Failed to load employee statistics');
     } finally {
       setEmployeesLoading(false);
     }
   }, []);
 
   const fetchContractStats = useCallback(async () => {
-    setContractsLoading(true);
     try {
       const clientKeys = new Set<string>();
       const detachmentKeys = new Set<string>();
@@ -197,11 +199,11 @@ export default function DashboardPage() {
         const res = await supabase
           .from('contracts')
           .select('client_name, project_name, specific_area, cluster')
+          .order('contract_id', { ascending: true })
           .range(offset, offset + pageSize - 1);
 
         if (res.error) {
-          console.error(res.error);
-          break;
+          throw res.error;
         }
 
         const rows =
@@ -233,6 +235,9 @@ export default function DashboardPage() {
 
       setClientTotal(clientKeys.size);
       setClientDetachmentTotal(detachmentKeys.size);
+    } catch (err) {
+      console.error(err);
+      setError('Failed to load client statistics');
     } finally {
       setContractsLoading(false);
     }
@@ -280,26 +285,39 @@ export default function DashboardPage() {
   }, [electronAPI]);
 
   useEffect(() => {
-    void fetchAdmins();
-    void fetchEmployeeStats();
-    void fetchContractStats();
-    void fetchLoginHistory();
+    const queue = createRefreshQueue({
+      admins: fetchAdmins,
+      employees: fetchEmployeeStats,
+      contracts: fetchContractStats,
+      history: fetchLoginHistory,
+    }, {
+      isActive: () => document.visibilityState !== 'hidden' && navigator.onLine,
+      onError: () => setError('Unable to refresh dashboard. Please try again.'),
+    });
+    queue.request('admins', 'employees', 'contracts', 'history');
+    document.addEventListener('visibilitychange', queue.resume);
+    window.addEventListener('online', queue.resume);
 
     const channel = supabase
       .channel('realtime:dashboard')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'admins' }, () => {
-        void fetchAdmins();
-        void fetchLoginHistory();
+        queue.request('admins', 'history');
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'applicants' }, () => {
-        void fetchEmployeeStats();
+        queue.request('employees');
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'contracts' }, () => {
-        void fetchContractStats();
+        queue.request('contracts');
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'admin_login_history' }, () => {
+        queue.request('history');
       })
       .subscribe();
 
     return () => {
+      queue.dispose();
+      document.removeEventListener('visibilitychange', queue.resume);
+      window.removeEventListener('online', queue.resume);
       supabase.removeChannel(channel);
     };
   }, [fetchAdmins, fetchContractStats, fetchEmployeeStats, fetchLoginHistory]);
@@ -461,7 +479,7 @@ export default function DashboardPage() {
             <div className="flex items-start justify-between gap-4">
               <div>
                 <div className="text-xs uppercase tracking-[0.18em] text-gray-500">Total Employees</div>
-                <div className="mt-1 text-3xl font-semibold text-black">{employeesLoading ? '...' : employeeTotal}</div>
+                <div className="mt-1 text-3xl font-semibold text-black">{employeesLoading ? <LoadingCircle label="Loading employee total..." sizeClassName="h-6 w-6" /> : employeeTotal}</div>
                 <div className="mt-2 text-xs text-gray-500">From public.applicants (active/inactive only, not archived/trashed)</div>
               </div>
               <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#8B1C1C]/10 text-[#8B1C1C]">
@@ -474,7 +492,7 @@ export default function DashboardPage() {
             <div className="flex items-start justify-between gap-4">
               <div>
                 <div className="text-xs uppercase tracking-[0.18em] text-gray-500">Client Total No.</div>
-                <div className="mt-1 text-3xl font-semibold text-black">{contractsLoading ? '...' : clientTotal}</div>
+                <div className="mt-1 text-3xl font-semibold text-black">{contractsLoading ? <LoadingCircle label="Loading client total..." sizeClassName="h-6 w-6" /> : clientTotal}</div>
                 <div className="mt-2 text-xs text-gray-500">Distinct client names from the Client page</div>
               </div>
               <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-blue-100 text-blue-700">
@@ -487,7 +505,7 @@ export default function DashboardPage() {
             <div className="flex items-start justify-between gap-4">
               <div>
                 <div className="text-xs uppercase tracking-[0.18em] text-gray-500">Detachment (Client) Total No.</div>
-                <div className="mt-1 text-3xl font-semibold text-black">{contractsLoading ? '...' : clientDetachmentTotal}</div>
+                <div className="mt-1 text-3xl font-semibold text-black">{contractsLoading ? <LoadingCircle label="Loading detachment total..." sizeClassName="h-6 w-6" /> : clientDetachmentTotal}</div>
                 <div className="mt-2 text-xs text-gray-500">Distinct client page site entries from public.contracts</div>
               </div>
               <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-emerald-100 text-emerald-700">
@@ -501,7 +519,7 @@ export default function DashboardPage() {
               <div className="min-w-0 flex-1">
                 <div className="text-xs uppercase tracking-[0.18em] text-gray-500">Top Positions</div>
                 {employeesLoading ? (
-                  <div className="mt-2 text-sm text-gray-500">Loading...</div>
+                  <LoadingCircle label="Loading positions..." sizeClassName="h-6 w-6" className="mt-2" />
                 ) : topPositions.length === 0 ? (
                   <div className="mt-2 text-sm text-gray-500">No employee rows found.</div>
                 ) : (

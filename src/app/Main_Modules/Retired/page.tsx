@@ -7,6 +7,7 @@ import { Pencil, LayoutGrid, Table, SlidersHorizontal, Search } from "lucide-rea
 import { useAuthRole, useMyModuleAccess, useMyModuleDeleteAccess } from "../../Client/useRbac";
 import EmployeeEditorModal from "../../Components/EmployeeEditorModal";
 import LoadingCircle from "../../Components/LoadingCircle";
+import PageLoading from "../../Components/PageLoading";
 import TableZoomWrapper from "@/app/Components/TableZoomWrapper";
 import DetachmentHistoryPopover from "../Components/DetachmentHistoryPopover";
 import EmployeeStatusMenu from "../Components/EmployeeStatusMenu";
@@ -112,7 +113,7 @@ function serviceYearsExact(fromIso: string | null, now = new Date()) {
 export default function RetiredPage() {
   const router = useRouter();
   const { role: sessionRole } = useAuthRole();
-  const { canAccess: canAccessRetired } = useMyModuleAccess("retired");
+  const { canAccess: canAccessRetired, loading: accessLoading } = useMyModuleAccess("retired");
   const { canDelete: canDeleteRetired } = useMyModuleDeleteAccess("retired");
 
   const [viewMode, setViewMode] = useState<"grid" | "table">(() => {
@@ -144,7 +145,6 @@ export default function RetiredPage() {
 
   async function fetchEmployees() {
     const fetchRunId = ++fetchRunIdRef.current;
-    setLoading(true);
     setError("");
     try {
       const { data, error: fetchError } = await supabase
@@ -160,11 +160,12 @@ export default function RetiredPage() {
       if (fetchError) {
         console.error(fetchError);
         setError(fetchError.message || "Failed to load Retired list");
-        setEmployees([]);
       } else {
         const list = (data as Applicant[]) || [];
         setEmployees(list);
       }
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Failed to load Retired list");
     } finally {
       if (fetchRunIdRef.current === fetchRunId) setLoading(false);
     }
@@ -380,6 +381,8 @@ export default function RetiredPage() {
 
     await fetchEmployees();
   }
+
+  if (accessLoading) return <PageLoading label="Loading retired employees..." />;
 
   if (!canAccessRetired) {
     return (

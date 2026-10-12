@@ -8,7 +8,7 @@ import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { supabase } from "@/app/Client/SupabaseClients";
 import { useMyColumnAccess, useMyModuleAccess, useMyModuleDeleteAccess, useMyModuleEditAccess } from "@/app/Client/useRbac";
-import LoadingCircle from "@/app/Components/LoadingCircle";
+import PageLoading from "@/app/Components/PageLoading";
 import SearchDropdownInput from "@/app/Components/SearchDropdownInput";
 import TableZoomWrapper from "@/app/Components/TableZoomWrapper";
 import SpreadsheetImportModal from "@/app/Components/SpreadsheetImportModal";
@@ -572,7 +572,6 @@ export default function CarInsuranceExpirationPage() {
 
       setRows((res.data as CarInsuranceRow[]) ?? []);
     } catch (e: unknown) {
-      setRows([]);
       setError(getErrorMessage(e, "Failed to load car insurance records."));
     } finally {
       if (showSpinner) {
@@ -1195,12 +1194,12 @@ export default function CarInsuranceExpirationPage() {
   if (accessLoading || editLoading || deleteLoading || columnLoading || loadingRows) {
     return (
       <TableZoomWrapper storageKey="car-insurance-expiration" defaultZoom={0.9}>
-        <section className="glass-panel animate-slide-up rounded-2xl shadow-2xl p-5 border-none">
-          <LoadingCircle label={`Loading ${PAGE_TITLE.toLowerCase()}...`} />
-        </section>
+        <PageLoading label={`Loading ${PAGE_TITLE.toLowerCase()}...`} />
       </TableZoomWrapper>
     );
   }
+
+  if (columnError) return <section role="alert">Unable to verify car insurance permissions.</section>;
 
   if (!canAccess) {
     return (

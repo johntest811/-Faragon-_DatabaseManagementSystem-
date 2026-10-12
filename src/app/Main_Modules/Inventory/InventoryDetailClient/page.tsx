@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/app/Client/SupabaseClients";
 import { useMyColumnAccess } from "@/app/Client/useRbac";
-import LoadingCircle from "@/app/Components/LoadingCircle";
+import PageLoading from "@/app/Components/PageLoading";
 
 type InventoryDetailRow = {
   id: string;
@@ -57,6 +57,10 @@ function money(value: number | null | undefined) {
 }
 
 export default function InventoryDetailClient({ id }: { id: string }) {
+  return <InventoryDetails key={id} id={id} />;
+}
+
+function InventoryDetails({ id }: { id: string }) {
   const router = useRouter();
   const {
     allowedColumns,
@@ -75,9 +79,9 @@ export default function InventoryDetailClient({ id }: { id: string }) {
   );
 
   useEffect(() => {
+    let cancelled = false;
     const run = async () => {
       if (loadingPermissions) return;
-      setLoading(true);
       setError(permissionError || "");
 
       try {
@@ -93,17 +97,19 @@ export default function InventoryDetailClient({ id }: { id: string }) {
           .eq("id", id)
           .maybeSingle();
 
+        if (cancelled) return;
         if (res.error) throw res.error;
         setRow(((res.data ?? null) as unknown as InventoryDetailRow | null));
       } catch (e: unknown) {
+        if (cancelled) return;
         setError(e instanceof Error ? e.message : "Failed to load inventory details");
-        setRow(null);
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     };
 
     run();
+    return () => { cancelled = true; };
   }, [id, loadingPermissions, permissionError, canViewColumn]);
 
   const fieldCards = useMemo(() => {
@@ -135,14 +141,11 @@ export default function InventoryDetailClient({ id }: { id: string }) {
   }, [row, canViewColumn]);
 
   if (loading || loadingPermissions) {
-    return (
-      <section className="bg-white rounded-3xl border p-6 max-w-3xl">
-        <LoadingCircle label="Loading inventory details..." />
-      </section>
-    );
+    return <PageLoading label="Loading inventory details..." />;
   }
+  if (permissionError) return <section role="alert">Unable to verify inventory permissions.</section>;
 
-  if (error) {
+  if (error && !row) {
     return (
       <section className="bg-white rounded-3xl border p-6 max-w-3xl space-y-4">
         <div className="text-red-600 font-semibold">{error}</div>
@@ -172,6 +175,7 @@ export default function InventoryDetailClient({ id }: { id: string }) {
 
   return (
     <section className="bg-white rounded-3xl border p-6 max-w-3xl">
+      {error ? <div role="alert" className="text-red-600 font-semibold">{error}</div> : null}
       <div className="flex items-center justify-between mb-6">
         <div>
           <div className="text-lg font-semibold">Inventory Details</div>

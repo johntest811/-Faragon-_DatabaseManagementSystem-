@@ -6,6 +6,7 @@ import { supabase } from "../../Client/SupabaseClients";
 import { RotateCcw, LayoutGrid, Table, SlidersHorizontal, Search } from "lucide-react";
 import { useAuthRole, useMyModuleAccess, useMyModuleDeleteAccess } from "../../Client/useRbac";
 import LoadingCircle from "../../Components/LoadingCircle";
+import PageLoading from "../../Components/PageLoading";
 import TableZoomWrapper from "@/app/Components/TableZoomWrapper";
 import DetachmentHistoryPopover from "../Components/DetachmentHistoryPopover";
 import EmployeeStatusMenu from "../Components/EmployeeStatusMenu";
@@ -98,7 +99,7 @@ function serviceYearsExact(fromIso: string | null, now = new Date()) {
 export default function ArchivePage() {
   const router = useRouter();
   const { role: sessionRole } = useAuthRole();
-  const { canAccess: canAccessArchive } = useMyModuleAccess("archive");
+  const { canAccess: canAccessArchive, loading: accessLoading } = useMyModuleAccess("archive");
   const { canDelete: canDeleteArchive } = useMyModuleDeleteAccess("archive");
   const [viewMode, setViewMode] = useState<"grid" | "table">(() => {
     if (typeof window !== "undefined") {
@@ -158,28 +159,30 @@ export default function ArchivePage() {
 
     const run = async () => {
       const fetchRunId = ++fetchRunIdRef.current;
-      setLoading(true);
       setError("");
+      try {
+        const { data, error: fetchError } = await supabase
+          .from("applicants")
+          .select(
+            "applicant_id, created_at, date_hired_fsai, first_name, middle_name, last_name, client_position, detachment, status, gender, birth_date, age, profile_image_path, is_archived, archived_at"
+          )
+          .eq("is_archived", true)
+          .eq("is_trashed", false)
+          .order("archived_at", { ascending: false })
+          .limit(200);
 
-      const { data, error: fetchError } = await supabase
-        .from("applicants")
-        .select(
-          "applicant_id, created_at, date_hired_fsai, first_name, middle_name, last_name, client_position, detachment, status, gender, birth_date, age, profile_image_path, is_archived, archived_at"
-        )
-        .eq("is_archived", true)
-        .eq("is_trashed", false)
-        .order("archived_at", { ascending: false })
-        .limit(200);
-
-      if (fetchError) {
-        console.error(fetchError);
-        setError(fetchError.message || "Failed to load archive");
-        setItems([]);
-      } else {
-        const list = (data as Applicant[]) || [];
-        setItems(list);
+        if (fetchError) {
+          console.error(fetchError);
+          setError(fetchError.message || "Failed to load archive");
+        } else {
+          const list = (data as Applicant[]) || [];
+          setItems(list);
+        }
+      } catch (e: unknown) {
+        setError(e instanceof Error ? e.message : "Failed to load archive");
+      } finally {
+        if (fetchRunIdRef.current === fetchRunId) setLoading(false);
       }
-      if (fetchRunIdRef.current === fetchRunId) setLoading(false);
     };
 
     run();
@@ -368,6 +371,8 @@ export default function ArchivePage() {
 
     setItems((prev) => prev.filter((x) => x.applicant_id !== employee.applicant_id));
   }
+
+  if (accessLoading) return <PageLoading label="Loading archive..." />;
 
   if (!canAccessArchive) {
     return (

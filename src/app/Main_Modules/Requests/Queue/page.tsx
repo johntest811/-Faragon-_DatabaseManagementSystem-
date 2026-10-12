@@ -6,6 +6,7 @@ import { supabase } from "../../../Client/SupabaseClients";
 import { useAuthRole, useMyModuleAccess } from "../../../Client/useRbac";
 import { AccessTabs } from "../../Components/AccessTabs";
 import LoadingCircle from "../../../Components/LoadingCircle";
+import PageLoading from "../../../Components/PageLoading";
 import { useToast } from "../../../Components/ToastProvider";
 import { formatPermissionColumnLabel } from "../../Components/permissionCatalog";
 
@@ -194,7 +195,8 @@ export default function RequestsQueuePage() {
   const [error, setError] = useState<string>("");
   const [success, setSuccess] = useState<string>("");
   const [pendingRequests, setPendingRequests] = useState<AccessRequestRow[]>([]);
-  const [loadingPending, setLoadingPending] = useState(false);
+  const [loadingPending, setLoadingPending] = useState(true);
+  const [initialApplicantsLoading, setInitialApplicantsLoading] = useState(true);
   const [resolvingId, setResolvingId] = useState<string | null>(null);
   const [applicants, setApplicants] = useState<ApplicantOption[]>([]);
 
@@ -238,8 +240,10 @@ export default function RequestsQueuePage() {
         .limit(2000);
       if (fetchErr) throw fetchErr;
       setApplicants((data as ApplicantOption[]) || []);
-    } catch {
-      setApplicants([]);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Failed to load personnel labels.");
+    } finally {
+      setInitialApplicantsLoading(false);
     }
   }, []);
 
@@ -249,7 +253,6 @@ export default function RequestsQueuePage() {
       return;
     }
 
-    setLoadingPending(true);
     try {
       const data = await runAccessRequestSelectWithFallback([...PENDING_REQUEST_COLUMNS], async (selectClause) => {
         const result = await supabase
@@ -262,8 +265,8 @@ export default function RequestsQueuePage() {
       });
 
       setPendingRequests((data as AccessRequestRow[]) || []);
-    } catch {
-      setPendingRequests([]);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Failed to load pending requests.");
     } finally {
       setLoadingPending(false);
     }
@@ -293,12 +296,8 @@ export default function RequestsQueuePage() {
     };
   }, [canReviewRequests, loadPendingRequests]);
 
-  if (accessLoading) {
-    return (
-      <section className="glass-panel rounded-2xl shadow-sm p-5 animate-slide-up border-none">
-        <LoadingCircle label="Checking reviewer queue access…" />
-      </section>
-    );
+  if (accessLoading || (canReviewRequests && (loadingPending || initialApplicantsLoading))) {
+    return <PageLoading label="Loading reviewer queue..." />;
   }
 
   async function resolveRequest(req: AccessRequestRow, nextStatus: "APPROVED" | "REJECTED") {

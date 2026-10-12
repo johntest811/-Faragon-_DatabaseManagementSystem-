@@ -122,7 +122,7 @@ body {
   overflow-y: auto;
   overscroll-behavior-y: auto;
   -webkit-overflow-scrolling: touch;
-  touch-action: pan-y;
+  touch-action: pan-x pan-y pinch-zoom;
   scrollbar-gutter: stable;
 }
 
@@ -131,15 +131,16 @@ body {
    ========================================================================== */
 
 /* Touch screen target size optimization */
-@media (max-width: 768px) {
+@media (max-width: 1023px) {
   button, select, input[type="text"], input[type="search"], input[type="date"], input[type="number"] {
-    min-height: 40px;
+    min-height: 44px;
   }
 
   input,
   select,
   textarea {
     max-width: 100%;
+    font-size: 16px;
   }
 
   .glass-panel {
@@ -148,6 +149,49 @@ body {
     background-color: rgba(255, 255, 255, 0.98);
   }
 }
+
+.app-shell {
+  height: 100vh;
+  height: 100dvh;
+}
+
+.employee-editor-dialog {
+  max-height: calc(100vh - 24px);
+  max-height: calc(100dvh - 24px);
+}
+
+.employee-editor-dialog > .overflow-x-auto > button {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.app-page-content > * {
+  min-width: 0;
+  max-width: 100%;
+}
+
+@media (max-width: 1023px) {
+  /* Anchor notification menus to the viewport, not an icon near the edge. */
+  .app-notification-actions > .relative > .absolute {
+    position: fixed;
+    top: calc(var(--app-header-height, 140px) + 8px);
+    left: 12px;
+    right: 12px;
+    width: auto;
+    max-width: none;
+    margin-top: 0;
+    max-height: calc(100dvh - var(--app-header-height, 140px) - 24px);
+    overflow-y: auto;
+  }
+
+  .app-atmosphere { display: none; }
+}
+
+@media (max-width: 639px) {
+  .app-notification-actions { width: 100%; }
+}
+
+html.performance-mode .app-atmosphere { display: none; }
 
 /* Responsive custom smooth scrollbar for overflow containers */
 .overflow-x-auto::-webkit-scrollbar,

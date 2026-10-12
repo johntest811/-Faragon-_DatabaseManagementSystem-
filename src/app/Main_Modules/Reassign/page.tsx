@@ -7,6 +7,7 @@ import { Pencil, LayoutGrid, Table, SlidersHorizontal, Search, FileDown, FileTex
 import { useAuthRole, useMyModuleAccess, useMyModuleDeleteAccess } from "../../Client/useRbac";
 import EmployeeEditorModal from "../../Components/EmployeeEditorModal";
 import LoadingCircle from "../../Components/LoadingCircle";
+import PageLoading from "../../Components/PageLoading";
 import TableZoomWrapper from "@/app/Components/TableZoomWrapper";
 import DetachmentHistoryPopover from "../Components/DetachmentHistoryPopover";
 import EmployeeStatusMenu from "../Components/EmployeeStatusMenu";
@@ -138,7 +139,7 @@ function weekOfMonth(date: Date) {
 export default function ReassignPage() {
   const router = useRouter();
   const { role: sessionRole } = useAuthRole();
-  const { canAccess: canAccessReassign } = useMyModuleAccess("reassign");
+  const { canAccess: canAccessReassign, loading: accessLoading } = useMyModuleAccess("reassign");
   const { canDelete: canDeleteReassign } = useMyModuleDeleteAccess("reassign");
 
   const [viewMode, setViewMode] = useState<"grid" | "table">(() => {
@@ -221,7 +222,6 @@ export default function ReassignPage() {
 
   async function fetchEmployees() {
     const fetchRunId = ++fetchRunIdRef.current;
-    setLoading(true);
     setError("");
     try {
       const { data, error: fetchError } = await supabase
@@ -237,11 +237,12 @@ export default function ReassignPage() {
       if (fetchError) {
         console.error(fetchError);
         setError(fetchError.message || "Failed to load AWOL list");
-        setEmployees([]);
       } else {
         const list = (data as Applicant[]) || [];
         setEmployees(list);
       }
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Failed to load AWOL list");
     } finally {
       if (fetchRunIdRef.current === fetchRunId) setLoading(false);
     }
@@ -519,6 +520,8 @@ export default function ReassignPage() {
     setEditorApplicantId(employee.applicant_id);
     setEditorOpen(true);
   }
+
+  if (accessLoading) return <PageLoading label="Loading AWOL employees..." />;
 
   if (!canAccessReassign) {
     return (
